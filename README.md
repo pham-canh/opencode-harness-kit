@@ -19,6 +19,11 @@ git clone https://github.com/crytobot459/space-harness.git
 ./bin/oc-harness.mjs init
 ```
 
+![demo: init and verify in one go](docs/demo/demo.gif)
+
+Regenerate it any time with `python3 docs/demo/render.py` (needs ffmpeg); the
+frames are drawn from real CLI output, not typed by hand.
+
 The three steps `init` runs, spelled out for when you want to know what
 happened (prefix with `npx` or `./bin/oc-harness.mjs` to taste):
 
