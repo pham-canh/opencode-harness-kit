@@ -349,24 +349,9 @@ export const BASH_RULES = [
     test: /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python[0-9.]*)\b/i,
     why: "downloads and executes a script in one step",
   },
-  {
-    name: "git push with force",
-    scope: "segment",
-    // A dry run publishes nothing, so it is not the thing being gated.
-    check: (seg) =>
-      gitSubcommand(seg) === "push" &&
-      tokenize(seg).some((w) => w === "--force" || w === "-f" || w.startsWith("--force")),
-    why: "overwrites published history",
-  },
-  {
-    name: "git push",
-    scope: "segment",
-    // Flags are matched as whole words: a `-f` in `my-feature-f` is a branch
-    // name, not a force flag.
-    check: (seg) =>
-      gitSubcommand(seg) === "push" && !tokenize(seg).some((w) => w === "--dry-run" || w === "-n"),
-    why: "publishing is a human decision",
-  },
+  // `git push` is ask-gated via permissions (`*` ask in the generated
+  // config), not guard-blocked. Publishing needs human approval, but the
+  // guard lets it through so opencode can prompt first.
   {
     name: "recursive delete",
     scope: "segment",

@@ -16,6 +16,11 @@ import {
   loadRetention,
   ProfileError,
   validate,
+  resolveRoleModel,
+  modelsInPlay,
+  effectiveRetention,
+  roleSplitModels,
+  inputCap,
 } from "../src/profile.js"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -189,10 +194,160 @@ test("roles that must not edit are locked in the generated config", () => {
 })
 
 test("every agent declares its own model, because variant needs it", () => {
-  const c = cfg("space-bunny-free")
-  for (const agent of Object.values(c.agent)) {
-    assert.equal(agent.model, c.model)
+  // An unsplit profile keeps the strict one-model invariant. A split profile is
+  // the single sanctioned exception, and only via roleModels.
+  for (const id of listProfileIds()) {
+    const c = cfg(id)
+    const p = loadProfile(id)
+    for (const [role, agent] of Object.entries(c.agent)) {
+      const want = p.roleModels?.[role]?.model ?? p.model
+      assert.equal(
+        agent.model,
+        `${p.provider}/${want}`,
+        `${id}: agent ${role} should be pinned to ${want}`,
+      )
+    }
   }
+})
+
+test("a split profile routes the heavy roles to their own model", () => {
+  const c = cfg("muse-split-free")
+  assert.equal(c.model, "opencode/space-bunny-free")
+  for (const role of ["plan", "build", "reviewer"]) {
+    assert.equal(
+      c.agent[role].model,
+      "opencode/muse-spark-1.3-contributor-free",
+      `${role} must run on the stronger model`,
+    )
+  }
+  for (const role of ["locate", "verify"]) {
+    assert.equal(
+      c.agent[role].model,
+      "opencode/space-bunny-free",
+      `${role} must stay on the high-output model`,
+    )
+  }
+})
+
+test("effort resolves against the role's own model, not the profile's", () => {
+  // plan and reviewer request `max`, which Muse Spark does not offer. Writing
+  // `max` onto those agents would put a variant the model has no meaning for.
+  const c = cfg("muse-split-free")
+  assert.equal(c.agent.plan.variant, "xhigh")
+  assert.equal(c.agent.reviewer.variant, "xhigh")
+  assert.equal(c.agent.build.variant, "high")
+  assert.equal(c.agent.locate.variant, "low")
+  const p = loadProfile("muse-split-free")
+  assert.equal(resolveRoleModel(p, "plan").levels.includes("max"), false)
+  assert.equal(resolveRoleModel(p, "locate").model, "space-bunny-free")
+})
+
+test("an unsplit profile resolves effort exactly as before", () => {
+  const p = loadProfile("space-bunny-free")
+  assert.equal(resolveRoleModel(p, "plan"), null)
+  assert.equal(resolveRoles(p).plan, "max")
+})
+
+test("validate refuses a role model with no retention.yml entry", () => {
+  const p = loadProfile("muse-split-free")
+  const broken = { ...p, roleModels: { plan: { model: "no-such-model-free" } } }
+  assert.throws(
+    () => validate(broken, "test"),
+    (e) => e instanceof ProfileError && /no retention\.yml entry/.test(e.message),
+  )
+  const nameless = { ...p, roleModels: { plan: {} } }
+  assert.throws(() => validate(nameless, "test"), ProfileError)
+  const badLevels = { ...p, roleModels: { plan: { model: "space-bunny-free", levels: "xhigh" } } }
+  assert.throws(() => validate(badLevels, "test"), ProfileError)
+})
+
+test("the header reports the retention that actually applies", () => {
+  const text = generateConfig(loadProfile("muse-split-free"))
+  // The base model is zero-retention, but three roles are not, so the header
+  // may not claim zero-retention for the file. This is the same lie as the
+  // inherited `build` model, and the guard against it is the header.
+  assert.match(text, /retention\s+may-train/)
+  assert.match(text, /makes the whole file may-train/)
+  assert.doesNotMatch(text, /retention\s+zero-retention/)
+  // An unsplit zero-retention profile still says so.
+  assert.match(
+    generateConfig(loadProfile("space-bunny-free")),
+    /retention\s+zero-retention/,
+  )
+})
+
+test("modelsInPlay and effectiveRetention see past the base model", () => {
+  const p = loadProfile("muse-split-free")
+  assert.deepEqual(modelsInPlay(p), [
+    "space-bunny-free",
+    "muse-spark-1.3-contributor-free",
+  ])
+  const eff = effectiveRetention(p)
+  assert.equal(eff.retention, "may-train")
+  assert.equal(eff.worst, "muse-spark-1.3-contributor-free")
+  // A profile that never leaves its base model is unaffected.
+  const plain = effectiveRetention(loadProfile("space-bunny-free"))
+  assert.equal(plain.retention, "zero-retention")
+})
+
+test("validate refuses a split role that is not one of the five managed roles", () => {
+  const p = loadProfile("muse-split-free")
+  // schema.json sets additionalProperties false, but nothing reads it at
+  // runtime, so a typo reached the compiler before this check existed.
+  const bad = { ...p, roleModels: { ...p.roleModels, scout: { model: "space-bunny-free" } } }
+  assert.throws(
+    () => validate(bad, "test"),
+    (e) => e instanceof ProfileError && /is not one of/.test(e.message),
+  )
+})
+
+test("validate refuses a split role that has no matching roles entry", () => {
+  // resolveRoles walks `roles`, so this split would never reach an agent and
+  // would read as installed while changing nothing.
+  const p = loadProfile("muse-split-free")
+  const orphan = { ...p, roles: { ...p.roles } }
+  delete orphan.roles.locate
+  assert.throws(
+    () => validate(orphan, "test"),
+    (e) => e instanceof ProfileError && /never apply/.test(e.message),
+  )
+})
+
+test("context management sizes for the widest model, not the base", () => {
+  const p = loadProfile("muse-split-free")
+  // Muse Spark takes 1,048,576 input against the base model's 524,288. Sizing
+  // for the base throttles plan/build/reviewer to under half their real window,
+  // which defeats the reason they run on the bigger model.
+  assert.equal(inputCap(p), 1048576)
+  assert.equal(reservedTokens(p), 125829)
+  assert.equal(pruneThreshold(p), 922747)
+  const conf = cfg("muse-split-free")
+  assert.equal(conf.compaction.reserved, 125829)
+})
+
+test("an unsplit profile keeps its own context numbers", () => {
+  // The widest-cap rule must not touch a profile that never splits.
+  const p = loadProfile("space-bunny-free")
+  assert.equal(inputCap(p), p.limits.input)
+  assert.equal(reservedTokens(p), Math.round(p.limits.input * 0.12))
+  assert.equal(pruneThreshold(p), p.limits.input - reservedTokens(p))
+})
+
+test("the header names each split role's real output cap", () => {
+  // The whole reason locate/verify stay on Space Bunny is its 524,288-token
+  // output ceiling against Muse Spark's 131,072. A header that prints only the
+  // base cap would let someone budget `build` at four times what it can emit.
+  const p = loadProfile("muse-split-free")
+  const splits = roleSplitModels(p)
+  assert.equal(splits.length, 5)
+  const muse = splits.find((s) => s.role === "plan")
+  assert.equal(muse.limits.output, 131072)
+  const bunny = splits.find((s) => s.role === "build") // build is split too, check locate
+  assert.equal(bunny.model, "muse-spark-1.3-contributor-free")
+  assert.equal(splits.find((s) => s.role === "locate").limits.output, 524288)
+  const text = generateConfig(p)
+  assert.match(text, /plan=muse-spark-1\.3-contributor-free \(out 131,072\)/)
+  assert.match(text, /locate=space-bunny-free \(out 524,288\)/)
 })
 
 test("retention.yml is parsed and separates safe from training routes", () => {
@@ -386,9 +541,10 @@ test("the read-only gh verbs are allowed and the mutating ones are not", () => {
   for (const write of ["gh pr create*", "gh pr merge*", "gh release*", "gh api*", "gh repo delete*"]) {
     assert.notEqual(rules[write], "allow", `${write} publishes and must not be allowed`)
   }
-  // `git add` is local and reversible; push is not.
+  // `git add` is local and reversible; push needs human approval via ask.
   assert.equal(rules["git add*"], "allow")
-  assert.equal(rules["git push*"], "deny")
+  assert.equal(rules["git push*"], undefined)
+  assert.equal(rules["*"], "ask")
   // A blanket `git -C *` would allow `git -C x push`, so only read verbs match.
   assert.equal(rules["git -C *"], undefined)
   assert.equal(rules["git -C * status*"], "allow")

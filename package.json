@@ -1,11 +1,15 @@
 {
   "name": "opencode-harness-kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Model-agnostic harness kit for OpenCode: capability profiles, role-based reasoning effort, context pruning, and measured baselines.",
   "license": "MIT",
+  "homepage": "https://github.com/pham-canh/space-harness#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/crytobot459/space-harness.git"
+    "url": "git+https://github.com/pham-canh/space-harness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pham-canh/space-harness/issues"
   },
   "type": "module",
   "main": "./dist/index.js",

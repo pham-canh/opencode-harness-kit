@@ -17,6 +17,7 @@ export const ROOT = resolve(HERE, "..")
 /**
  * @typedef {"zero-retention" | "may-train" | "unknown"} Retention
  * @typedef {string | null} EffortRequest
+ * @typedef {{ model: string, levels?: string[] }} RoleModel
  * @typedef {object} Profile
  * @property {string} id
  * @property {string} [title]
@@ -31,6 +32,7 @@ export const ROOT = resolve(HERE, "..")
  *             structuredOutput?: boolean, attachment?: boolean }} [supports]
  * @property {{ levels?: string[], default?: string | null, reserveShare?: number }} [effort]
  * @property {Record<string, EffortRequest>} [roles]
+ * @property {Record<string, RoleModel>} [roleModels]
  * @property {{ enabled?: boolean, keepRecentToolCalls?: number,
  *             keepRecentTurns?: number, keepUserMessages?: boolean }} [prune]
  * @property {string[]} [fallback]
@@ -135,6 +137,35 @@ export function validate(p, path = "<memory>") {
       `${where}: effort.reserveShare must be between 0 and 0.5`,
     )
   }
+  for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
+    if (!SPLITTABLE_ROLES.includes(role)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} is not one of ${SPLITTABLE_ROLES.join(", ")}`,
+      )
+    }
+    // resolveRoles walks `roles`, so a split for a role nobody asks for never
+    // reaches an agent. That reads as "split installed" while doing nothing.
+    if (!(role in (p.roles ?? {}))) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} has no matching entry in roles, so it would never apply`,
+      )
+    }
+    if (!rm?.model || typeof rm.model !== "string") {
+      throw new ProfileError(`${where}: roleModels.${role} needs a model`)
+    }
+    if (rm.levels !== undefined && !Array.isArray(rm.levels)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role}.levels must be an array`,
+      )
+    }
+    // retention.yml is the only place retention is decided, so a role model
+    // missing from it is a profile we cannot honestly write a header for.
+    if (!retentionFor(rm.model)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`,
+      )
+    }
+  }
 }
 
 // Canonical ordering for reasoning effort, used to snap a requested level onto
@@ -179,14 +210,44 @@ export function resolveEffort(levels, requested) {
 }
 
 /**
+ * Model and effort levels for one role, or null when the role stays on the
+ * profile's base model.
+ *
+ * @param {Profile} p
+ * @param {string} role
+ * @returns {{ model: string, levels: string[] } | null}
+ */
+export function resolveRoleModel(p, role) {
+  const rm = p.roleModels?.[role]
+  if (!rm) return null
+  return { model: rm.model, levels: rm.levels ?? [] }
+}
+
+/**
+ * Effort levels a role's own model offers. Falls back to the profile's when the
+ * role is not split out, so an unsplit profile behaves exactly as before.
+ *
+ * @param {Profile} p
+ * @param {string} role
+ * @returns {string[]}
+ */
+function levelsForRole(p, role) {
+  const rm = resolveRoleModel(p, role)
+  if (rm) return rm.levels
+  return p.effort?.levels ?? []
+}
+
+/**
  * @param {Profile} p
  * @returns {Record<string, string | null>}
  */
 export function resolveRoles(p) {
-  const levels = p.effort?.levels ?? []
   const out = /** @type {Record<string, string | null>} */ ({})
   for (const [role, want] of Object.entries(p.roles ?? {})) {
-    out[role] = resolveEffort(levels, want)
+    // Resolve against the levels of the model this role actually runs on. A
+    // role asking for `max` on a model topping out at `xhigh` gets `xhigh`,
+    // which is only correct if the profile knows the role's real model.
+    out[role] = resolveEffort(levelsForRole(p, role), want)
   }
   return out
 }
@@ -201,10 +262,39 @@ export function resolveDefaultVariant(p) {
  * tool output. Scaled from the model, never hardcoded.
  * @param {Profile} p @returns {number}
  */
+// The roles a profile may split onto another model. Kept in step with
+// `roleModels` in profiles/schema.json, which nothing validates at runtime.
+const SPLITTABLE_ROLES = ["plan", "build", "reviewer", "locate", "verify"]
+
+/**
+ * The model whose limits govern context management: the one with the widest
+ * input cap, not necessarily the base model.
+ *
+ * A split profile derives `reserved` and `prune` from a single `limits`, but
+ * the roles do not share it. Sizing for the narrowest input cap silently
+ * throttles every wider role to under half its real window, which is the whole
+ * point of running them on a bigger model. Sizing for the widest means no role
+ * can be under-reserved, which is the direction that has to be safe.
+ *
+ * @param {Profile} p
+ * @returns {number}
+ */
+export function inputCap(p) {
+  let cap = p.limits.input ?? p.limits.context
+  for (const s of roleSplitModels(p)) {
+    const other = s.limits?.input ?? s.limits?.context
+    if (typeof other === "number" && other > cap) cap = other
+  }
+  return cap
+}
+
+/**
+ * @param {Profile} p
+ * @returns {number}
+ */
 export function reservedTokens(p) {
-  const input = p.limits.input ?? p.limits.context
   const share = p.effort?.reserveShare ?? 0.12
-  return Math.max(8000, Math.round(input * share))
+  return Math.max(8000, Math.round(inputCap(p) * share))
 }
 
 /**
@@ -212,7 +302,7 @@ export function reservedTokens(p) {
  * @param {Profile} p @returns {number}
  */
 export function pruneThreshold(p) {
-  return (p.limits.input ?? p.limits.context) - reservedTokens(p)
+  return inputCap(p) - reservedTokens(p)
 }
 
 /**
@@ -294,6 +384,67 @@ export function loadRetention() {
 export function retentionFor(id) {
   const table = loadRetention()
   return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`]
+}
+
+/**
+ * Every model a profile can put behind the user, base plus any split roles.
+ *
+ * @param {Profile} p
+ * @returns {string[]}
+ */
+export function modelsInPlay(p) {
+  const out = [p.model]
+  for (const rm of Object.values(p.roleModels ?? {})) {
+    if (!out.includes(rm.model)) out.push(rm.model)
+  }
+  return out
+}
+
+/**
+ * The split roles, each with the limits of the model that role actually runs
+ * on. A role on a different model has a different output cap, and the header
+ * has to say so: reading "output cap 524,288" and assuming `build` can spend
+ * all of it is wrong whenever build is split onto a smaller model.
+ *
+ * @param {Profile} p
+ * @returns {{ role: string, model: string, levels: string[], limits: Profile["limits"] | null }[]}
+ */
+export function roleSplitModels(p) {
+  return Object.entries(p.roleModels ?? {}).map(([role, rm]) => {
+    let limits = null
+    try {
+      limits = loadProfile(rm.model)?.limits ?? null
+    } catch {
+      limits = null
+    }
+    return { role, model: rm.model, levels: rm.levels ?? [], limits }
+  })
+}
+
+// Ordered safest-first: a profile is only as private as its least private model.
+const RETENTION_SEVERITY = ["zero-retention", "unknown", "may-train"]
+
+/**
+ * The retention that actually applies once every role is considered, which is
+ * what a config header has to print. `retention.yml` is the source of truth.
+ *
+ * @param {Profile} p
+ * @returns {{ retention: string, worst: string | null }}
+ */
+export function effectiveRetention(p) {
+  let worst = null
+  let retention = "zero-retention"
+  for (const id of modelsInPlay(p)) {
+    const declared = retentionFor(id)?.retention ?? "unknown"
+    if (declared === "may-train") {
+      return { retention: "may-train", worst: id }
+    }
+    if (!worst || RETENTION_SEVERITY.indexOf(declared) > RETENTION_SEVERITY.indexOf(worst)) {
+      worst = declared
+    }
+    retention = worst
+  }
+  return { retention, worst }
 }
 
 /** Where opencode keeps its config, honouring the same env var it does. */

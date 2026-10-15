@@ -1,6 +1,6 @@
 # opencode-harness-kit
 
-[![CI](https://github.com/crytobot459/space-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/crytobot459/space-harness/actions/workflows/ci.yml)
+[![CI](https://github.com/pham-canh/space-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/pham-canh/space-harness/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/opencode-harness-kit.svg)](https://www.npmjs.com/package/opencode-harness-kit)
 
 A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
@@ -15,7 +15,7 @@ your side — `npx` only downloads the published kit. Prefer git? The same three
 steps from a checkout (see [Install](#install)):
 
 ```bash
-git clone https://github.com/crytobot459/space-harness.git
+git clone https://github.com/pham-canh/space-harness.git
 ./bin/oc-harness.mjs init
 ```
 
@@ -119,10 +119,45 @@ on install. It is not hidden, it is labelled.
 | profile | context | top effort | retention |
 |---|---|---|---|
 | `space-bunny-free` (default) | 1,048,576 | `max` | zero-retention |
+| `muse-split-free` | 1,048,576 | `max` | **may train** |
 | `x-preview-f-free` | 1,000,000 | `max` | zero-retention |
 | `longcat-2.5-preview-free` | 1,000,000 | — | zero-retention |
 | `deepseek-v4-flash-free` | 200,000 | `max` | zero-retention |
 | `muse-spark-1.3-contributor-free` | 1,048,576 | `xhigh` | **may train** |
+
+### Split profiles
+
+A profile normally puts one model behind every role. `roleModels` is the way to
+split that, for when the best free model and the highest-output model are not the
+same model:
+
+```jsonc
+"model": "space-bunny-free",          // base: every role not named below
+"roleModels": {
+  "plan":     { "model": "muse-spark-1.3-contributor-free", "levels": ["minimal","low","medium","high","xhigh"] },
+  "build":    { "model": "muse-spark-1.3-contributor-free", "levels": ["minimal","low","medium","high","xhigh"] },
+  "locate":   { "model": "space-bunny-free", "levels": ["low","medium","high","xhigh","max"] }
+}
+```
+
+Three things fall out of this that are easy to get wrong, so they are enforced:
+
+- **`levels` is required when the model differs.** Effort is resolved against the
+  levels of the model the role actually runs on. `plan` asking for `max` on a
+  model that stops at `xhigh` lands on `xhigh`, instead of writing a `max` variant
+  the model has no meaning for.
+- **Retention is the least private model in the file, not the base one.** A base
+  of `zero-retention` with a `may-train` role is a `may-train` profile. The
+  generated header prints that, with the model responsible, and so do
+  `oc-harness use` and `oc-harness show`.
+- **Each role's output cap is its own.** A split role inherits the limits of the
+  model it names, so a `build` on a 131,072-token model cannot spend the base's
+  524,288.
+
+`muse-split-free` is the shipped example, and it is deliberately not the default:
+three of its five roles run on Muse Spark, a Meta contributor-tier endpoint whose
+provider may train on your prompts. Install it for public or throwaway
+repositories.
 
 ## Commands
 
@@ -130,6 +165,7 @@ on install. It is not hidden, it is labelled.
 oc-harness list       profiles with retention and caveats
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness show <id>  resolved effort, derived numbers, fallback queue
+oc-harness use <id> --dryrun   print what would be written, write nothing
 oc-harness install    symlink the plugin, agents, skills and GLOBAL.md
 oc-harness verify     check the install against the profile; non-zero on drift
 oc-harness agents     report agents the effort tiering does not reach
@@ -240,8 +276,10 @@ Your numbers stay on your machine; only the script is in the repo.
 it was handed. It splits on shell separators, honours quotes so that a `;`
 inside a string is an argument rather than a second command, strips `env`,
 `sudo` and `git -C` before matching, and follows `sh -c "..."` into its payload.
-So `cd repo && git push`, `sudo rm -rf /` and `bash -c "git push"` are all
-caught, while `git log --grep push` and `git push origin my-feature-f` are not.
+So `cd repo && rm -rf /`, `sudo rm -rf /` and `bash -c "rm -rf /"` are all
+caught, while `git log --grep push` and `echo push` are not. `git push` is
+not guard-blocked; it falls through to the `*` ask permission so opencode
+prompts for human approval before publishing.
 Writes are scoped to the project directory, with the OS temp directory as the
 one exception GLOBAL.md allows.
 
@@ -300,7 +338,7 @@ identically:
 
 ```bash
 pkg install nodejs git
-git clone https://github.com/crytobot459/space-harness.git
+git clone https://github.com/pham-canh/space-harness.git
 ./space-harness/bin/oc-harness.mjs init
 ```
 

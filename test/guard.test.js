@@ -27,14 +27,19 @@ test("segments split on shell operators, not on inner arguments", () => {
   assert.deepEqual(segments("   "), [])
 })
 
-test("git push is caught however it is chained", () => {
-  assert.equal(blocked("git push"), "git push")
-  assert.equal(blocked("git push origin main"), "git push")
-  assert.equal(blocked("cd /repo && git push"), "git push")
-  assert.equal(blocked("git add -A; git push"), "git push")
-  assert.equal(blocked("git status\n git push --tags"), "git push")
-  // Force push is reported as its own, more serious case.
-  assert.equal(blocked("git push --force origin main"), "git push with force")
+test("git push is ask-gated, not guard-blocked", () => {
+  // Publishing needs human approval via the `*` ask permission, so the guard
+  // lets push through instead of blocking it in code.
+  for (const cmd of [
+    "git push",
+    "git push origin main",
+    "cd /repo && git push",
+    "git add -A; git push",
+    "git status\n git push --tags",
+    "git push --force origin main",
+  ]) {
+    allowed(cmd)
+  }
 })
 
 test("recursive delete is caught in any position", () => {
@@ -115,50 +120,66 @@ test("credential files are protected on every write tool", () => {
   assert.equal(checkWrite(""), null)
 })
 
-test("a push stays blocked behind any prefix", () => {
-  // Anchoring the rule at `^git` used to let every one of these through.
+test("a destructive command stays blocked behind any prefix", () => {
+  // Prefix stripping used to be bypassable with a wrapper. Push is no longer
+  // guard-blocked (it is ask-gated), so pin the invariant with rm instead.
   for (const cmd of [
-    "git push",
-    "cd /repo && git push",
-    "cd /repo; git push",
-    "npm test && git push origin main",
-    "git -C /repo push",
-    "git --no-pager push",
-    "env FOO=1 git push",
-    "/usr/bin/git push",
-    "sudo git push",
-    "sudo -u deploy git push",
-    "xargs -0 git push",
+    "rm -rf /",
+    "cd /repo && rm -rf /",
+    "cd /repo; rm -rf /",
+    "npm test && rm -rf /",
+    "env FOO=1 rm -rf /",
+    "/bin/rm -rf /",
+    "sudo rm -rf /",
+    "sudo -u deploy rm -rf /",
+    "xargs -0 rm -rf /",
   ]) {
     const hit = checkBash(cmd)
     assert.ok(hit, `expected ${cmd} to be blocked`)
-    assert.equal(hit.name, "git push", `wrong rule for ${cmd}`)
+    assert.equal(hit.name, "recursive delete", `wrong rule for ${cmd}`)
+  }
+  // Push passes the guard behind the same prefixes so opencode can ask first.
+  for (const cmd of [
+    "git push",
+    "cd /repo && git push",
+    "git -C /repo push",
+    "env FOO=1 git push",
+    "/usr/bin/git push",
+    "sudo git push",
+  ]) {
+    allowed(cmd)
   }
 })
 
 test("a command line hidden in sh -c is still checked", () => {
   for (const cmd of [
+    'bash -c "rm -rf /"',
+    "sh -c 'rm -rf /tmp/x'",
+    'eval "rm -rf /"',
+  ]) {
+    assert.ok(checkBash(cmd), `expected ${cmd} to be blocked`)
+  }
+  // Push passes through the same wrappers so opencode can ask first.
+  for (const cmd of [
     'bash -c "git push"',
     "sh -c 'git push origin main'",
     'eval "git push"',
   ]) {
-    assert.ok(checkBash(cmd), `expected ${cmd} to be blocked`)
+    allowed(cmd)
   }
 })
 
-test("force is a flag, not a suffix", () => {
+test("force is a flag, not a suffix, and push is ask-gated", () => {
+  // Push (including --force) passes the guard so opencode can ask first.
+  // Publishing needs human approval, but it is not a guard block.
   for (const cmd of [
     "git push --force origin main",
     "git push -f origin main",
     "git push --force-with-lease",
+    "git push origin my-feature-f",
+    "git push origin release-f",
   ]) {
-    assert.equal(checkBash(cmd)?.name, "git push with force", `wrong rule for ${cmd}`)
-  }
-  // A branch that merely ends in `-f` is a push, not a force push.
-  for (const cmd of ["git push origin my-feature-f", "git push origin release-f"]) {
-    const hit = checkBash(cmd)
-    assert.ok(hit, `expected ${cmd} to be blocked`)
-    assert.equal(hit.name, "git push", `-f in a branch name must not read as force: ${cmd}`)
+    allowed(cmd)
   }
 })
 
@@ -254,15 +275,16 @@ test("a heredoc body is data, not commands", () => {
   // must not be blocked for describing it.
   const body = ["do not run git push here; and never sudo rm -rf /", "EOF"].join("\n")
   allowed(`git commit -F - <<'EOF'\n${body}\necho done`)
-  // A real command after the heredoc is still a real command.
-  blocked(`git commit -F - <<'EOF'\n${body}\ngit push`)
+  // A real command after the heredoc is still a real command. Push passes the
+  // guard (ask-gated), rm does not.
+  allowed(`git commit -F - <<'EOF'\n${body}\ngit push`)
   blocked(`git commit -F - <<'EOF'\n${body}\nsudo rm -rf /`)
   // Quoted, double-quoted, tab-stripped and unterminated forms.
   allowed("cat <<'EOF'\ngit push && sudo rm -rf /\nEOF")
   allowed('cat <<"EOF"\ngit push\nEOF')
   allowed("cat <<-EOF\n\tgit push\n\tEOF")
   // Unterminated must not become a blind spot.
-  blocked("cat <<EOF\ngit push")
+  blocked("cat <<EOF\nrm -rf /")
   // <<< is a herestring: its value is an argument, and there is no body.
   allowed("cat <<< 'git push'")
 })
@@ -270,5 +292,5 @@ test("a heredoc body is data, not commands", () => {
 test("rule names are unique so telemetry can attribute a denial", () => {
   const all = [...BASH_RULES, ...WRITE_RULES].map((r) => r.name)
   assert.equal(new Set(all).size, all.length, "duplicate rule names would blur telemetry")
-  assert.ok(all.length >= 10)
+  assert.ok(all.length >= 8)
 })

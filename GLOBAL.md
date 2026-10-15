@@ -54,7 +54,7 @@ to avoid this.
 
 ## Never
 
-- `git push`, publish, or open a pull request. A human does that.
+- Ask before `git push`, publish, or opening a pull request. Publishing is a human decision.
 - Commit a secret. If you find one, report it; do not move it.
 - Read or write `.env`, `.npmrc`, `.netrc`, `.git-credentials`. The guard
   blocks these and will keep blocking them.

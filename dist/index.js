@@ -140,26 +140,6 @@ function tokenize(segment) {
 var ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 var GIT_WRAPPERS = /* @__PURE__ */ new Set(["env", "sudo", "doas", "nohup", "time", "command", "exec", "xargs"]);
 var WRAPPER_VALUE_FLAGS = /* @__PURE__ */ new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"]);
-var GIT_VALUE_FLAGS = /* @__PURE__ */ new Set([
-  "-C",
-  "-c",
-  "--git-dir",
-  "--work-tree",
-  "--namespace",
-  "--super-prefix",
-  "--exec-path",
-  "--config-env"
-]);
-var GIT_GLOBAL_FLAGS = /* @__PURE__ */ new Set([
-  "--bare",
-  "--no-pager",
-  "--paginate",
-  "--no-replace-objects",
-  "--no-optional-locks",
-  "--literal-pathspecs",
-  "--glob-pathspecs",
-  "--icase-pathspecs"
-]);
 function skipPrefixes(tokens) {
   let i = 0;
   for (; ; ) {
@@ -189,26 +169,6 @@ function stripPrefixes(segment) {
   const slash = Math.max(rest[0].lastIndexOf("/"), rest[0].lastIndexOf("\\"));
   if (slash !== -1) rest[0] = rest[0].slice(slash + 1);
   return rest.join(" ");
-}
-function gitSubcommand(segment) {
-  const tokens = tokenize(segment);
-  let i = skipPrefixes(tokens);
-  if (i >= tokens.length) return null;
-  if (!/(^|[\\/])git(\.exe)?$/i.test(tokens[i])) return null;
-  i++;
-  while (i < tokens.length) {
-    const flag = tokens[i];
-    if (GIT_VALUE_FLAGS.has(flag)) {
-      i += 2;
-      continue;
-    }
-    if (/^--[A-Za-z][\w-]*=/.test(flag) || GIT_GLOBAL_FLAGS.has(flag)) {
-      i++;
-      continue;
-    }
-    break;
-  }
-  return tokens[i] ?? null;
 }
 var SHELL_BIN = /(^|[\\/])(sh|bash|zsh|dash|ksh)(\.exe)?$/i;
 var MAX_SHELL_DEPTH = 2;
@@ -240,21 +200,9 @@ var BASH_RULES = [
     test: /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python[0-9.]*)\b/i,
     why: "downloads and executes a script in one step"
   },
-  {
-    name: "git push with force",
-    scope: "segment",
-    // A dry run publishes nothing, so it is not the thing being gated.
-    check: (seg) => gitSubcommand(seg) === "push" && tokenize(seg).some((w) => w === "--force" || w === "-f" || w.startsWith("--force")),
-    why: "overwrites published history"
-  },
-  {
-    name: "git push",
-    scope: "segment",
-    // Flags are matched as whole words: a `-f` in `my-feature-f` is a branch
-    // name, not a force flag.
-    check: (seg) => gitSubcommand(seg) === "push" && !tokenize(seg).some((w) => w === "--dry-run" || w === "-n"),
-    why: "publishing is a human decision"
-  },
+  // `git push` is ask-gated via permissions (`*` ask in the generated
+  // config), not guard-blocked. Publishing needs human approval, but the
+  // guard lets it through so opencode can prompt first.
   {
     name: "recursive delete",
     scope: "segment",
@@ -453,6 +401,31 @@ function validate(p, path = "<memory>") {
       `${where}: effort.reserveShare must be between 0 and 0.5`
     );
   }
+  for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
+    if (!SPLITTABLE_ROLES.includes(role)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} is not one of ${SPLITTABLE_ROLES.join(", ")}`
+      );
+    }
+    if (!(role in (p.roles ?? {}))) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} has no matching entry in roles, so it would never apply`
+      );
+    }
+    if (!rm?.model || typeof rm.model !== "string") {
+      throw new ProfileError(`${where}: roleModels.${role} needs a model`);
+    }
+    if (rm.levels !== void 0 && !Array.isArray(rm.levels)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role}.levels must be an array`
+      );
+    }
+    if (!retentionFor(rm.model)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`
+      );
+    }
+  }
 }
 var CANON = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 function resolveEffort(levels, requested) {
@@ -476,27 +449,116 @@ function resolveEffort(levels, requested) {
   }
   return best ?? levels[levels.length - 1] ?? null;
 }
+function resolveRoleModel(p, role) {
+  const rm = p.roleModels?.[role];
+  if (!rm) return null;
+  return { model: rm.model, levels: rm.levels ?? [] };
+}
+function levelsForRole(p, role) {
+  const rm = resolveRoleModel(p, role);
+  if (rm) return rm.levels;
+  return p.effort?.levels ?? [];
+}
 function resolveRoles(p) {
-  const levels = p.effort?.levels ?? [];
   const out = (
     /** @type {Record<string, string | null>} */
     {}
   );
   for (const [role, want] of Object.entries(p.roles ?? {})) {
-    out[role] = resolveEffort(levels, want);
+    out[role] = resolveEffort(levelsForRole(p, role), want);
   }
   return out;
 }
 function resolveDefaultVariant(p) {
   return resolveEffort(p.effort?.levels ?? [], p.effort?.default ?? null);
 }
+var SPLITTABLE_ROLES = ["plan", "build", "reviewer", "locate", "verify"];
+function inputCap(p) {
+  let cap = p.limits.input ?? p.limits.context;
+  for (const s of roleSplitModels(p)) {
+    const other = s.limits?.input ?? s.limits?.context;
+    if (typeof other === "number" && other > cap) cap = other;
+  }
+  return cap;
+}
 function reservedTokens(p) {
-  const input = p.limits.input ?? p.limits.context;
   const share = p.effort?.reserveShare ?? 0.12;
-  return Math.max(8e3, Math.round(input * share));
+  return Math.max(8e3, Math.round(inputCap(p) * share));
 }
 function pruneThreshold(p) {
-  return (p.limits.input ?? p.limits.context) - reservedTokens(p);
+  return inputCap(p) - reservedTokens(p);
+}
+function loadRetention() {
+  const file = join(ROOT, "retention.yml");
+  if (!existsSync(file)) return {};
+  const out = (
+    /** @type {Record<string, any>} */
+    {}
+  );
+  const lines = readFileSync(file, "utf8").split("\n");
+  let current = null;
+  let i = 0;
+  while (i < lines.length) {
+    const raw = lines[i];
+    const line = raw.trim();
+    const indent = raw.length - raw.trimStart().length;
+    if (!line || line.startsWith("#")) {
+      i++;
+      continue;
+    }
+    if (indent === 2 && line.endsWith(":")) {
+      const key = line.slice(0, -1).trim();
+      current = key.includes("/") ? key : `opencode/${key}`;
+      out[current] = { retention: "unknown" };
+      i++;
+      continue;
+    }
+    if (!current) {
+      i++;
+      continue;
+    }
+    const field = line.match(/^(retention|verified|source|note):\s*(.*)$/);
+    if (field) {
+      const name = field[1];
+      const rest = field[2].trim();
+      if (/^[>|][-+]?$/.test(rest)) {
+        const parts = [];
+        let j = i + 1;
+        for (; j < lines.length; j++) {
+          const l = lines[j];
+          if (!l.trim()) {
+            parts.push("");
+            continue;
+          }
+          if (l.length - l.trimStart().length <= indent) break;
+          parts.push(l.trim());
+        }
+        out[current][name] = parts.join(" ").replace(/\s+/g, " ").trim();
+        i = j;
+        continue;
+      }
+      out[current][name] = rest.replace(/^["']|["']$/g, "");
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+function retentionFor(id) {
+  const table = loadRetention();
+  return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`];
+}
+function roleSplitModels(p) {
+  return Object.entries(p.roleModels ?? {}).map(([role, rm]) => {
+    let limits = null;
+    try {
+      limits = loadProfile(rm.model)?.limits ?? null;
+    } catch {
+      limits = null;
+    }
+    return { role, model: rm.model, levels: rm.levels ?? [], limits };
+  });
 }
 function configFilePath() {
   const dir = process.env.OPENCODE_CONFIG_DIR ?? join(process.env.HOME ?? "", ".config", "opencode");

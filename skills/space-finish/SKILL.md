@@ -47,10 +47,10 @@ over an unreviewed or blocked change is the failure this skill exists to stop.
 
 ## The publish boundary
 
-Publishing is a human action. Do not `git push`, do not open a pull request, do
-not publish a package, do not change repository visibility, even if the task
-seems to imply it. The guard will block `git push` in code, but the boundary
-is yours to hold, not only the hook's.
+Publishing needs human approval. Ask before `git push`, opening a pull request,
+publishing a package, or changing repository visibility, even if the task
+seems to imply it. Permissions default to ask so opencode prompts first, but
+the boundary is yours to hold, not only the hook's.
 
 Leave the tree in a state a human can review: on a branch, with the change
 visible in `git diff`.

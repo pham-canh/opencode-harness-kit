@@ -90,6 +90,18 @@
         "verify": { "$ref": "#/definitions/effortRequest" }
       }
     },
+    "roleModels": {
+      "type": "object",
+      "description": "Model per agent role, for a profile that splits the heavy reasoning roles onto a stronger model while the bulk-output roles stay on a high-output one. `model` remains the base: roles not named here, the top-level `model`, and `small_model` all resolve to it.",
+      "additionalProperties": false,
+      "properties": {
+        "plan": { "$ref": "#/definitions/roleModel" },
+        "build": { "$ref": "#/definitions/roleModel" },
+        "reviewer": { "$ref": "#/definitions/roleModel" },
+        "locate": { "$ref": "#/definitions/roleModel" },
+        "verify": { "$ref": "#/definitions/roleModel" }
+      }
+    },
     "prune": {
       "type": "object",
       "additionalProperties": false,
@@ -122,6 +134,23 @@
     }
   },
   "definitions": {
+    "roleModel": {
+      "type": "object",
+      "description": "A model for one role, plus the effort levels that model actually offers. Required when the model differs from the base, because a level the model does not have must never be written onto the agent.",
+      "additionalProperties": false,
+      "required": ["model"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model id without the provider prefix. Must resolve to a profile in this directory, so its limits and retention are known."
+        },
+        "levels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Effort levels this role's model offers. Omitted means the role emits no variant at all, which is the right reading for a model with no tunable effort."
+        }
+      }
+    },
     "effortRequest": {
       "oneOf": [
         { "type": "string", "description": "Desired level, resolved to the nearest available one." },

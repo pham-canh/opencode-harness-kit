@@ -27,6 +27,8 @@ import {
   profilePath,
   pruneThreshold,
   reservedTokens,
+  effectiveRetention,
+  roleSplitModels,
   resolveDefaultVariant,
   resolveRoles,
   ProfileError,
@@ -146,7 +148,20 @@ function cmdShow(id) {
   row("attachment", p.supports?.attachment ? "yes" : stamp("no"))
   row("reserved", reservedTokens(p).toLocaleString("en-US"))
   row("prune at", pruneThreshold(p).toLocaleString("en-US"))
-  row("retention", p.retention === "zero-retention" ? green(p.retention) : yellow(p.retention))
+  // Effective, not the base model's: a split profile's base can be
+  // zero-retention while the roles that matter are not.
+  const eff = effectiveRetention(p)
+  row("retention", eff.retention === "zero-retention" ? green(eff.retention) : yellow(eff.retention))
+  if (eff.retention !== p.retention) {
+    console.log(`  ${"".padEnd(20)} ${stamp(`base ${p.model} is ${p.retention}, but ${eff.worst} makes the whole profile ${eff.retention}`)}`)
+  }
+  if (roleSplitModels(p).length) {
+    console.log(`\n  ${bold("role models")}`)
+    for (const s of roleSplitModels(p)) {
+      const cap = s.limits ? `  out ${s.limits.output.toLocaleString("en-US")}` : ""
+      console.log(`  ${s.role.padEnd(20)} ${s.model}${cap}`)
+    }
+  }
 
   console.log(`\n  ${bold("role effort")}`)
   for (const [role, level] of Object.entries(plan.roles)) {
@@ -563,7 +578,14 @@ function configDrift(p, actual) {
       out.push(`agent.${role} missing`)
       continue
     }
-    if (agent.model !== want) out.push(`agent.${role}.model ${agent.model} -> ${want}`)
+    // A role's expected model is the one roleModels declares for it, falling
+    // back to the base. Comparing every agent against `want` would report
+    // drift on every split role forever, which trains the user to ignore the
+    // one command that exists to catch a moved `build`.
+    const wantRole = `${p.provider}/${p.roleModels?.[role]?.model ?? p.model}`
+    if (agent.model !== wantRole) {
+      out.push(`agent.${role}.model ${agent.model} -> ${wantRole}`)
+    }
     if (agent.variant !== (level ?? undefined)) {
       out.push(`agent.${role}.variant ${agent.variant ?? "(none)"} -> ${level ?? "(none)"}`)
     }
@@ -620,6 +642,15 @@ async function cmdUse(id) {
     return
   }
 
+  // A flag that is accepted and then ignored is worse than one that errors:
+  // `--dryrun` used to write the real config anyway.
+  if (has("--dryrun")) {
+    console.log(`\n  ${stamp("dry run, nothing written")}`)
+    console.log(`  ${stamp(`would write ${CONFIG_FILE}`)}`)
+    summary(p)
+    return
+  }
+
   mkdirSync(dirname(CONFIG_FILE), { recursive: true })
   if (existsSync(CONFIG_FILE) && !has("--yes")) {
     // The config is the user's file once written. A backup is made either
@@ -632,11 +663,28 @@ async function cmdUse(id) {
   }
   writeFileSync(CONFIG_FILE, out)
   console.log(`\n  ${green("✓")} wrote ${CONFIG_FILE}`)
+  summary(p)
+  console.log(`\n  ${stamp("verify with: opencode debug config")}\n`)
+}
+
+/** What the profile puts behind the user, including a split and real retention. */
+function summary(p) {
+  const eff = effectiveRetention(p)
+  const splits = roleSplitModels(p)
   console.log(`  ${stamp(`model      ${p.provider}/${p.model}`)}`)
   console.log(`  ${stamp(`effort     ${resolveDefaultVariant(p) ?? "(not tunable)"}`)}`)
   console.log(`  ${stamp(`roles      ${Object.entries(resolveRoles(p)).map(([k, v]) => `${k}=${v ?? "-"}`).join(" ")}`)}`)
+  if (splits.length) {
+    // Without this the split is invisible until someone opens the file, which
+    // is too late to be told which roles send prompts to a provider that trains.
+    console.log(`  ${stamp(`split      ${splits.map((s) => `${s.role}=${s.model}`).join(" ")}`)}`)
+    console.log(`  ${stamp(`           ${splits.map((s) => s.limits ? `${s.role} out ${s.limits.output.toLocaleString("en-US")}` : null).filter(Boolean).join("  ")}`)}`)
+  }
+  console.log(`  ${stamp(`retention  ${eff.retention}${eff.retention === "may-train" ? "  <-- prompts may train a model" : ""}`)}`)
+  if (splits.length && eff.retention !== p.retention) {
+    console.log(`  ${stamp(`           base ${p.model} is ${p.retention}, but ${eff.worst} makes the whole profile ${eff.retention}`)}`)
+  }
   console.log(`  ${stamp(`reserved   ${reservedTokens(p).toLocaleString("en-US")} tokens`)}`)
-  console.log(`\n  ${stamp("verify with: opencode debug config")}\n`)
 }
 
 /** opencode.jsonc is JSONC, so strip comments before parsing. */

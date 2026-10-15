@@ -171,7 +171,7 @@ test("guard denies a destructive command by throwing", async () => {
   const dir = workspace()
   const hooks = await harness(dir)
   await assert.rejects(
-    () => hooks["tool.execute.before"](hookInput, { args: { command: "cd /x && git push" } }),
+    () => hooks["tool.execute.before"](hookInput, { args: { command: "cd /x && rm -rf /" } }),
     /blocked/,
   )
   rmSync(dir, { recursive: true, force: true })
@@ -299,8 +299,8 @@ test("telemetry records a denial and never throws on odd input", async () => {
   const dir = workspace()
   const hooks = await harness(dir)
   await hooks["tool.execute.after"](
-    { ...hookInput, args: { command: "git push" } },
-    { title: "bash", output: "[opencode-harness-kit] blocked: git push", metadata: {} },
+    { ...hookInput, args: { command: "rm -rf /" } },
+    { title: "bash", output: "[opencode-harness-kit] blocked: recursive delete", metadata: {} },
   )
   await hooks["tool.execute.after"](
     { ...hookInput, args: { command: "ls" } },
