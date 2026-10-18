@@ -652,10 +652,10 @@ async function cmdUse(id) {
   }
 
   mkdirSync(dirname(CONFIG_FILE), { recursive: true })
-  if (existsSync(CONFIG_FILE) && !has("--yes")) {
-    // The config is the user's file once written. A backup is made either
-    // way, but overwriting it without asking is how a hand-tuned setup dies.
-    if (interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
+  if (existsSync(CONFIG_FILE)) {
+    // The config is the user's file once written. A backup is made either way;
+    // `--yes` skips the question, not the safety net.
+    if (!has("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
       fail("left the existing config alone")
     }
     writeFileSync(`${CONFIG_FILE}.bak`, readFileSync(CONFIG_FILE))
@@ -692,10 +692,16 @@ function stripComments(text) {
   const without = text
     .replace(/^\s*\/\/.*$/gm, "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
+  if (!without.trim()) return {} // empty or comments-only is a valid empty config
   try {
     return JSON.parse(without)
-  } catch {
-    return {}
+  } catch (err) {
+    // Returning {} here is data loss, not a fallback. The caller builds the new
+    // config from this base and writes it straight over the user's file, so a
+    // parse failure would silently drop every key they had set.
+    fail(`could not parse ${CONFIG_FILE}: ${err.message}\n  ` +
+         `JSON.parse rejects trailing commas and unquoted keys, which JSONC allows.\n  ` +
+         `fix the file by hand, or move it aside and run this again.`)
   }
 }
 
@@ -838,7 +844,7 @@ async function cmdDoctor() {
       problems++
       console.log(`  ${yellow("!")} ${id.padEnd(32)} ${yellow("drift")}`)
       for (const i of issues) console.log(`      ${i}`)
-      console.log(`      ${stamp(`fix: oc-harness use ${id} --refresh`)}`)
+      console.log(`      ${stamp(`fix: oc-harness refresh ${id}`)}`)
     }
   }
   console.log(
@@ -1018,6 +1024,12 @@ try {
     --retention    filter list by retention class
     --free         list free profiles only
 `)
+    // An unknown command is a typo, not a request for help. Without this
+    // `oc-harness tsl` prints help and exits 0, so a script calling it never
+    // finds out that nothing ran.
+    if (cmd !== "help" && cmd !== "--help" && cmd !== "-h") {
+      fail(`unknown command: ${cmd}\n  run 'oc-harness help' for the list`)
+    }
   }
 } catch (err) {
   if (err instanceof ProfileError) fail(err.message)
