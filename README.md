@@ -10,6 +10,12 @@ construction**. Switching models is a data edit, not a code change.
 npx oc-harness init                  # pick a free model, then install + verify
 ```
 
+<p align="center">
+  <img src="docs/demo-loop.gif" width="760" alt="oc-harness list showing the model-agnostic profiles, then oc-harness verify reporting a consistent install">
+  <br>
+  <a href="docs/demo.mp4">▶ Play the 102-second capture</a>
+</p>
+
 then restart opencode. That is the whole quickstart. No npm account needed on
 your side — `npx` only downloads the published kit. Prefer git? The same three
 steps from a checkout (see [Install](#install)):
