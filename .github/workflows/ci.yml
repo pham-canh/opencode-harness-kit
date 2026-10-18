@@ -44,7 +44,11 @@ jobs:
 
   publish:
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Only on a tag. On every push to main the second run would fail with
+    # EPUBLISHCONFLICT, because the version in package.json is already on the
+    # registry — a broken build on every ordinary commit after the first.
+    # Cutting a release: git tag v0.2.1 && git push origin v0.2.1
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read

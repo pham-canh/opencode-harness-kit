@@ -7,7 +7,7 @@ A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
 
 ```bash
-npx oc-harness init                  # pick a free model, then install + verify
+npx -y opencode-harness-kit init    # pick a free model, then install + verify
 ```
 
 <p align="center">
@@ -58,7 +58,7 @@ profiles/space-bunny-free.json     ← the model
 src/                               ← no model name anywhere in here
 ```
 
-Same plugin source, four shipped profiles, four different behaviours. The test
+Same plugin source, five shipped profiles, five different behaviours. The test
 suite asserts that rather than taking it on faith.
 
 ## What the compiler derives
@@ -339,8 +339,7 @@ pkg install nodejs git
 npx -y opencode-harness-kit init
 ```
 
-Not published to npm yet, or no registry access? The checkout path works
-identically:
+Without registry access, the checkout path works identically:
 
 ```bash
 pkg install nodejs git
