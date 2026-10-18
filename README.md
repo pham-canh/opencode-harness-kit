@@ -165,19 +165,40 @@ three of its five roles run on Muse Spark, a Meta contributor-tier endpoint whos
 provider may train on your prompts. Install it for public or throwaway
 repositories.
 
+## Requirements
+
+| | |
+|---|---|
+| Node | **22 or newer** — `engines` in package.json, and the CLI uses `node:` prefixed builtins. Node 20 fails at import time, not with a friendly message. |
+| npm | 10 or newer, for `npm ci` when installing from a checkout |
+| OS | macOS, Linux and Windows. No platform checks in the code; the tests run on `ubuntu-latest`. |
+| Shell | none. The CLI never shells out, so no `bash`, `zsh` or `fish` setup is needed. |
+| Network | `list` and `doctor` read models.dev, which is the point of both. Everything else, including `install`, `use` and `verify`, works offline. |
+| Disk | it writes into `~/.config/opencode/` and nothing else. |
+
+`~/.config/opencode/` is your live agent config. `use` and `install` write there,
+`verify` only reads, and `use --dryrun` writes nothing at all. Every write keeps
+a `.bak` next to the file, including under `--yes`.
+
 ## Commands
 
 ```
 oc-harness list       profiles with retention and caveats
-oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness show <id>  resolved effort, derived numbers, fallback queue
+oc-harness init       pick a free profile, then install + verify
+oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness use <id> --dryrun   print what would be written, write nothing
+oc-harness refresh <id> re-derive a profile against the live model list
 oc-harness install    symlink the plugin, agents, skills and GLOBAL.md
+oc-harness link       just the plugin and instruction file, no agents or skills
 oc-harness verify     check the install against the profile; non-zero on drift
 oc-harness agents     report agents the effort tiering does not reach
 oc-harness doctor     re-check profiles against models.dev and the live config
 oc-harness baseline   measure the current install
 ```
+
+`oc-harness <anything-else>` now exits non-zero with the list of real commands,
+instead of printing help and reporting success.
 
 ### `verify` is the command that matters
 
@@ -464,6 +485,15 @@ Measured results, and the limits they do not cross, are in
 
 `docs/RESEARCH.md` records where the numbers came from and what was tried and
 rejected.
+
+## Contributing
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) — the bar is that every change is
+verifiable. Offline tests stay offline, anything that writes to disk needs a
+`--dryrun` and a backup, and a number that moves updates the README in the same
+commit. Bug reports go to [SECURITY.md](SECURITY.md) if they involve a key or
+someone else's config; otherwise open an issue with the command you ran and what
+it printed.
 
 ## License
 
