@@ -16,6 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
+import { parseJsonc } from "../src/profile.js"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
@@ -101,6 +102,77 @@ test("an unsplit profile still reports its own retention", () => {
     const out = run(box, ["use", "space-bunny-free", "--dryrun"])
     assert.match(out, /retention\s+zero-retention/)
     assert.doesNotMatch(out, /split\s/)
+  } finally {
+    box.cleanup()
+  }
+})
+// --- `use` never overwrites without a way back -----------------------------
+
+test("`use --yes` still backs up the config it replaces", () => {
+  // `--yes` exists to skip the question on a non-interactive run, not to skip
+  // the safety net. Gating the backup on the same flag as the prompt meant the
+  // one path that overwrote a config silently was also the one path with
+  // nothing to restore from.
+  const box = sandbox()
+  try {
+    run(box, ["use", "space-bunny-free", "--yes"])
+    assert.ok(existsSync(box.config), "config should have been written")
+
+    const marker = { customSetting: "do not lose me" }
+    writeFileSync(box.config, JSON.stringify(marker, null, 2))
+    run(box, ["use", "space-bunny-free", "--yes"])
+
+    const backup = JSON.parse(readFileSync(`${box.config}.bak`, "utf8"))
+    assert.deepEqual(backup, marker, "the replaced config should be recoverable verbatim")
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("`use` keeps hand-tuned keys through a comment + trailing comma edit", () => {
+  // A trailing comma is ordinary in a hand-edited .jsonc. The reader used to
+  // return `{}` for one, and `use` then wrote the merged config back out with
+  // the user's own keys gone -- no error, no backup notice.
+  const box = sandbox()
+  try {
+    run(box, ["use", "space-bunny-free", "--yes"])
+    writeFileSync(
+      box.config,
+      '{\n  // my own tweaks\n  "model": "opencode/space-bunny-free",\n  "experimental": { "foo": true, },\n}\n',
+    )
+    run(box, ["use", "space-bunny-free", "--yes"])
+
+    const after = parseJsonc(readFileSync(box.config, "utf8"))
+    assert.deepEqual(after.experimental, { batch_tool: true, continue_loop_on_deny: true, foo: true })
+    assert.equal(after.harness.profile, "space-bunny-free")
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("`use` refuses to regenerate a config it cannot parse", () => {
+  // Failing loudly beats writing out a config built on an empty base.
+  const box = sandbox()
+  try {
+    run(box, ["use", "space-bunny-free", "--yes"])
+    const original = '{ this is not json at all'
+    writeFileSync(box.config, original)
+
+    const out = run(box, ["use", "space-bunny-free", "--yes"])
+    assert.match(out, /not valid JSONC/i)
+    assert.equal(readFileSync(box.config, "utf8"), original, "the broken file must be left untouched")
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("`show` reports the retention entry for the profile's own model", () => {
+  // The lookup was keyed `opencode/${provider}/${model}` while retention.yml is
+  // keyed `${provider}/${model}`, so `show` silently printed no retention line.
+  const box = sandbox()
+  try {
+    const out = run(box, ["show", "space-bunny-free"])
+    assert.match(out, /retention/i, `show should mention retention, got:\n${out}`)
   } finally {
     box.cleanup()
   }
