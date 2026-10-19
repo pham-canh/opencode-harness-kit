@@ -1,6 +1,6 @@
 {
   "name": "opencode-harness-kit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Model-agnostic harness kit for OpenCode: capability profiles, role-based reasoning effort, context pruning, and measured baselines.",
   "license": "MIT",
   "homepage": "https://github.com/pham-canh/space-harness#readme",
@@ -37,7 +37,7 @@
     "GLOBAL.md",
     "agents/",
     "skills/",
-    "docs/",
+    "docs/*.md",
     "README.md",
     "LICENSE"
   ],
@@ -75,7 +75,7 @@
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.31",
     "@types/node": "^22.0.0",
-"esbuild": "^0.28.2",
+    "esbuild": "^0.28.2",
     "typescript": "^5.6.0"
   }
 }
