@@ -136,7 +136,7 @@ test("the same plugin source produces different behaviour per profile", () => {
   //    this test asserted the stripped key, which meant it was asserting that
   //    dead config existed.
   assert.equal(bunny.agent.plan.variant, "max")
-  assert.equal(bunny.agent.build.variant, "high")
+  assert.equal(bunny.agent.build.variant, "max")
   assert.equal(bunny.agent.locate.variant, "low")
   assert.equal(muse.agent.plan.variant, "xhigh", "resolved down from max")
   assert.equal(muse.agent.plan.variant === "max", false)
