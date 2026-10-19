@@ -629,6 +629,7 @@ function parseJsonc(text) {
     const parsed = JSON.parse(out);
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
+    if (!out.trim()) return {};
     return null;
   }
 }
