@@ -27,16 +27,6 @@ over an unreviewed or blocked change is the failure this skill exists to stop.
    config or profile, run its verify command. A hand-edit survives a regeneration
    silently, and that is how a zero-retention claim ends up running on a
    may-train model.
-2. **Read the diff once more as a whole.** Reviewers read task by task; you
-   read the change as someone who has never seen it will.
-3. **Check the documentation.** Did this change make a document describe
-   something that no longer exists? Fix the document, do not note it for later.
-4. **Write the summary** a person needs in order to trust the change without
-   reading the whole diff.
-5. **Check the install is still whole.** If this project is driven by a generated
-   config or profile, run its verify command. A hand-edit survives a regeneration
-   silently, and that is how a zero-retention claim ends up running on a
-   may-train model.
 
 ## Summary shape
 
