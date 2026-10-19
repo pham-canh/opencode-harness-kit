@@ -7,9 +7,10 @@
   <video src="docs/demo/pitch.mp4" width="720" controls></video>
 </p>
 
-*Two minutes and eleven seconds, narrated. Script and renderer in [`video/`](video/);
-every number on screen is read out of this repository at render time, so the
-video cannot drift from the code.*
+*Four minutes forty-seven seconds, recorded live from a real terminal and
+narrated. The take script and the voiceover are in [`video/`](video/), and
+rebuilding it is documented there — including the two mistakes that cost the
+most time, so the next person does not repeat them.*
 
 A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
