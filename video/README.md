@@ -21,18 +21,24 @@ deleted — is not something a demo of winning numbers would have shown.
 
 ## Rebuild
 
-Recording needs [`vrec`](../tools/vrec), which drives the keyboard and mouse
-through the accessibility API and checks every claim in the take afterwards.
-Both it and `btake` live in this repo, so a clone is all you need:
+Recording needs [`vrec`](https://github.com/pham-canh/vrec), which drives the
+keyboard and mouse through the accessibility API and checks every claim in the
+take afterwards. It and `btake` are separate repos with their own history, so
+this repo holds no copy of either. Keep them next to this one:
 
 ```sh
 git clone https://github.com/pham-canh/space-harness.git
 cd space-harness
+git clone https://github.com/pham-canh/vrec.git   ../tools/vrec
+git clone https://github.com/pham-canh/btake.git  ../tools/btake
 bash tools/setup-demo.sh          # one-time, see below
 ```
 
+If you keep them somewhere else, point `HARNESSTOOLS` at that directory and
+`setup-demo.sh` will use it.
+
 ```sh
-export PATH="$PWD/tools/vrec/bin:$PATH"
+export PATH="$PWD/../tools/vrec/bin:$PATH"
 export HI_TYPE_SPEED=1.0
 
 vrec reset   "$PWD/take.sh"       # clean slate before anything
@@ -58,8 +64,8 @@ home directory, so the same commands work on a fresh laptop.
 `tools/setup-demo.sh` does the one-time setup and is safe to re-run:
 
 - checks `python3`, `node`, `npm` and the macOS `say` voice
-- creates `tools/vrec/.venv` and installs the pinned `pyobjc-framework-Quartz`
-  that posts the keyboard events
+- creates a `.venv` inside the cloned `vrec` and installs the pinned
+  `pyobjc-framework-Quartz` that posts the keyboard events
 - confirms the driver imports before anything is recorded
 - grants the terminal Accessibility and Screen Recording permissions, which
   macOS otherwise blocks silently — `vrec doctor` is the way to confirm
