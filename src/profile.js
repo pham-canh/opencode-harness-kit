@@ -553,6 +553,10 @@ export function parseJsonc(text) {
     const parsed = JSON.parse(out)
     return parsed && typeof parsed === "object" ? parsed : null
   } catch {
+    // An empty or comments-only file is not malformed JSONC, it is an empty
+    // config, and `oc-harness use` has to be able to fill one in. Only report
+    // a parse failure when there was actually something to parse.
+    if (!out.trim()) return {}
     return null
   }
 }

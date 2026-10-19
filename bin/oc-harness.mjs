@@ -660,7 +660,7 @@ async function cmdUse(id) {
 
   mkdirSync(dirname(CONFIG_FILE), { recursive: true })
   if (existsSync(CONFIG_FILE)) {
-    // The config is the user's file once written. The backup is unconditional:
+// The config is the user's file once written. The backup is unconditional:
     // `--yes` skips the question, it does not skip the safety net. Gating the
     // backup on `--yes` meant the one path that overwrites without asking was
     // also the one path with nothing to fall back to.
@@ -855,7 +855,7 @@ async function cmdDoctor() {
       problems++
       console.log(`  ${yellow("!")} ${id.padEnd(32)} ${yellow("drift")}`)
       for (const i of issues) console.log(`      ${i}`)
-      console.log(`      ${stamp(`fix: oc-harness use ${id} --refresh`)}`)
+      console.log(`      ${stamp(`fix: oc-harness refresh ${id}`)}`)
     }
   }
   console.log(
@@ -1070,6 +1070,12 @@ try {
     --max-rounds N  stop after N tasks (default: 20)
     --budget MIN    stop after MIN minutes (default: 120)
 `)
+    // An unknown command is a typo, not a request for help. Without this
+    // `oc-harness tsl` prints help and exits 0, so a script calling it never
+    // finds out that nothing ran.
+    if (cmd !== "help" && cmd !== "--help" && cmd !== "-h") {
+      fail(`unknown command: ${cmd}\n  run 'oc-harness help' for the list`)
+    }
   }
 } catch (err) {
   if (err instanceof ProfileError) fail(err.message)

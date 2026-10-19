@@ -713,3 +713,13 @@ test("profileIdFromConfig reads a config carrying comments and trailing commas",
     else process.env.OPENCODE_CONFIG_DIR = prev
   }
 })
+
+test("an empty or comments-only config is an empty config, not a broken one", () => {
+  // `oc-harness use` has to be able to fill in a config that does not exist
+  // yet. Treating an empty file as malformed would refuse the one case the
+  // command is most often used for.
+  assert.deepEqual(parseJsonc(""), {})
+  assert.deepEqual(parseJsonc("   \n  "), {})
+  assert.deepEqual(parseJsonc("// nothing here\n/* yet */"), {})
+  assert.equal(parseJsonc("{ this is not json"), null, "real junk is still rejected")
+})
