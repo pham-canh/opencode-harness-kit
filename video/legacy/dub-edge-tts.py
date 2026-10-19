@@ -10,6 +10,7 @@ theo so thi lan cuoi se lech khoi hinh.
 Mac dinh im lang giua cac doan. Doan cuoi phai ket thuc truoc khi video het.
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -43,15 +44,19 @@ SEGMENTS = [
     (43, "Install is consistent with the profile."),
 ]
 
+# edge-tts lives in the venv of whichever repo first pulled it in. Allow an
+# override so this does not have to carry somebody else's checkout path.
 ETTS = next(
     (p for p in (
+        Path(os.environ["EDGE_TTS"]) if os.environ.get("EDGE_TTS") else None,
         Path.home() / "harness/.repos/voicecare-scheduler-git/.venv/bin/edge-tts",
-        Path("/Users/admin/harness/.repos/voicecare-scheduler-git/.venv/bin/edge-tts"),
-    ) if p.exists()),
+        Path("~/.local/bin/edge-tts").expanduser(),
+    ) if p and p.exists()),
     None,
 )
 if ETTS is None:
-    sys.exit("khong tim thay edge-tts. Cai: pip install edge-tts")
+    sys.exit("khong tim thay edge-tts. Cai: pip install edge-tts, "
+             "ho dat EDGE_TTS=/duong/dan/den/edge-tts")
 
 
 def duration(path: Path) -> float:
