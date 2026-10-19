@@ -54,7 +54,11 @@ def main():
         subprocess.run([
             "say", "-v", VOICE, "-r", str(RATE),
             "-f", str(txt), "-o", str(aud),
-            "--data-format=aac", "--file-format=m4af",
+            # macOS `say` defaults to 22050 Hz, which is telephone-bandwidth and
+            # audibly dull on good speakers. 44100 costs nothing and is what a
+            # client-facing deliverable should carry. Mono is deliberate: this
+            # is narration, and a stereo copy of it adds size, not information.
+            "--data-format=aac@44100", "--file-format=m4af",
         ], check=True)
 
         d = duration(aud)
