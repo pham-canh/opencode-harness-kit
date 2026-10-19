@@ -29,7 +29,7 @@ baseline-*.txt
 video/scenes/
 video/audio/
 video/space-harness-demo.mp4
-video/__pycache__/
+__pycache__/
 video/build/
 video/vo.m4a
 video/vo_timed.txt
