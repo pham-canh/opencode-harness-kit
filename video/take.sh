@@ -18,7 +18,9 @@
 # instead, which costs nothing in realism.
 
 TAKE_DIR="${VREC_TAKE_DIR:-/tmp/sh}"
-REPO="${REPO:-/Users/admin/harness/space-harness}"
+# Derived from this script's own location so the take works from any clone.
+# A hardcoded absolute path made the take run on exactly one machine.
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 APP_DIR="$TAKE_DIR/app"
 DEMO_CFG="$TAKE_DIR/cfg"
 REAL_CFG="$HOME/.config/opencode/opencode.jsonc"
@@ -175,3 +177,4 @@ take_main() {
   beat_result
   beat_finish
 }
+
