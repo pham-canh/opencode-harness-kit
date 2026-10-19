@@ -157,7 +157,7 @@ test("config hook applies the profile's effort to the real config shape", async 
 
   assert.equal(config.agent.plan.variant, "max")
   assert.equal(config.agent.reviewer.variant, "max")
-  assert.equal(config.agent.build.variant, "high")
+  assert.equal(config.agent.build.variant, "max")
   assert.equal(config.agent.locate.variant, "low")
   for (const agent of Object.values(config.agent)) {
     assert.equal(agent.model, "opencode/space-bunny-free")

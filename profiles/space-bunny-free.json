@@ -27,7 +27,7 @@
   },
   "roles": {
     "plan": "max",
-    "build": "high",
+    "build": "max",
     "reviewer": "max",
     "locate": "low",
     "verify": "low"

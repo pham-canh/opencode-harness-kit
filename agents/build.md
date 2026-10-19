@@ -2,7 +2,7 @@
 description: Writes code and verifies it. Use when the plan is settled and files need to change.
 mode: primary
 model: opencode/space-bunny-free
-variant: high
+variant: max
 steps: 40
 permission:
   edit: allow
