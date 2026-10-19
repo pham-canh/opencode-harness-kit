@@ -19,8 +19,19 @@
 
 TAKE_DIR="${VREC_TAKE_DIR:-/tmp/sh}"
 REPO="${REPO:-/Users/admin/harness/space-harness}"
+APP_DIR="$TAKE_DIR/app"
 DEMO_CFG="$TAKE_DIR/cfg"
 REAL_CFG="$HOME/.config/opencode/opencode.jsonc"
+
+# The CLI is installed from the registry, not run out of the repo. That is the
+# path a reader actually has, and it is the only way this take can prove the
+# published tarball carries the files it needs: bin/, src/ and profiles/ all
+# have to resolve from a real node_modules for `oc-harness list` to print
+# anything. A typo in `files` fails here on camera instead of in a bug report.
+#
+# PATH is extended rather than typing the 42-character bin path on every beat.
+# Five commands would have carried it, which is over half a minute of the
+# recording spent typing something nobody needs to read.
 
 # The scratch path is kept short on purpose. Every command that mentions it is
 # typed on camera at roughly a fifth of a second per character, and the default
@@ -33,6 +44,23 @@ REAL_CFG="$HOME/.config/opencode/opencode.jsonc"
 # incapable of that: snapshot the real file, refuse to finish if it moved.
 real_cfg_stamp() { shasum "$REAL_CFG" 2>/dev/null | cut -d' ' -f1; }
 
+# wait_for <path> [seconds]
+#
+# The gates run in this process; the commands they check were typed into the
+# recorded shell. `vis` waits for the screen to stop changing, which is not the
+# same as waiting for the command to finish. npm install prints "added N
+# packages" and writes node_modules/.bin a moment later, so `test -x` fired
+# against a directory that did not exist yet: the take died on a red gate while
+# every gate after it passed.
+wait_for() {
+  local path="$1" limit="${2:-90}" waited=0
+  while [ ! -e "$path" ] && [ "$waited" -lt "$limit" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  [ -e "$path" ] || die "gave up after ${limit}s waiting for $path"
+}
+
 # vis <command> — type it into the terminal and run it, on camera.
 vis() {
   hi_run type "$1"
@@ -43,14 +71,14 @@ vis() {
 beat_reset() {
   step "reset: clean scratch"
   rm -rf "$TAKE_DIR"
-  mkdir -p "$DEMO_CFG"
+  mkdir -p "$DEMO_CFG" "$APP_DIR"
   [ -d "$REPO" ] || die "no repo at $REPO"
   REAL_CFG_BEFORE="$(real_cfg_stamp)"
   ok "scratch ready at $DEMO_CFG"
 }
 
 beat_setup() {
-  step "setup: a clean window on the repo"
+  step "setup: a clean window"
   hi_stage "Terminal"
   hi_idle 1.0
 
@@ -59,29 +87,54 @@ beat_setup() {
   # under a scratch dir and fail on camera, under narration claiming green. No
   # gate can see that, because gates run in the vrec process, not in this shell.
   vis "unset OPENCODE_CONFIG_DIR" 25
-  vis "cd $REPO" 25
+  vis "cd $APP_DIR" 25
   vis "clear" 25
+}
 
-  step "setup: typecheck is clean"
-  vis "npm run typecheck" 90
-  need_cmd "typecheck clean" bash -c "cd '$REPO' && npm run typecheck"
+# The install beat is the reason this take exists. Everything after it runs the
+# CLI out of node_modules, so a `files` entry that dropped src/ or profiles/
+# breaks here — on camera, with the error visible — instead of surfacing later
+# as a user bug report.
+beat_install() {
+  step "install: from the registry, the way a reader gets it"
+  vis "npm install opencode-harness-kit" 150
+  wait_for "$APP_DIR/node_modules/.bin/oc-harness" 90
+  need_cmd "CLI installed" test -x "$APP_DIR/node_modules/.bin/oc-harness"
+  need_grep "profiles shipped in the tarball" "space-bunny-free" \
+    <("$APP_DIR/node_modules/.bin/oc-harness" list 2>&1)
+
+  step "install: put it on PATH so the rest reads clean"
+  vis "export PATH=$APP_DIR/node_modules/.bin:\$PATH" 25
 }
 
 beat_explain() {
   step "explain: the profiles are data, not prose"
-  vis "node bin/oc-harness.mjs list" 40
+  vis "oc-harness list" 40
   need_grep "profiles listed" "space-bunny-free" \
-    <(cd "$REPO" && node bin/oc-harness.mjs list 2>&1)
+    <("$APP_DIR/node_modules/.bin/oc-harness" list 2>&1)
+
+  step "explain: one profile, in full"
+  vis "oc-harness show space-bunny-free" 40
+  need_grep "profile renders" "space-bunny-free" \
+    <("$APP_DIR/node_modules/.bin/oc-harness" show space-bunny-free 2>&1)
 }
 
 beat_result() {
+  # typecheck runs on every commit in CI and is not on the story the take is
+  # telling, so it is not on camera: tsc costs ~10s of dead air that the viewer
+  # reads as nothing happening. `npm test` is the beat that has to be measured.
   step "result: the suite, measured live"
+  vis "cd $REPO" 25
   vis "npm test" 240
   need_grep "suite is green on screen" "# fail 0" \
     <(cd "$REPO" && env -u OPENCODE_CONFIG_DIR npm test 2>&1)
 
+  step "result: back to the installed CLI"
+  vis "cd $APP_DIR" 25
+
+  # No mkdir on camera: beat_reset already created the scratch tree. One beat of
+  # keystrokes and a screen with no change in it.
   step "result: stage a hand-edited config"
-  vis "mkdir -p $DEMO_CFG" 25
   vis "printf '{\n  // my own tweaks\n  \"model\": \"opencode/space-bunny-free\",\n  \"experimental\": { \"keep_me\": true, },\n}\n' > $DEMO_CFG/opencode.jsonc" 40
   need_file "hand-edited config staged" "$DEMO_CFG/opencode.jsonc"
 
@@ -95,7 +148,8 @@ beat_result() {
   vis "echo \$OPENCODE_CONFIG_DIR" 25
 
   step "result: regenerate it"
-  vis "node bin/oc-harness.mjs use space-bunny-free --yes" 60
+  vis "oc-harness use space-bunny-free --yes" 60
+  wait_for "$DEMO_CFG/opencode.jsonc" 30
   need_file "config regenerated in scratch" "$DEMO_CFG/opencode.jsonc"
 
   step "result: the setting survived"
@@ -113,4 +167,11 @@ beat_finish() {
   ok "global config byte-identical"
 }
 
-take_main() { beat_reset; beat_setup; beat_explain; beat_result; beat_finish; }
+take_main() {
+  beat_reset
+  beat_setup
+  beat_install
+  beat_explain
+  beat_result
+  beat_finish
+}

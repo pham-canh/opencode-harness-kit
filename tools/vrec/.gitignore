@@ -1,0 +1,24 @@
+# Virtualenv — recreated by lib/setup_env.sh
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Recordings and scratch. The mp4 is the artefact worth keeping and it lives in
+# the project being recorded; everything here regenerates from a re-run.
+*.mp4
+*.aiff
+*.m4a
+out/
+scenes/
+frames/
+.build/
+
+# macOS
+.DS_Store

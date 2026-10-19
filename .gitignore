@@ -2,6 +2,14 @@ node_modules/
 .DS_Store
 *.log
 
+# Credentials. Never commit these, and never let `git add .` sweep them up.
+.env
+.env.*
+.evn
+.npmrc
+.netrc
+.git-credentials
+
 # Local measurement output. The script ships; your numbers stay local.
 baseline-*.json
 baseline-*.txt
@@ -22,3 +30,12 @@ video/build/
 video/vo.m4a
 video/vo_timed.txt
 video/narration.m4a
+
+# Demo tooling. tools/vrec and tools/btake carry their own .gitignore for their
+# own scratch; these are the leftovers a script creates at the root of the tree.
+tools/*/node_modules/
+tools/*/.venv/
+tools/*/__pycache__/
+tools/*/out/
+tools/*/frames/
+tools/vrec/.repos/
