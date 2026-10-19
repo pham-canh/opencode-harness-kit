@@ -12,7 +12,7 @@
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
 
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync } from "node:fs"
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, relative } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -32,6 +32,7 @@ import {
   resolveDefaultVariant,
   resolveRoles,
   ProfileError,
+  parseJsonc,
 } from "../src/profile.js"
 import { generateConfig, globalInstructionsPath } from "../src/config.js"
 import { planEffort } from "../src/effort.js"
@@ -134,7 +135,7 @@ function cmdShow(id) {
   if (!id) fail("usage: oc-harness show <profile>")
   const p = loadProfile(id)
   const plan = planEffort(id)
-  const retention = loadRetention()[`opencode/${p.provider}/${p.model}`]
+  const retention = loadRetention()[`${p.provider}/${p.model}`]
 
   console.log(`\n${bold(p.id)}  ${stamp(p.title ?? "")}\n`)
   const row = (k, v) => console.log(`  ${k.padEnd(20)} ${v}`)
@@ -373,25 +374,36 @@ async function askChoice(question) {
 function linkOne(src, dest) {
   const parent = realpathSync(dirname(dest))
   const target = relative(parent, realpathSync(src))
-  let stale = false
+
+  let isLink = false
+  let ours = false
   try {
-    stale = readlinkSync(dest) !== target
+    isLink = lstatSync(dest).isSymbolicLink()
+    ours = isLink && readlinkSync(dest) === target
   } catch {
-    stale = true
+    // Nothing at `dest` yet.
   }
-  if (stale) {
-    try {
-      rmSync(dest, { force: true, recursive: false })
-    } catch {
-      // Nothing to remove, or it is a real directory we must not delete.
+  if (ours) return
+
+  if (existsSync(dest)) {
+    // Replace only what this installer put there. The old code treated "not
+    // already our link" as "safe to delete" and called `rmSync` with
+    // `recursive: false`, which succeeds on a plain file: a hand-written
+    // agent was deleted and replaced by a symlink without a word. A real
+    // directory is left alone too -- unlinking it is not this installer's
+    // call to make.
+    if (!isLink) {
+      const kind = lstatSync(dest).isDirectory() ? "directory" : "file"
+      console.log(`  ${yellow("!")} ${stamp(`left alone: ${dest} is a real ${kind} and was not ours to replace`)}`)
+      return
     }
+    rmSync(dest, { force: true })
   }
-  if (!existsSync(dest)) {
-    try {
-      symlinkSync(target, dest)
-    } catch (err) {
-      console.log(`  ${yellow("!")} ${stamp(`could not link ${dest}: ${err.message}`)}`)
-    }
+
+  try {
+    symlinkSync(target, dest)
+  } catch (err) {
+    console.log(`  ${yellow("!")} ${stamp(`could not link ${dest}: ${err.message}`)}`)
   }
 }
 
@@ -420,9 +432,7 @@ function cmdVerify() {
   //    hand-edit anywhere in the model/variant/permission surface shows up
   //    here, which is the check that would have caught `build` being moved onto
   //    a may-train model.
-  const actual = existsSync(CONFIG_FILE)
-    ? stripComments(readFileSync(CONFIG_FILE, "utf8"))
-    : null
+  const actual = existsSync(CONFIG_FILE) ? readConfigJson() : null
   if (!actual) {
     problems.push(`${CONFIG_FILE} does not exist. Run: oc-harness use ${p.id}`)
   } else {
@@ -631,10 +641,7 @@ async function cmdUse(id) {
     console.error(msg)
   }
 
-  let base = {}
-  if (existsSync(CONFIG_FILE)) {
-    base = stripComments(readFileSync(CONFIG_FILE, "utf8"))
-  }
+  const base = readConfigJson()
 
   const out = generateConfig(p, { base, comments: true })
   if (has("--print")) {
@@ -652,10 +659,12 @@ async function cmdUse(id) {
   }
 
   mkdirSync(dirname(CONFIG_FILE), { recursive: true })
-  if (existsSync(CONFIG_FILE) && !has("--yes")) {
-    // The config is the user's file once written. A backup is made either
-    // way, but overwriting it without asking is how a hand-tuned setup dies.
-    if (interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
+  if (existsSync(CONFIG_FILE)) {
+    // The config is the user's file once written. The backup is unconditional:
+    // `--yes` skips the question, it does not skip the safety net. Gating the
+    // backup on `--yes` meant the one path that overwrites without asking was
+    // also the one path with nothing to fall back to.
+    if (!has("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
       fail("left the existing config alone")
     }
     writeFileSync(`${CONFIG_FILE}.bak`, readFileSync(CONFIG_FILE))
@@ -687,16 +696,24 @@ function summary(p) {
   console.log(`  ${stamp(`reserved   ${reservedTokens(p).toLocaleString("en-US")} tokens`)}`)
 }
 
-/** opencode.jsonc is JSONC, so strip comments before parsing. */
-function stripComments(text) {
-  const without = text
-    .replace(/^\s*\/\/.*$/gm, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-  try {
-    return JSON.parse(without)
-  } catch {
-    return {}
+/**
+ * Read the installed config as JSONC.
+ *
+ * Strict on purpose. Returning `{}` for a config we could not parse made
+ * `oc-harness use` merge onto an empty base and write the user's own settings
+ * back out deleted, with no message. Refusing is the only safe answer here.
+ */
+function readConfigJson() {
+  if (!existsSync(CONFIG_FILE)) return {}
+  const parsed = parseJsonc(readFileSync(CONFIG_FILE, "utf8"))
+  if (!parsed) {
+    fail(
+      `${CONFIG_FILE} is not valid JSONC and was left untouched.\n` +
+        `  Refusing to regenerate: the existing settings cannot be read, so merging\n` +
+        `  onto them would silently drop them. Fix the file by hand, then re-run.`,
+    )
   }
+  return parsed
 }
 
 /** Re-fetch models.dev and report which profiles have drifted from it. */
@@ -858,7 +875,7 @@ async function cmdDoctor() {
     console.log(`  ${yellow("!")} ${stamp("no profile recorded in the config. Run: oc-harness use <profile>")}\n`)
     return
   }
-  const installed = existsSync(CONFIG_FILE) ? stripComments(readFileSync(CONFIG_FILE, "utf8")) : null
+  const installed = existsSync(CONFIG_FILE) ? readConfigJson() : null
   if (!installed) {
     console.log(`  ${yellow("!")} ${stamp(`${CONFIG_FILE} missing. Run: oc-harness use ${activeId}`)}\n`)
     return
@@ -908,7 +925,7 @@ function cmdAgents() {
     fail("no profile is installed. Run: oc-harness use <profile>")
   }
 
-  const config = existsSync(CONFIG_FILE) ? stripComments(readFileSync(CONFIG_FILE, "utf8")) : {}
+  const config = readConfigJson()
   const configured = config.model ?? "(none)"
   const wantModel = `${current.provider}/${current.model}`
 
@@ -960,6 +977,32 @@ function fail(msg) {
   process.exit(1)
 }
 
+/**
+ * Drive the task file to done without a human at the keyboard.
+ *
+ * Every stop condition is printed, and the exit code says which kind of stop it
+ * was: 0 finished, 1 nothing to plan, 2 needs a person, 3 the agent died,
+ * 4 verify failed. A caller can therefore tell "done" from "gave up" without
+ * reading the transcript.
+ */
+async function cmdRun() {
+  const { runLoop } = await import("../src/driver/run.mjs")
+
+  const result = runLoop({
+    cwd: process.cwd(),
+    role: opt("--role") ?? "build",
+    maxRounds: Number(opt("--max-rounds") ?? 20),
+    budgetMinutes: Number(opt("--budget") ?? 120),
+  })
+
+  const s = result.summary
+  console.log(`\n  ${bold(result.code === 0 ? "done" : "stopped")} ${result.reason}`)
+  if (s) {
+    console.log(`  ${stamp(`${s.done} done, ${s.blocked} blocked, ${s.pending} pending`)}`)
+  }
+  if (result.code !== 0) process.exitCode = result.code
+}
+
 try {
   switch (cmd) {
     case "list":
@@ -995,6 +1038,9 @@ try {
     case "baseline":
       await import("./baseline.mjs")
       break
+    case "run":
+      await cmdRun()
+      break
     case "help":
     default:
       console.log(`
@@ -1011,12 +1057,18 @@ try {
     agents        report agents the effort tiering does not reach
     doctor    re-check profiles against models.dev and the installed config
     baseline  measure the current opencode install
+    run       drive .space/tasks.md to done with the build agent
 
   options
     --print        write the config to stdout instead of disk
     --yes          accept a retention warning, back up the old config
     --retention    filter list by retention class
     --free         list free profiles only
+
+  run options
+    --role <agent>  which agent does the work (default: build)
+    --max-rounds N  stop after N tasks (default: 20)
+    --budget MIN    stop after MIN minutes (default: 120)
 `)
   }
 } catch (err) {

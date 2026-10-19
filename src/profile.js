@@ -456,13 +456,113 @@ export function configFilePath() {
 }
 
 /**
+ * Parse JSONC the way OpenCode does: comments and trailing commas are legal.
+ *
+ * A regex that strips `//` cannot be used here. The generated config carries
+ * `"$schema": "https://opencode.ai/config.json"`, so a naive strip corrupts the
+ * URL; and a trailing comma -- ordinary in a hand-edited `.jsonc` -- makes
+ * `JSON.parse` throw, which used to surface as an empty object and silently
+ * dropped every hand-tuned key in `oc-harness use`. This walks the text once,
+ * tracking string state, so both are handled correctly.
+ *
+ * @param {string} text
+ * @returns {Record<string, unknown> | null} null when the text is not valid JSONC
+ */
+export function parseJsonc(text) {
+  let out = ""
+  let i = 0
+  let inString = false
+  let escaped = false
+  /** True once a `,` has been emitted that a `}` or `]` may turn out to cancel. */
+  let pendingComma = false
+
+  const n = text.length
+  while (i < n) {
+    const ch = text[i]
+
+    if (inString) {
+      out += ch
+      if (escaped) escaped = false
+      else if (ch === "\\") escaped = true
+      else if (ch === '"') inString = false
+      i++
+      continue
+    }
+
+    if (ch === '"') {
+      if (pendingComma) {
+        out += ","
+        pendingComma = false
+      }
+      out += ch
+      inString = true
+      i++
+      continue
+    }
+
+    if (ch === "/" && text[i + 1] === "/") {
+      while (i < n && text[i] !== "\n") i++
+      continue
+    }
+
+    if (ch === "/" && text[i + 1] === "*") {
+      i += 2
+      while (i < n && !(text[i] === "*" && text[i + 1] === "/")) i++
+      i += 2
+      continue
+    }
+
+    if (ch === ",") {
+      // A second comma before any value is malformed. Repairing `,,,` into one
+      // separator would mean guessing at a file we are about to rewrite, which
+      // is the exact failure this parser exists to prevent.
+      if (pendingComma) return null
+      // Hold the comma back: if the next significant character closes an
+      // object or array, this comma was illegal trailing punctuation.
+      pendingComma = true
+      i++
+      continue
+    }
+
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+      out += ch
+      i++
+      continue
+    }
+
+    if (ch === "}" || ch === "]") {
+      // A closer cancels any comma held back before it.
+      pendingComma = false
+      out += ch
+      i++
+      continue
+    }
+
+    // Every other significant character settles a comma held back across
+    // whitespace or a comment. Miss this on the string branch below and a
+    // comment after `1, // note` swallows the separator entirely.
+    if (pendingComma) {
+      out += ","
+      pendingComma = false
+    }
+    out += ch
+    i++
+  }
+
+  try {
+    const parsed = JSON.parse(out)
+    return parsed && typeof parsed === "object" ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Read the active profile id from the config file on disk.
  *
- * This exists because the `config` hook cannot be the source. OpenCode's
- * Config schema sets `additionalProperties: false`, so a custom `harness` key
- * written into the file is stripped from the object handed to the hook. The
- * file survives; the in-memory config does not. Verified against the 1.18.35
- * schema.
+ * Returns null when the file is absent, unreadable, or not valid JSONC. Callers
+ * fall back to the profile named in the `config` hook, so a null here degrades
+ * to the default profile rather than failing.
  *
  * @returns {string | null}
  */
@@ -473,10 +573,10 @@ export function profileIdFromConfig() {
   const file = configFilePath()
   if (!existsSync(file)) return null
   try {
-    const text = readFileSync(file, "utf8")
-    const json = text.slice(text.indexOf("{"))
-    const parsed = JSON.parse(json)
-    const id = parsed?.harness?.profile
+    const parsed = parseJsonc(readFileSync(file, "utf8"))
+    const harness = parsed?.harness
+    const id =
+      harness && typeof harness === "object" ? /** @type {{profile?: unknown}} */ (harness).profile : null
     return typeof id === "string" && id ? id : null
   } catch {
     return null
