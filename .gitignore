@@ -19,3 +19,6 @@ video/audio/
 video/space-harness-demo.mp4
 video/__pycache__/
 video/build/
+video/vo.m4a
+video/vo_timed.txt
+video/narration.m4a

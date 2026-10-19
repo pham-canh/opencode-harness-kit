@@ -1,36 +1,62 @@
-# Demo video
+# space-harness demo
 
-`space-harness-demo.mp4` — 2:11, 1920x1080, male English narration.
+`docs/demo/pitch.mp4` — 4:47, 2880x1800 retina, English narration, recorded
+live from a real terminal. Not slides: every command on screen is typed into a
+Terminal window and executed while the camera runs.
 
-The finished video is committed as [`docs/demo/pitch.mp4`](../docs/demo/pitch.mp4).
-Rebuilding here overwrites the working copy; copy it across when you publish.
+The point of the demo is the last third of it. The take stages a config file
+carrying a comment and a trailing comma, regenerates it with
+`oc-harness use`, and then shows the setting that was in that file surviving.
+That is the bug this branch fixed, and the previous bug — an unreadable config
+made the reader return `{}`, and `use` wrote the user's settings back out
+deleted — is not something a demo of winning numbers would have shown.
+
+## Files
+
+| | |
+|---|---|
+| `take.sh` | the take script: what gets typed, in what order, and what must be true when it ends |
+| `narration.txt` | the voiceover, in beats, with `[[slnc N]]` pauses that hold the voice against the screen |
+| `../docs/demo/pitch.mp4` | the published file |
 
 ## Rebuild
 
+Recording needs [`vrec`](../../tools/vrec), which drives the keyboard and mouse
+through the accessibility API and checks every claim in the take afterwards.
+
 ```sh
-python3 audio.py     # narration.md -> one m4a per scene + manifest.json
-python3 render.py    # manifest + repo facts -> scenes/scene<N>.png
-python3 build.py     # stills + audio -> space-harness-demo.mp4
+export PATH="$HOME/harness/tools/vrec/bin:$PATH"
+export HI_TYPE_SPEED=1.0
+
+vrec reset   space-harness        # clean slate before anything
+vrec rehearse space-harness      # runs every gate with no recording
+vrec record  --take "$PWD/take.sh" --max-duration 400
 ```
 
-`render.py` reads its on-screen numbers out of the repository (test count from
-`test/*.test.js`), so if the suite grows the frames change with it and the video
-cannot quietly become a lie.
+Then voice it:
 
-`build.py` fails if the result lands outside 2:00–3:00. Fix the narration rather
-than the check.
+```sh
+say -v Reed -r 160 -f narration.txt -o vo.m4a \
+    --data-format=aac@44100 --file-format=m4af
 
-## How the pieces fit
+python3 ~/harness/tools/btake/btake.py dub <recording>.mp4 \
+    --narration vo.m4a --offset 5 --out final.mp4
+```
 
-`narration.md` is the single source of the script — one `## Scene` heading per
-beat, body text is what the narrator says. Scene lengths come from
-`audio/manifest.json`, measured from the generated audio, never estimated, so
-picture and narration cannot drift.
+`--max-duration` is not advisory. `vrec` finalises the file and then fails the
+take if it overran, because a 7:12 recording whose narration ran 4:34 was
+handed over as done once already.
 
-Voice is macOS `say -v Reed` at 165 wpm. `ffprobe` is not installed on this
-machine; durations are read from ffmpeg's own banner instead.
+## Two things that will bite you
 
-## Requirements
+**Do not raise `HI_TYPE_SPEED` to save time.** At 1.8 the typing drops
+characters in Terminal.app, and since the helper presses Return for you, one
+dropped character runs a command the take never typed. It surfaces as an
+unbalanced quote and a `dquote>` prompt, which looks like a flaky shell rather
+than a typing bug. Time comes back from `wait_settle` instead — it watches the
+screen instead of guessing how long a command takes.
 
-`python3` with `playwright` (Chromium already downloaded), and `ffmpeg` on
-`PATH`.
+**Run `vrec rehearse` before every record.** The gates run in the vrec process,
+not in the recorded Terminal, so a gate can pass while the shell on camera did
+something else. Rehearsing is what catches that. It is also cheaper than
+discovering it in the footage.
