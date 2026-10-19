@@ -21,8 +21,6 @@ npx -y opencode-harness-kit init    # pick a free model, then install + verify
 
 <p align="center">
   <img src="docs/demo-loop.gif" width="760" alt="oc-harness list showing the model-agnostic profiles, then oc-harness verify reporting a consistent install">
-  <br>
-  <a href="docs/demo.mp4">▶ Play the 102-second capture</a>
 </p>
 
 then restart opencode. That is the whole quickstart. No npm account needed on
@@ -33,11 +31,6 @@ steps from a checkout (see [Install](#install)):
 git clone https://github.com/pham-canh/space-harness.git
 ./bin/oc-harness.mjs init
 ```
-
-![demo: init and verify in one go](docs/demo/demo.gif)
-
-Regenerate it any time with `python3 docs/demo/render.py` (needs ffmpeg); the
-frames are drawn from real CLI output, not typed by hand.
 
 The three steps `init` runs, spelled out for when you want to know what
 happened (prefix with `npx` or `./bin/oc-harness.mjs` to taste):
