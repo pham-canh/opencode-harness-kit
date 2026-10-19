@@ -8,7 +8,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs"
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -25,29 +25,28 @@ process.env.OPENCODE_CONFIG_DIR = SANDBOX_CONFIG
 process.on("exit", () => rmSync(SANDBOX_CONFIG, { recursive: true, force: true }))
 
 const ROOT = new URL("..", import.meta.url).pathname
-const DIST = join(ROOT, "dist", "index.js")
+// Built into a scratch directory, never into dist/. dist/index.js is a committed
+// artifact, and a test run must not be able to rewrite it -- see ensureBuild().
+// The scratch dir lives one level under the repo root, not in the OS temp dir,
+// because src/profile.js resolves ROOT as resolve(dirname(import.meta.url), "..")
+// and finds profiles/, examples/ and retention.yml relative to that.
+const BUILD_DIR = join(ROOT, `.test-build-${process.pid}`)
+const DIST = join(BUILD_DIR, "index.js")
 
-// The mtime check matters because dist/ is a committed build artifact. Testing a
-// stale bundle proves nothing about the source it was generated from, so rebuild
-// whenever src/ is newer than dist/index.js.
-function newestSourceMtime() {
-  return readdirSync(join(ROOT, "src"), { recursive: true })
-    .filter((name) => /\.(ts|js)$/.test(String(name)))
-    .map((name) => statSync(join(ROOT, "src", String(name))).mtimeMs)
-    .reduce((newest, mtime) => Math.max(newest, mtime), 0)
-}
-
+// Same bundler and flags as `npm run build`, so the bundle under test can never
+// disagree with the one that ships.
 function ensureBuild() {
-  const stale = !existsSync(DIST) || statSync(DIST).mtimeMs < newestSourceMtime()
-  if (stale) {
-    execFileSync("bun", ["build", "src/index.ts", "--outdir", "dist", "--target", "node", "--format", "esm"], {
-      cwd: ROOT,
-      stdio: "ignore",
-    })
-  }
+  rmSync(BUILD_DIR, { recursive: true, force: true })
+  mkdirSync(BUILD_DIR, { recursive: true })
+  execFileSync(
+    join(ROOT, "node_modules", ".bin", "esbuild"),
+    ["src/index.ts", "--bundle", "--platform=node", "--format=esm", `--outfile=${DIST}`],
+    { cwd: ROOT, stdio: "ignore" },
+  )
 }
 
 ensureBuild()
+process.on("exit", () => rmSync(BUILD_DIR, { recursive: true, force: true }))
 
 /** A minimal but structurally faithful stand-in for opencode's plugin input. */
 function ctx(worktree) {
@@ -130,7 +129,7 @@ function workspace() {
 }
 
 test("the bundle exposes a callable plugin", async () => {
-  assert.ok(existsSync(DIST), "dist/index.js must exist; run npm run build")
+  assert.ok(existsSync(DIST), "the test bundle must have been built")
   const dir = workspace()
   const hooks = await harness(dir)
   for (const name of [

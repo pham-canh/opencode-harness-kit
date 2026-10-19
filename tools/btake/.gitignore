@@ -1,0 +1,17 @@
+# Recordings and scratch — regenerates from a re-run. The finished cut lives
+# in the project it demos.
+*.mp4
+*.webm
+*.aiff
+*.m4a
+out/
+frames/
+.build/
+
+# Playwright
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

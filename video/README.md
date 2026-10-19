@@ -21,15 +21,22 @@ deleted — is not something a demo of winning numbers would have shown.
 
 ## Rebuild
 
-Recording needs [`vrec`](../../tools/vrec), which drives the keyboard and mouse
+Recording needs [`vrec`](../tools/vrec), which drives the keyboard and mouse
 through the accessibility API and checks every claim in the take afterwards.
+Both it and `btake` live in this repo, so a clone is all you need:
 
 ```sh
-export PATH="$HOME/harness/tools/vrec/bin:$PATH"
+git clone https://github.com/pham-canh/space-harness.git
+cd space-harness
+bash tools/setup-demo.sh          # one-time, see below
+```
+
+```sh
+export PATH="$PWD/tools/vrec/bin:$PATH"
 export HI_TYPE_SPEED=1.0
 
-vrec reset   space-harness        # clean slate before anything
-vrec rehearse space-harness      # runs every gate with no recording
+vrec reset   "$PWD/take.sh"       # clean slate before anything
+vrec rehearse "$PWD/take.sh"      # runs every gate with no recording
 vrec record  --take "$PWD/take.sh" --max-duration 400
 ```
 
@@ -39,9 +46,30 @@ Then voice it:
 say -v Reed -r 160 -f narration.txt -o vo.m4a \
     --data-format=aac@44100 --file-format=m4af
 
-python3 ~/harness/tools/btake/btake.py dub <recording>.mp4 \
+python3 "$PWD/../tools/btake/btake.py" dub <recording>.mp4 \
     --narration vo.m4a --offset 5 --out final.mp4
 ```
+
+Every path is relative to the clone. Nothing here refers to one machine's
+home directory, so the same commands work on a fresh laptop.
+
+## On a machine that has never run this
+
+`tools/setup-demo.sh` does the one-time setup and is safe to re-run:
+
+- checks `python3`, `node`, `npm` and the macOS `say` voice
+- creates `tools/vrec/.venv` and installs the pinned `pyobjc-framework-Quartz`
+  that posts the keyboard events
+- confirms the driver imports before anything is recorded
+- grants the terminal Accessibility and Screen Recording permissions, which
+  macOS otherwise blocks silently — `vrec doctor` is the way to confirm
+
+No browser is involved. `vrec` posts CGEvents to a Terminal window; Playwright
+and a Chromium download are not part of this pipeline.
+
+Permissions are the part that cannot be scripted. `vrec doctor` reports
+`osascript is not trusted for Accessibility` or a missing Screen Recording
+entry; both are approved by hand in System Settings → Privacy & Security.
 
 `--max-duration` is not advisory. `vrec` finalises the file and then fails the
 take if it overran, because a 7:12 recording whose narration ran 4:34 was
