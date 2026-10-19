@@ -6,7 +6,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { execFileSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -14,17 +14,16 @@ import { join } from "node:path"
 const ROOT = new URL("..", import.meta.url).pathname
 const BIN = join(ROOT, "bin", "oc-harness.mjs")
 
+// spawnSync rather than execFileSync: execFileSync hands back stdout only when the
+// child succeeds, so a warning printed to stderr before exit 0 was unreachable and
+// nothing here could assert that a run warned rather than stayed silent.
 function run(args, env = {}) {
-  try {
-    const out = execFileSync("node", [BIN, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...env },
-    })
-    return { exit: 0, out }
-  } catch (e) {
-    return { exit: e.status ?? 1, out: (e.stdout ?? "") + (e.stderr ?? "") }
-  }
+  const r = spawnSync("node", [BIN, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...env },
+  })
+  return { exit: r.status ?? 1, out: (r.stdout ?? "") + (r.stderr ?? "") }
 }
 
 test("init validates the profile before writing anything", () => {
@@ -97,4 +96,47 @@ test("init refuses to regenerate over a config it cannot parse", () => {
   assert.ok(r.out.includes("left untouched"), "the error says the file is safe")
   assert.ok(r.out.includes("Refusing to regenerate"), "the error says why it stopped")
   assert.equal(readFileSync(config, "utf8"), broken, "the config on disk is byte for byte what it was")
+})
+
+// REGRESSION: the consent gate read p.retention, which describes the base model.
+// muse-split-free's base is a zero-retention model while plan/build/reviewer run
+// on a may-train endpoint, so the profile installed with no warning at all.
+const ASK = "may train on your prompts and completions"
+
+test("a profile whose split role may train is announced before it becomes default", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const r = run(["init", "--profile", "muse-split-free"], { OPENCODE_CONFIG_DIR: dir })
+
+  assert.equal(r.exit, 0, "without a terminal the run continues, it does not hang")
+  assert.ok(r.out.includes(ASK), `the consent warning is printed, not swallowed:\n${r.out}`)
+  assert.ok(
+    r.out.includes("muse-spark-1.3-contributor-free"),
+    "the warning names the model that actually may train, not the zero-retention base",
+  )
+  assert.ok(r.out.includes("Re-run with --yes to accept"), "the warning says what to do about it")
+  assert.ok(
+    !r.out.includes("opencode/space-bunny-free may train"),
+    "the base model is zero-retention and must not be named as the reason",
+  )
+})
+
+test("--yes is what silences the may-train warning", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const r = run(["init", "--profile", "muse-split-free", "--yes"], { OPENCODE_CONFIG_DIR: dir })
+
+  assert.equal(r.exit, 0, "accepting the terms is a successful run")
+  assert.ok(
+    !r.out.includes("Re-run with --yes to accept"),
+    `--yes means the human already agreed, so stop asking:\n${r.out}`,
+  )
+  assert.ok(!r.out.includes(ASK), "the consent warning is gone once accepted")
+  assert.ok(readFileSync(join(dir, "opencode.jsonc"), "utf8").includes("muse-split-free"))
+})
+
+test("a zero-retention profile installs without a retention warning", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const r = run(["init", "--profile", "space-bunny-free", "--yes"], { OPENCODE_CONFIG_DIR: dir })
+
+  assert.equal(r.exit, 0, `the run must succeed:\n${r.out}`)
+  assert.ok(!r.out.includes(ASK), "nothing here may train, so saying it would be noise")
 })
