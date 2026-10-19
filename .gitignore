@@ -12,3 +12,10 @@ baseline-*.txt
 
 # eval scratch
 .space-eval/
+
+# video build artifacts (regenerate with video/build.py)
+video/scenes/
+video/audio/
+video/space-harness-demo.mp4
+video/__pycache__/
+video/build/
