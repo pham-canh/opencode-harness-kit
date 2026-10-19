@@ -21,6 +21,10 @@ baseline-*.txt
 # eval scratch
 .space-eval/
 
+# Scratch bundle built by test/integration.test.js. The test removes it on exit,
+# but the handler does not run if the process is killed, so ignore it regardless.
+.test-build-*/
+
 # video build artifacts (regenerate with video/build.py)
 video/scenes/
 video/audio/
