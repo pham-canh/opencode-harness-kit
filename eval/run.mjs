@@ -221,12 +221,9 @@ function mediansForModel(modelID, providerID) {
 
   let rows
   try {
-    rows = JSON.parse(
-      execFileSync("sqlite3", ["-json", `file:${db}?mode=ro`, sql], {
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
-      }).trim() || "[]",
-    )
+    // The shared helper, so this script runs on a machine without the sqlite3
+    // CLI like every other measurement script.
+    rows = queryDb(db, sql)
   } catch {
     return null
   }

@@ -12,12 +12,12 @@
 // floor that cannot catch a regression, because the day the kit breaks is also
 // the day the floor moves down. Changing measure:check stays a human decision.
 
-import { execFileSync } from "node:child_process"
 import { existsSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
 import { median } from "./metrics.js"
+import { countFlag } from "./flags.mjs"
 import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
 
 const args = process.argv.slice(2)

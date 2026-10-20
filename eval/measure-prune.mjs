@@ -21,12 +21,13 @@
 // The gate is on the CONTROLLED number. The install-wide one stays an
 // observation.
 
-import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
-import { dirname, join, relative } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
+import { countFlag, numberFlag } from "./flags.mjs"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, "..")
@@ -42,7 +43,23 @@ const flag = (name) => {
 const wantJson = args.includes("--json")
 
 const DB = flag("--db") ?? join(homedir(), ".local/share/opencode/opencode.db")
-const SESSIONS = Math.max(1, Number(flag("--sessions") ?? 20))
+// A mistyped number is an error, not a disabled gate. `--sessions abc`
+// became NaN and was interpolated straight into the SQL, where it became a
+// column name.
+let SESSIONS
+let DAYS
+let MIN_MESSAGES
+let minSaved
+try {
+  SESSIONS = countFlag("--sessions") ?? 20
+  DAYS = countFlag("--days") ?? 30
+  MIN_MESSAGES = countFlag("--min-messages") ?? 6
+  // A gate of 0% is a valid gate, so this one is a plain number.
+  minSaved = numberFlag("--min-saved")
+} catch (err) {
+  console.error(String(err.message))
+  process.exit(1)
+}
 // The population: sessions in a time window, with enough assistant messages
 // for the pruner to have anything to prune.
 //
@@ -53,9 +70,8 @@ const SESSIONS = Math.max(1, Number(flag("--sessions") ?? 20))
 //
 // A session needs more than `keepTurns + 1` assistant messages to be
 // prunable at all, so the default is six.
-const DAYS = Math.max(1, Number(flag("--days") ?? 30))
-const MIN_MESSAGES = Math.max(1, Number(flag("--min-messages") ?? 6))
-const minSaved = flag("--min-saved") === undefined ? null : Number(flag("--min-saved"))
+
+
 
 if (!existsSync(DB)) {
   console.error(`opencode database not found: ${DB}`)
@@ -92,7 +108,10 @@ function sessionMessages(sessionId) {
     } catch {
       continue
     }
-    if (info.role !== "assistant") continue
+    // EVERY message, not only the assistant ones. The pruner computes its
+    // floor over the whole list - `messages.length - 1 - keepTurns` - so a
+    // replay that drops the user messages measures a different thing, and a
+    // lower bound rather than the real effect.
     const parts = queryDb(
       DB,
       `select data from part where message_id = '${String(m.id).replace(/'/g, "''")}' order by time_created asc`,
@@ -125,12 +144,27 @@ const sessions = queryDb(
    limit ${Math.floor(SESSIONS)}`,
 )
 
+// The pruner has to be ACTIVE for the measurement, whatever the machine's
+// local state says. It finds its profile from `.space/active` in the project,
+// and that file is gitignored - so on a fresh clone there is none, the pruner
+// does nothing, and the gate reports 0% removed.
+//
+// The environment variable is the documented override, and it is set for the
+// measurement only.
+const PREV = process.env.OPENCODE_HARNESS_PROFILE
+process.env.OPENCODE_HARNESS_PROFILE = PREV ?? "fleet-safe"
+
+// The measurement must not write into the repository it is measuring: the
+// pruner logs every pass to `.space/prune.jsonl` in the project, and that is
+// the same file the kit's own runtime telemetry uses. A scratch directory
+// keeps the measurement a measurement.
+const scratch = mkdtempSync(join(tmpdir(), "ock-prune-measure-"))
 const hook = await HarnessPlugin(
   {
     client: { app: { get: async () => ({}), log: { on: async () => {} } } },
-    project: { id: "measure", worktree: ROOT, vcs: "git" },
-    directory: ROOT,
-    worktree: ROOT,
+    project: { id: "measure", worktree: scratch, vcs: "git" },
+    directory: scratch,
+    worktree: scratch,
     serverUrl: new URL("http://127.0.0.1:0"),
     $: Object.assign(() => ({ pipe: () => ({}) }), { env: () => process.env }),
   },
@@ -138,15 +172,32 @@ const hook = await HarnessPlugin(
 )
 const transform = hook["experimental.chat.messages.transform"]
 
-/** The bytes the pruner measures: the text of a part, or a tool's output. */
+/**
+ * The size the PRUNER measures.
+ *
+ * The pruner counts CHARACTERS, not bytes: `part.text.length`. The report
+ * labelled that "bytes", which is wrong for anything that is not ASCII - and
+ * an agent's output is not ASCII. Both numbers are reported.
+ */
 function sizeOf(part) {
   if (typeof part?.text === "string") return part.text.length
   if (typeof part?.state?.output === "string") return part.state.output.length
   return 0
 }
 
+/** The same text, in bytes. */
+function byteSizeOf(part) {
+  if (typeof part?.text === "string") return Buffer.byteLength(part.text, "utf8")
+  if (typeof part?.state?.output === "string") {
+    return Buffer.byteLength(part.state.output, "utf8")
+  }
+  return 0
+}
+
 let totalBefore = 0
 let totalAfter = 0
+let bytesBefore = 0
+let bytesAfter = 0
 let measured = 0
 let stubbed = 0
 const perSession = []
@@ -158,7 +209,14 @@ for (const s of sessions) {
     (n, m) => n + m.parts.reduce((k, p) => k + sizeOf(p), 0),
     0,
   )
+  const beforeBytes = messages.reduce(
+    (n, m) => n + m.parts.reduce((k, p) => k + byteSizeOf(p), 0),
+    0,
+  )
   // The pruner mutates in place, so the copy has to be the real thing.
+  const reasoningBefore = messages.flatMap((m) =>
+    m.parts.filter((p) => p.type === "reasoning").map((p) => p.text),
+  )
   const copy = messages.map((m) => ({
     info: m.info,
     parts: m.parts.map((p) => (p.state ? { ...p, state: { ...p.state } } : { ...p })),
@@ -171,10 +229,24 @@ for (const s of sessions) {
   if (!before) continue
   totalBefore += before
   totalAfter += after
+  bytesBefore += beforeBytes
+  bytesAfter += copy.reduce(
+    (n, m) => n + m.parts.reduce((k, p) => k + byteSizeOf(p), 0),
+    0,
+  )
   measured++
-  const cut = copy
+  // The pruner marks TOOL parts with `metadata.pruned` and REPLACES reasoning
+  // parts, so counting only the marked ones undercounts what was stubbed.
+  const toolCut = copy
     .flatMap((m) => m.parts)
     .filter((p) => p.state?.metadata?.pruned).length
+  const reasoningAfter = copy.flatMap((m) =>
+    m.parts.filter((p) => p.type === "reasoning").map((p) => p.text),
+  )
+  const reasoningCut = reasoningBefore.filter(
+    (t, i) => reasoningAfter[i] !== t,
+  ).length
+  const cut = toolCut + reasoningCut
   stubbed += cut
   perSession.push({
     session: s.id,
@@ -182,6 +254,8 @@ for (const s of sessions) {
     bytes_after: after,
     saved_pct: Math.round((1 - after / before) * 1000) / 10,
     parts_stubbed: cut,
+    tool_parts_stubbed: toolCut,
+    reasoning_parts_stubbed: reasoningCut,
   })
 }
 
@@ -197,11 +271,20 @@ if (minSaved !== null) {
   }
 }
 
+// The measurement's own scratch directory, and the environment it borrowed.
+process.on("exit", () => {
+  rmSync(scratch, { recursive: true, force: true })
+  if (PREV === undefined) delete process.env.OPENCODE_HARNESS_PROFILE
+  else process.env.OPENCODE_HARNESS_PROFILE = PREV
+})
+
 const report = {
   db: DB,
   sessions_measured: measured,
-  bytes_before: totalBefore,
-  bytes_after: totalAfter,
+  characters_before: totalBefore,
+  characters_after: totalAfter,
+  bytes_before: bytesBefore,
+  bytes_after: bytesAfter,
   saved_pct: savedPct,
   parts_stubbed: stubbed,
   per_session: perSession,
@@ -220,8 +303,9 @@ console.log(
   `  sessions ${measured} (last ${DAYS}d, at least ${MIN_MESSAGES} assistant messages each)`,
 )
 console.log("")
-console.log(`  context before   ${totalBefore.toLocaleString("en-US")} bytes`)
-console.log(`  context after    ${totalAfter.toLocaleString("en-US")} bytes`)
+console.log(`  context before   ${totalBefore.toLocaleString("en-US")} characters`)
+console.log(`  context after    ${totalAfter.toLocaleString("en-US")} characters`)
+console.log(`  in bytes         ${bytesBefore.toLocaleString("en-US")} -> ${bytesAfter.toLocaleString("en-US")}`)
 console.log(`  removed          ${savedPct === null ? "n/a" : savedPct + "%"}`)
 console.log(`  parts stubbed    ${stubbed}`)
 if (perSession.length) {

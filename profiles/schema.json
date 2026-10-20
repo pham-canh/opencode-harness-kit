@@ -193,7 +193,7 @@
       "properties": {
         "model": {
           "type": "string",
-          "description": "Model id without the provider prefix. Must be a model this profile already resolves to, so a failover cannot leave the utility route pointing at a model that is not in the fleet."
+          "description": "Model id without the provider prefix. Must be a model this profile already resolves to, so the utility route is never a model the fleet cannot run. The route itself does not change on failover; the profile keeps it."
         },
         "why": {
           "type": "string",

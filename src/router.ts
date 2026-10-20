@@ -23,6 +23,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { safeStringify } from "./safe.js"
 import { projectRoot } from "./project.js"
+import { utilityModel } from "./config.js"
 import {
   loadProfile,
   pruneThreshold,
@@ -237,7 +238,7 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
         return
       }
       // Nothing to attach to: the health file and telemetry still record it.
-      writeHealth(worktree, readHealth(project))
+      writeHealth(project, readHealth(project))
     },
   }
 }
@@ -279,7 +280,12 @@ function applySessionModel(
   try {
     const model = `${profile.provider}/${profile.model}`
     cfg.model = model
-    cfg.small_model = model
+    // The utility route belongs to the fleet, not to the model that happens
+    // to be the session's. Overwriting it with the fallback's session model
+    // threw away the cheap route exactly when the fleet failed over, and
+    // `verify` then called the difference between the file on disk and the
+    // running session a drift.
+    cfg.small_model = utilityModel(profile) ?? model
     const variant = profile.effort?.default
     if (profile.effort?.levels?.length && variant) cfg.variant = variant
     else delete cfg.variant

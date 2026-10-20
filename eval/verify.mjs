@@ -120,11 +120,18 @@ export function resolveInTarget(target, ref) {
  * Returns every reference with its verdict rather than a single boolean, so a
  * wrong answer can be read instead of guessed at.
  */
-export function gradeAnswer(target, text, want, { window = 1 } = {}) {
+export function gradeAnswer(target, text, want, { window = 1, exclude = [] } = {}) {
   const refs = extractRefs(text)
   const checked = refs.map((ref) => {
     const abs = resolveInTarget(target, ref.file)
     if (!abs) return { ...ref, status: "not-in-snapshot" }
+    // A citation to the SUITE is not evidence. The subject of the self
+    // suite is this repository, and the suite's answer key is inside it, so
+    // an agent that greps for the symbol can cite the answer key and pass
+    // without reading the source.
+    if (exclude.some((x) => ref.file.endsWith(x))) {
+      return { ...ref, status: "excluded" }
+    }
     let lines
     try {
       lines = readFileSync(abs, "utf8").split("\n")

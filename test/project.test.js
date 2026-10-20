@@ -78,7 +78,13 @@ test("the plugin writes the active profile into the project, not the worktree", 
   const dir = mkdtempSync(join(tmpdir(), "ock-nogit-plugin-"))
   try {
     const { HarnessPlugin } = await import(DIST)
-    const hooks = await HarnessPlugin(ctx("/", dir), { only: ["prune", "telemetry"] })
+    // The profile is named HERE, not read from the developer's global
+    // opencode config: a machine that has never run opencode has no
+    // ~/.config/opencode/opencode.jsonc, and the test failed there.
+    const hooks = await HarnessPlugin(ctx("/", dir), {
+      only: ["prune", "telemetry"],
+      profile: "fleet-safe",
+    })
     await hooks.config({})
 
     const marker = join(dir, ".space", "active")
@@ -120,7 +126,10 @@ test("the telemetry lands in the project", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ock-nogit-telemetry-"))
   try {
     const { HarnessPlugin } = await import(DIST)
-    const hooks = await HarnessPlugin(ctx("/", dir), { only: ["telemetry"] })
+    const hooks = await HarnessPlugin(ctx("/", dir), {
+      only: ["telemetry"],
+      profile: "fleet-safe",
+    })
     await hooks.event({
       event: {
         type: "message.updated",
