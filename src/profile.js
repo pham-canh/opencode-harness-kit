@@ -365,6 +365,30 @@ export function retentionFor(id) {
 }
 
 /**
+ * The retention of a model id, out of a retention table.
+ *
+ * Pure, so a test can hand it a table whose `defaults.unknown` says
+ * something else. The shipped table says "unknown", which is what the
+ * hardcoded fallback used to be - so a test that only checked the value
+ * could not tell the two apart.
+ *
+ * @param {{ models?: Record<string, RetentionRecord>, defaults?: Record<string, string> }} table
+ * @param {string} model
+ * @returns {Retention}
+ */
+export function retentionOf(table, model) {
+  const fallback = table?.defaults?.unknown ?? "unknown"
+  const models = table?.models ?? {}
+  const record = models[model] ?? models[model.includes("/") ? model : `opencode/${model}`]
+  const declared = record?.retention ?? fallback
+  return /** @type {Retention} */ (
+    ["zero-retention", "retained", "may-train", "unknown"].includes(declared)
+      ? declared
+      : "unknown"
+  )
+}
+
+/**
  * The retention of a model id, qualified or not.
  *
  * A model with no entry in retention.yml gets the `defaults.unknown` value
@@ -376,13 +400,7 @@ export function retentionFor(id) {
  * @returns {Retention}
  */
 export function modelRetention(model) {
-  const fallback = loadRetention().defaults?.unknown ?? "unknown"
-  const declared = retentionFor(model)?.retention ?? fallback
-  return /** @type {Retention} */ (
-    ["zero-retention", "retained", "may-train", "unknown"].includes(declared)
-      ? declared
-      : "unknown"
-  )
+  return retentionOf(loadRetention(), model)
 }
 
 /**

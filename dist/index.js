@@ -681,13 +681,18 @@ function retentionFor(id) {
   const table = loadRetention().models;
   return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`];
 }
-function modelRetention(model) {
-  const fallback = loadRetention().defaults?.unknown ?? "unknown";
-  const declared = retentionFor(model)?.retention ?? fallback;
+function retentionOf(table, model) {
+  const fallback = table?.defaults?.unknown ?? "unknown";
+  const models = table?.models ?? {};
+  const record = models[model] ?? models[model.includes("/") ? model : `opencode/${model}`];
+  const declared = record?.retention ?? fallback;
   return (
     /** @type {Retention} */
     ["zero-retention", "retained", "may-train", "unknown"].includes(declared) ? declared : "unknown"
   );
+}
+function modelRetention(model) {
+  return retentionOf(loadRetention(), model);
 }
 function retentionAllowed(model, ceiling) {
   const level = modelRetention(model);

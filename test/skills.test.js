@@ -82,15 +82,20 @@ test("skills never pin a model that is not in the active profile", () => {
   // A skill that names a model is a skill that tells the model to use a
   // route the profile may have moved off, because a free route gets withdrawn
   // and the skill does not.
+  //
+  // EVERY model named, not just the first: `String.match` stops at the first
+  // one, so a skill that mentioned a live model and then a withdrawn one
+  // passed. The loop's whole point is that it must not pin a dead route.
   const p = loadProfile("fleet-safe")
   const inPlay = new Set(modelsInPlay(p))
   for (const name of readdirSync(join(ROOT, "skills"))) {
     const { text } = frontmatter(join(ROOT, "skills", name, "SKILL.md"))
-    const named = text.match(/opencode\/([a-z0-9.\-]+)/i)
-    assert.ok(
-      !named || inPlay.has(named[1]),
-      `skills/${name} mentions opencode/${named?.[1]}, which is not in the active profile`,
-    )
+    for (const m of text.matchAll(/opencode\/([a-z0-9.\-]+)/gi)) {
+      assert.ok(
+        inPlay.has(m[1]),
+        `skills/${name} mentions opencode/${m[1]}, which is not in the active profile`,
+      )
+    }
   }
 })
 

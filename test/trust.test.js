@@ -17,7 +17,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync, spawn, spawnSync } from "node:child_process"
 import { createServer } from "node:http"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -33,17 +33,76 @@ test("the browser opener is the one this platform has", () => {
   // the browser never opened - and the failure was swallowed, so the message
   // afterwards still said the page was open.
   //
-  // The opener is not executed here: opening a browser on the machine a test
-  // runs on is a test that breaks whatever the person at the keyboard was
-  // doing. What is checked is that the right binary is chosen and that a
-  // failure is reported as a failure rather than swallowed.
-  const source = readFileSync(join(ROOT, "src", "trust.js"), "utf8")
-  assert.match(source, /process\.platform === "darwin"/)
-  assert.match(source, /process\.platform === "win32"/)
-  assert.match(source, /"open"/)
-  assert.match(source, /url\.dll,FileProtocolHandler/)
-  // And the function reports what happened rather than pretending.
-  assert.equal(typeof openBrowser, "function")
+  // The opener is not really executed: opening a browser on the machine a
+  // test runs on is a test that breaks whatever the person at the keyboard
+  // was doing. What is checked is that the first candidate is TRIED, that
+  // the next one is tried when it fails, and that a machine with no opener
+  // at all is reported rather than swallowed.
+  const dir = mkdtemp("ock-trust-browser-")
+  const opener = join(dir, "openers")
+  mkdirSync(opener, { recursive: true })
+  const marker = join(dir, "tried")
+  // The first candidate fails, and leaves a mark saying it was tried.
+  writeFileSync(join(opener, "xdg-open"), `#!/bin/sh\ntouch ${marker}\nexit 1\n`, { mode: 0o755 })
+  // The second one works.
+  writeFileSync(join(opener, "gio"), "#!/bin/sh\nexit 0\n", { mode: 0o755 })
+  writeFileSync(join(opener, "gnome-open"), "#!/bin/sh\nexit 1\n", { mode: 0o755 })
+
+  const r = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", `import { openBrowser } from ${JSON.stringify(
+      join(ROOT, "src", "trust.js"),
+    )}; process.stdout.write(String(openBrowser("https://example.invalid")))`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${opener}:${process.env.PATH}` },
+    },
+  )
+  assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}`)
+  if (process.platform === "linux") {
+    assert.ok(existsSync(marker), "the first candidate was never tried")
+    assert.equal(
+      (r.stdout ?? "").trim(),
+      "true",
+      "a machine with a working opener must report that it opened one",
+    )
+  } else {
+    // On macOS and Windows the candidates are different binaries, so the
+    // fake ones on PATH are not used. What matters is that the function
+    // answered with a boolean instead of throwing.
+    assert.ok(
+      ["true", "false"].includes((r.stdout ?? "").trim()),
+      `got ${(r.stdout ?? "").trim()}`,
+    )
+  }
+})
+
+test("a browser that cannot be opened is reported as such", () => {
+  // The old code swallowed the failure and then said the page was open. The
+  // message has to tell the truth.
+  const dir = mkdtemp("ock-trust-browser-")
+  try {
+    const empty = join(dir, "empty-path")
+    mkdirSync(empty, { recursive: true })
+    const r = spawnSync(
+      process.execPath,
+      ["--input-type=module", "-e", `import { openBrowser } from ${JSON.stringify(
+        join(ROOT, "src", "trust.js"),
+      )}; process.stdout.write(String(openBrowser("https://example.invalid")))`],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: empty },
+      },
+    )
+    assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}`)
+    assert.equal(
+      (r.stdout ?? "").trim(),
+      "false",
+      "a machine with no browser opener must be reported, not swallowed",
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("the repository is reduced to the owner/repo form npm matches on", () => {
