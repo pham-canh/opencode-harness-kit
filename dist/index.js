@@ -1,10 +1,10 @@
 // src/index.ts
 import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 
 // src/guard.ts
 import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
-import { join as join2, resolve } from "node:path";
+import { join as join3, resolve as resolve2 } from "node:path";
 
 // src/rules.js
 import { homedir, tmpdir } from "node:os";
@@ -377,6 +377,21 @@ function write(dir, record) {
   }
 }
 
+// src/project.js
+import { existsSync as existsSync2 } from "node:fs";
+import { dirname, join as join2, resolve } from "node:path";
+function projectRoot(directory, worktree) {
+  const start = resolve(directory || worktree || ".");
+  let dir = start;
+  for (let i = 0; i < 12; i++) {
+    if (existsSync2(join2(dir, ".git"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return start;
+}
+
 // src/guard.ts
 var MARKER = "[opencode-harness-kit] blocked";
 var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
@@ -424,8 +439,9 @@ function truncate(s, n = 200) {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > n ? `${one.slice(0, n)}...` : one;
 }
-var GuardPlugin = async ({ worktree }) => {
-  const telemetryDir = join2(worktree, ".space");
+var GuardPlugin = async ({ worktree, directory }) => {
+  const project = projectRoot(directory, worktree);
+  const telemetryDir = join3(project, ".space");
   const refuse = (tool, rule, why, detail) => {
     write(telemetryDir, { kind: "guard", tool, rule });
     deny(why, detail);
@@ -436,8 +452,8 @@ var GuardPlugin = async ({ worktree }) => {
         if (input.tool === "bash") {
           const raw = output.args?.workdir;
           if (typeof raw === "string" && raw.trim()) {
-            const target = raw.startsWith("~") ? join2(homedir2(), raw.slice(1)) : resolve(worktree, raw);
-            if (!insideRoot(target, worktree) && !insideRoot(target, tmpdir2())) {
+            const target = raw.startsWith("~") ? join3(homedir2(), raw.slice(1)) : resolve2(project, raw);
+            if (!insideRoot(target, project) && !insideRoot(target, tmpdir2())) {
               refuse(
                 input.tool,
                 "command outside the project",
@@ -464,7 +480,7 @@ var GuardPlugin = async ({ worktree }) => {
             );
           }
           for (const target of targets) {
-            const hit = checkWrite(target, void 0, worktree);
+            const hit = checkWrite(target, void 0, project);
             if (hit) {
               refuse(input.tool, hit.name, hit.name, `${hit.why}
   file: ${truncate(hit.segment)}`);
@@ -487,22 +503,22 @@ var GuardPlugin = async ({ worktree }) => {
 };
 
 // src/profile.js
-import { readFileSync, existsSync as existsSync2, readdirSync } from "node:fs";
-import { dirname, join as join3, resolve as resolve2 } from "node:path";
+import { readFileSync, existsSync as existsSync3, readdirSync } from "node:fs";
+import { dirname as dirname2, join as join4, resolve as resolve3 } from "node:path";
 import { homedir as homedir3 } from "node:os";
 import { fileURLToPath } from "node:url";
-var HERE = dirname(fileURLToPath(import.meta.url));
+var HERE = dirname2(fileURLToPath(import.meta.url));
 function findRoot(start) {
   let dir = start;
   for (let i = 0; i < 12; i++) {
-    if (existsSync2(join3(dir, "profiles"))) return dir;
-    const parent = dirname(dir);
+    if (existsSync3(join4(dir, "profiles"))) return dir;
+    const parent = dirname2(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return resolve2(start, "..");
+  return resolve3(start, "..");
 }
-var ROOT = findRoot(resolve2(HERE, ".."));
+var ROOT = findRoot(resolve3(HERE, ".."));
 var ProfileError = class extends Error {
 };
 var LANE_NAMES = [
@@ -525,12 +541,12 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [join3(ROOT, "profiles")];
+  return [join4(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
-    const full = join3(dir, `${id}.json`);
-    if (existsSync2(full)) return full;
+    const full = join4(dir, `${id}.json`);
+    if (existsSync3(full)) return full;
   }
   return null;
 }
@@ -571,8 +587,8 @@ function normalize(p) {
 var laneCache = null;
 function loadLanes() {
   if (laneCache) return laneCache;
-  const file = join3(ROOT, "lanes.json");
-  if (!existsSync2(file)) {
+  const file = join4(ROOT, "lanes.json");
+  if (!existsSync3(file)) {
     throw new ProfileError(`lane table missing: ${file}`);
   }
   const parsed = JSON.parse(readFileSync(file, "utf8"));
@@ -594,8 +610,8 @@ function laneMeta(name) {
 var retentionCache = null;
 function loadRetention() {
   if (retentionCache) return retentionCache;
-  const file = join3(ROOT, "retention.yml");
-  if (!existsSync2(file)) {
+  const file = join4(ROOT, "retention.yml");
+  if (!existsSync3(file)) {
     retentionCache = { models: {}, defaults: {} };
     return retentionCache;
   }
@@ -947,10 +963,10 @@ function roleSplitModels(p, opts = {}) {
   });
 }
 function configDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join3(homedir3(), ".config", "opencode");
+  return process.env.OPENCODE_CONFIG_DIR ?? join4(homedir3(), ".config", "opencode");
 }
 function configFilePath() {
-  return join3(configDir(), "opencode.jsonc");
+  return join4(configDir(), "opencode.jsonc");
 }
 function parseJsonc(text) {
   let out = "";
@@ -1025,7 +1041,7 @@ function profileIdFromConfig() {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv) return fromEnv.trim() || null;
   const file = configFilePath();
-  if (!existsSync2(file)) return null;
+  if (!existsSync3(file)) return null;
   try {
     const parsed = parseJsonc(readFileSync(file, "utf8"));
     const harness = parsed?.harness;
@@ -1040,17 +1056,17 @@ function profileIdFromConfig() {
 }
 
 // src/prune.ts
-import { readFileSync as readFileSync2, existsSync as existsSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { readFileSync as readFileSync2, existsSync as existsSync4 } from "node:fs";
+import { join as join5 } from "node:path";
 function activeProfileId(worktree) {
   const candidates = [
     process.env.OPENCODE_HARNESS_PROFILE,
-    join4(worktree, ".space", "active")
+    join5(worktree, ".space", "active")
   ];
   for (const f of candidates) {
     if (!f) continue;
     try {
-      if (existsSync3(f)) {
+      if (existsSync4(f)) {
         const v = readFileSync2(f, "utf8").trim();
         if (v) return v;
       }
@@ -1084,7 +1100,8 @@ function stub(part) {
   }
   return `[${tool}] result pruned from context (${state.status ?? "done"}); re-run if you need it`;
 }
-var PrunePlugin = async ({ worktree }) => {
+var PrunePlugin = async ({ worktree, directory }) => {
+  const project = projectRoot(directory, worktree);
   const DISABLED = {
     profile: null,
     keepCalls: 0,
@@ -1093,11 +1110,11 @@ var PrunePlugin = async ({ worktree }) => {
     threshold: 0
   };
   let cached = null;
-  const resolve3 = () => {
+  const resolve4 = () => {
     if (cached) return cached;
     let profile = null;
     try {
-      const id = activeProfileId(worktree);
+      const id = activeProfileId(project);
       if (id) profile = loadProfile(id);
     } catch {
       profile = null;
@@ -1115,7 +1132,7 @@ var PrunePlugin = async ({ worktree }) => {
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
-        const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve3();
+        const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve4();
         if (!profile) return;
         const messages = output.messages;
         if (!Array.isArray(messages) || messages.length === 0) return;
@@ -1198,7 +1215,7 @@ var PrunePlugin = async ({ worktree }) => {
         }
         if (stats.stubbed > 0) {
           const saved = Math.max(0, stats.bytesBefore - stats.bytesAfter);
-          await logPrune(worktree, profile.id, {
+          await logPrune(project, profile.id, {
             ...stats,
             saved,
             threshold
@@ -1213,12 +1230,12 @@ var PrunePlugin = async ({ worktree }) => {
   };
 };
 async function logPrune(worktree, profileId, stats) {
-  const dir = join4(worktree, ".space");
+  const dir = join5(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
     await appendFile(
-      join4(dir, "prune.jsonl"),
+      join5(dir, "prune.jsonl"),
       JSON.stringify({
         t: (/* @__PURE__ */ new Date()).toISOString(),
         profile: profileId,
@@ -1234,7 +1251,7 @@ async function logPrune(worktree, profileId, stats) {
 
 // src/router.ts
 import { readFileSync as readFileSync3, writeFileSync, mkdirSync as mkdirSync2 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 
 // src/safe.ts
 function safeStringify(value) {
@@ -1251,7 +1268,7 @@ function safeStringify(value) {
 
 // src/router.ts
 function healthPath(worktree) {
-  return join5(worktree, ".space", "health.json");
+  return join6(worktree, ".space", "health.json");
 }
 function readHealth(worktree) {
   try {
@@ -1262,7 +1279,7 @@ function readHealth(worktree) {
 }
 function writeHealth(worktree, h) {
   try {
-    mkdirSync2(join5(worktree, ".space"), { recursive: true });
+    mkdirSync2(join6(worktree, ".space"), { recursive: true });
     writeFileSync(healthPath(worktree), JSON.stringify(h, null, 2));
   } catch {
   }
@@ -1289,7 +1306,8 @@ function classify(text) {
   return null;
 }
 var WARN_TEXT = "[opencode-harness-kit] This session's model route is rate limited or withdrawn. No plugin can swap a live session's model, so stop retrying and ask the human to start a new session. Run `oc-harness list` to see the lanes and their chains, or `oc-harness doctor` to check whether the profile still matches live metadata.";
-var RouterPlugin = async ({ worktree }) => {
+var RouterPlugin = async ({ worktree, directory }) => {
+  const project = projectRoot(directory, worktree);
   let failedSessions = 0;
   let warned = false;
   return {
@@ -1297,8 +1315,8 @@ var RouterPlugin = async ({ worktree }) => {
     config: async (config) => {
       try {
         const cfg = config;
-        const health = readHealth(worktree);
-        const unhealthy = unhealthyModels(worktree);
+        const health = readHealth(project);
+        const unhealthy = unhealthyModels(project);
         const activeId = cfg.harness?.profile ?? profileIdFromConfig();
         if (!activeId) return;
         const id = activeId;
@@ -1330,7 +1348,7 @@ var RouterPlugin = async ({ worktree }) => {
               threshold: fleet ? pruneThreshold(profile) : void 0
             });
             health.active = candidate;
-            writeHealth(worktree, health);
+            writeHealth(project, health);
             break;
           }
         }
@@ -1363,10 +1381,10 @@ var RouterPlugin = async ({ worktree }) => {
       const modelID = e.properties?.modelID ?? e.properties?.model ?? e.properties?.modelID;
       const key = modelID ? `opencode/${modelID}` : void 0;
       if (!key) return;
-      const health = readHealth(worktree);
+      const health = readHealth(project);
       if (health.unhealthy[key]) return;
       health.unhealthy[key] = { at: (/* @__PURE__ */ new Date()).toISOString(), reason };
-      writeHealth(worktree, health);
+      writeHealth(project, health);
       failedSessions++;
     },
     "chat.message": async (input, output) => {
@@ -1381,7 +1399,7 @@ var RouterPlugin = async ({ worktree }) => {
 ${WARN_TEXT}`;
         return;
       }
-      writeHealth(worktree, readHealth(worktree));
+      writeHealth(worktree, readHealth(project));
     }
   };
 };
@@ -1421,9 +1439,9 @@ function applySessionModel(cfg, profile, opts = {}) {
 }
 
 // src/telemetry.ts
-import { join as join6 } from "node:path";
-var TelemetryPlugin = async ({ worktree }) => {
-  const dir = join6(worktree, ".space");
+import { join as join7 } from "node:path";
+var TelemetryPlugin = async ({ worktree, directory }) => {
+  const dir = join7(projectRoot(directory, worktree), ".space");
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
@@ -1578,9 +1596,9 @@ var HarnessPlugin = async (ctx, options) => {
       applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }), {
         sessionModel
       });
-      const dir = join7(ctx.worktree, ".space");
+      const dir = join8(projectRoot(ctx.directory, ctx.worktree), ".space");
       mkdirSync3(dir, { recursive: true });
-      writeFileSync2(join7(dir, "active"), `${id}
+      writeFileSync2(join8(dir, "active"), `${id}
 `);
     } catch {
     }
