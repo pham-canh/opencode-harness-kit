@@ -22,6 +22,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { safeStringify } from "./safe.js"
+import { projectRoot } from "./project.js"
 import {
   loadProfile,
   pruneThreshold,
@@ -104,7 +105,11 @@ const WARN_TEXT =
   "new session. Run `oc-harness list` to see the lanes and their chains, or `oc-harness doctor` " +
   "to check whether the profile still matches live metadata."
 
-export const RouterPlugin: Plugin = async ({ worktree }) => {
+export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
+  // The project root, not the worktree: the worktree is the filesystem root in
+  // a project that is not a git repository, so the health file was written
+  // nowhere and no lane ever failed over.
+  const project = projectRoot(directory, worktree)
   let failedSessions = 0
   let warned = false
 
@@ -113,8 +118,8 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
     config: async (config) => {
       try {
         const cfg = config as Record<string, any>
-        const health = readHealth(worktree)
-        const unhealthy = unhealthyModels(worktree)
+        const health = readHealth(project)
+        const unhealthy = unhealthyModels(project)
 
         // config.harness is stripped by schema validation, so the active
         // profile comes from the config file on disk.
@@ -161,7 +166,7 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
               threshold: fleet ? pruneThreshold(profile) : undefined,
             })
             health.active = candidate
-            writeHealth(worktree, health)
+            writeHealth(project, health)
             break
           }
         }
@@ -209,10 +214,10 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
       const key = modelID ? `opencode/${modelID}` : undefined
       if (!key) return
 
-      const health = readHealth(worktree)
+      const health = readHealth(project)
       if (health.unhealthy[key]) return // already recorded, do not spam
       health.unhealthy[key] = { at: new Date().toISOString(), reason }
-      writeHealth(worktree, health)
+      writeHealth(project, health)
       failedSessions++
     },
 
@@ -232,7 +237,7 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
         return
       }
       // Nothing to attach to: the health file and telemetry still record it.
-      writeHealth(worktree, readHealth(worktree))
+      writeHealth(worktree, readHealth(project))
     },
   }
 }

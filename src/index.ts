@@ -19,6 +19,7 @@ import { RouterPlugin, unhealthyModels } from "./router.js"
 import { TelemetryPlugin } from "./telemetry.js"
 import { applyEffort, planEffort } from "./effort.js"
 import { profileIdFromConfig } from "./profile.js"
+import { projectRoot } from "./project.js"
 
 export interface HarnessOptions {
   /** Profile id. Defaults to the one recorded in the config by `oc-harness use`. */
@@ -79,7 +80,12 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
       })
       // Record it where the prune hook looks, so pruning picks up this
       // profile's thresholds without access to the resolved config.
-      const dir = join(ctx.worktree, ".space")
+      //
+      // Under the PROJECT root, not the worktree: the worktree is the
+      // filesystem root in a project that is not a git repository, and the
+      // write fails there with a permission error that this catch swallows.
+      // The pruner then finds no active profile and does nothing at all.
+      const dir = join(projectRoot(ctx.directory, ctx.worktree), ".space")
       mkdirSync(dir, { recursive: true })
       writeFileSync(join(dir, "active"), `${id}\n`)
     } catch {

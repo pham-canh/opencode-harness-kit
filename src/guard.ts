@@ -11,6 +11,7 @@ import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { checkBash, checkWrite, insideRoot } from "./rules.js"
 import { write } from "./telemetry-store.js"
+import { projectRoot } from "./project.js"
 
 export const MARKER = "[opencode-harness-kit] blocked"
 
@@ -94,7 +95,11 @@ function truncate(s: string, n = 200): string {
   return one.length > n ? `${one.slice(0, n)}...` : one
 }
 
-export const GuardPlugin: Plugin = async ({ worktree }) => {
+export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
+  // The project root, not the worktree: the worktree is the filesystem root
+  // in a project that is not a git repository, so the scope check was against
+  // "/" - which contains every path - and the denial log went nowhere.
+  const project = projectRoot(directory, worktree)
   // Where a denial is recorded.
   //
   // It has to be recorded HERE. A denial throws in `tool.execute.before`, and
@@ -103,7 +108,7 @@ export const GuardPlugin: Plugin = async ({ worktree }) => {
   // plugin never sees it. The file's own header promised to record "tool
   // denials (to see the guard being useful rather than annoying)", and it
   // could not.
-  const telemetryDir = join(worktree, ".space")
+  const telemetryDir = join(project, ".space")
 
   /** Record the denial, then stop the call. */
   const refuse = (tool: string, rule: string, why: string, detail: string): never => {
@@ -124,8 +129,8 @@ export const GuardPlugin: Plugin = async ({ worktree }) => {
           if (typeof raw === "string" && raw.trim()) {
             const target = raw.startsWith("~")
               ? join(homedir(), raw.slice(1))
-              : resolve(worktree, raw)
-            if (!insideRoot(target, worktree) && !insideRoot(target, tmpdir())) {
+              : resolve(project, raw)
+            if (!insideRoot(target, project) && !insideRoot(target, tmpdir())) {
               refuse(
                 input.tool,
                 "command outside the project",
@@ -155,7 +160,7 @@ export const GuardPlugin: Plugin = async ({ worktree }) => {
             )
           }
           for (const target of targets) {
-            const hit = checkWrite(target, undefined, worktree)
+            const hit = checkWrite(target, undefined, project)
             if (hit) {
               refuse(input.tool, hit.name, hit.name, `${hit.why}\n  file: ${truncate(hit.segment)}`)
             }

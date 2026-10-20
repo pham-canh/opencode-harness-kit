@@ -64,6 +64,7 @@ export const ROOT = findRoot(resolve(HERE, ".."))
  * @property {string} provider
  * @property {string} model
  * @property {string | null} [family]
+ * @property {{ model: string, why?: string }} [utility] the route for opencode's short auxiliary calls
  * @property {string} [verified]
  * @property {Retention} retention
  * @property {Retention} [maxRetention]

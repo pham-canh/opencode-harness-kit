@@ -27,6 +27,7 @@ import { execFileSync } from "node:child_process"
 import { existsSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
 
 import { historyPerTurn, payback } from "./metrics.js"
 
@@ -45,7 +46,7 @@ const split = flag("--split")
     ? statSync(installDir).mtimeMs
     : Date.now() - 7 * 864e5
 
-if (!hasSqlite()) {
+if (!canQuerySqlite()) {
   console.error(sqliteMissingMessage())
   process.exit(1)
 }
@@ -86,12 +87,7 @@ select case when st < ${split} then 'before' else 'after' end as win,
   avg(last_ctx - first_ctx) as history
 from per group by win`
 
-const rows = JSON.parse(
-  execFileSync("sqlite3", ["-json", `file:${DB}?mode=ro`, sql], {
-    encoding: "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-  }).trim() || "[]",
-)
+const rows = queryDb(DB, sql)
 
 const pick = (win) => {
   const r = rows.find((x) => x.win === win)

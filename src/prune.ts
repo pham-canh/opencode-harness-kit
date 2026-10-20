@@ -18,6 +18,7 @@
 
 import type { Plugin } from "@opencode-ai/plugin"
 import { loadProfile, pruneThreshold, ROOT } from "./profile.js"
+import { projectRoot } from "./project.js"
 import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
 
@@ -98,7 +99,11 @@ function stub(part: any): string {
   return `[${tool}] result pruned from context (${state.status ?? "done"}); re-run if you need it`
 }
 
-export const PrunePlugin: Plugin = async ({ worktree }) => {
+export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
+  // The project root, not the worktree: in a project that is not a git
+  // repository the worktree is the filesystem root, so the marker the pruner
+  // reads was never where it looked, and the pruner did nothing.
+  const project = projectRoot(directory, worktree)
   // The profile is resolved on the FIRST TRANSFORM, not here.
   //
   // OpenCode builds the plugin factories before it runs the config hooks, and
@@ -134,7 +139,7 @@ export const PrunePlugin: Plugin = async ({ worktree }) => {
     if (cached) return cached
     let profile = null as ReturnType<typeof loadProfile> | null
     try {
-      const id = activeProfileId(worktree)
+      const id = activeProfileId(project)
       if (id) profile = loadProfile(id)
     } catch {
       profile = null
@@ -267,7 +272,7 @@ export const PrunePlugin: Plugin = async ({ worktree }) => {
 
         if (stats.stubbed > 0) {
           const saved = Math.max(0, stats.bytesBefore - stats.bytesAfter)
-          await logPrune(worktree, profile.id, {
+          await logPrune(project, profile.id, {
             ...stats,
             saved,
             threshold,

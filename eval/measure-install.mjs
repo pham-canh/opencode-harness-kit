@@ -72,7 +72,7 @@ try {
   process.exit(1)
 }
 
-if (!hasSqlite()) {
+if (!canQuerySqlite()) {
   console.error(sqliteMissingMessage())
   process.exit(1)
 }
@@ -85,15 +85,11 @@ if (!existsSync(DB)) {
 
 // Both helpers live in ./metrics.js so they can be tested without a database.
 import { pct, readsPerSearch, ctxDropPct as computeCtxDropPct } from "./metrics.js"
-import { hasSqlite, sqliteMissingMessage } from "../src/sqlite.js"
+import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
 import { numberFlag } from "./flags.mjs"
 
 function query(sql) {
-  const out = execFileSync("sqlite3", ["-json", `file:${DB}?mode=ro`, sql], {
-    encoding: "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-  }).trim()
-  return out ? JSON.parse(out) : []
+  return queryDb(DB, sql)
 }
 
 const TOOLS = `json_extract(data,'$.type')='tool'`
