@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { extractRefs, resolveInTarget, gradeAnswer, gradeMutation } from "../eval/verify.mjs"
+import { extractRefs, resolveInTarget, gradeAnswer, gradeMutation, isExcluded } from "../eval/verify.mjs"
 import { mkdtemp } from "./helpers.mjs"
 
 // A three-file fixture shaped like the snapshots the suite runs against.
@@ -178,4 +178,114 @@ test("gradeAnswer reports every citation so a wrong answer can be read", () => {
   assert.equal(r.cited, 2)
   assert.equal(r.refs.find((x) => x.file === "agent/score.py").status, "match")
   assert.equal(r.refs.find((x) => x.file === "agent/other.py").status, "line-mismatch")
+})
+
+/**
+ * A snapshot with one file, and the answer on line 5.
+ *
+ * @param {string} dir
+ * @returns {string} the target root
+ */
+function subject(dir) {
+  mkdirSync(join(dir, "src"), { recursive: true })
+  const body = [
+    "one",
+    "two",
+    "three",
+    "four",
+    "export function theAnswer() { return 42 }",
+    "six",
+  ].join("\n")
+  writeFileSync(join(dir, "src", "a.js"), body)
+  return dir
+}
+
+
+const WANT = "theAnswer"
+
+test("a file and a line, on one line, is a citation", () => {
+  const refs = extractRefs("it is in src/a.js line 5")
+  // The line claim is the whole claim: a bare path for the same file is
+  // dropped, because the line version is the stronger one.
+  assert.deepEqual(
+    refs.map((r) => `${r.file}:${r.line}`),
+    ["src/a.js:5"],
+  )
+})
+
+test("a file and a line on the next line, labelled, is a citation", () => {
+  const refs = extractRefs("**File:** `src/a.js`\n**Line:** 5")
+  assert.ok(
+    refs.some((r) => r.file === "src/a.js" && r.line === 5),
+    `the citation was lost: ${JSON.stringify(refs)}`,
+  )
+})
+
+test("a line number that belongs to another sentence is not a line claim", () => {
+  // The agent named the right file. The "line 2" is about the report. If the
+  // two are paired, the answer is graded against a line the agent never
+  // claimed.
+  const refs = extractRefs("The answer is in src/a.js. Unrelated note: see line 2 of the report.")
+  const paired = refs.find((r) => r.file === "src/a.js" && r.line !== null)
+  assert.equal(paired, undefined, `a line was invented: ${JSON.stringify(refs)}`)
+  // The file is still cited.
+  assert.ok(refs.some((r) => r.file === "src/a.js"))
+})
+
+test("the right file with a wrong line beside it still grades as found", () => {
+  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const answer = "The answer is in src/a.js. Unrelated note: see line 2 of the report."
+  const graded = gradeAnswer(dir, answer, WANT)
+  assert.equal(graded.ok, true, `the answer was scored wrong: ${JSON.stringify(graded.refs)}`)
+})
+
+test("the right file with no line at all grades as found", () => {
+  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const graded = gradeAnswer(dir, "the answer is in src/a.js", WANT)
+  assert.equal(graded.ok, true)
+})
+
+test("the wrong file grades as wrong", () => {
+  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  mkdirSync(join(dir, "src"), { recursive: true })
+  writeFileSync(join(dir, "src", "b.js"), "nothing to see here")
+  const graded = gradeAnswer(dir, "the answer is in src/b.js line 5", WANT)
+  assert.equal(graded.ok, false)
+})
+
+test("a file cited twice is one citation", () => {
+  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const graded = gradeAnswer(dir, "src/a.js line 5, and also src/a.js", WANT)
+  assert.equal(graded.cited, 1)
+})
+
+test("a citation to the wrong line is a wrong answer, even in the right file", () => {
+  // The task asks which LINE. A file that contains the answer somewhere else
+  // is not the line the agent claimed, and the answer is wrong. This is the
+  // rule the suite has always had.
+  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const graded = gradeAnswer(dir, "src/a.js line 2", WANT)
+  assert.equal(graded.ok, false)
+  const ref = graded.refs.find((r) => r.file === "src/a.js" && r.line !== null)
+  assert.equal(ref.status, "line-mismatch")
+})
+
+test("a directory in the exclude list excludes everything inside it", () => {
+  // `endsWith("dist/")` never matched anything: a file path does not end
+  // with a directory name. So a citation to the build output was graded as
+  // evidence about the source.
+  assert.equal(isExcluded("dist/index.js", ["dist/"]), true)
+  assert.equal(isExcluded("eval/verify.mjs", ["eval/"]), true)
+  assert.equal(isExcluded("test/x.test.js", ["test/"]), true)
+  assert.equal(isExcluded("src/index.ts", ["dist/", "eval/", "test/"]), false)
+  // A file NAME in the list still excludes that file.
+  assert.equal(isExcluded("tasks-self.json", ["tasks-self.json"]), true)
+})
+
+test("a citation to an excluded directory is not evidence", () => {
+  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  mkdirSync(join(dir, "dist"), { recursive: true })
+  writeFileSync(join(dir, "dist", "index.js"), "export function theAnswer() { return 42 }")
+  const graded = gradeAnswer(dir, "it is in dist/index.js line 1", WANT, { exclude: ["dist/"] })
+  assert.equal(graded.ok, false, `an excluded citation was graded as evidence: ${JSON.stringify(graded.refs)}`)
 })

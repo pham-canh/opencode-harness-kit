@@ -99,14 +99,22 @@ test("the measurement scripts run against a database", (t) => {
       [
         join(ROOT, "eval", "measure-install.mjs"),
         "--db", db,
-        "--split", "2023-11-15T00:00:00.000Z",
-        "--before", "2023-11-14T00:00:00.000Z",
-        "--after", "2023-11-16T00:00:00.000Z",
+        // The windows are the FIXTURE's, not dates from 2023. A window that
+        // holds no messages measures nothing, and the measurement of nothing
+        // passes every assertion.
+        "--split", new Date(split).toISOString(),
+        "--before", new Date(split - 864e5).toISOString(),
+        "--after", new Date(split + 864e5).toISOString(),
       ],
       { encoding: "utf8" },
     )
     assert.equal(install.status, 0, `${install.stdout}\n${install.stderr}`)
     assert.match(install.stdout, /INSTALL EFFECTIVENESS/)
+    // The window has to hold the fixture's reads. A header on an empty
+    // measurement is still a header.
+    assert.match(install.stdout, /read calls\s+\d+/, install.stdout)
+    const reads = Number(/read calls\s+(\d+)\s+(\d+)/.exec(install.stdout)?.[1] ?? 0)
+    assert.ok(reads > 0, `the before window measured no reads: ${install.stdout}`)
 
     // The attribution one. It needs data on both sides of the split.
     const attribute = spawnSync(

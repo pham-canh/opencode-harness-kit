@@ -72,6 +72,26 @@ export declare const BASH_RULES: Rule[];
 /** @type {Rule[]} */
 export declare const WRITE_RULES: Rule[];
 /**
+ * The shared denylist, checked the way the rules are checked.
+ *
+ * The denylist used to be matched against the RAW command string, which is
+ * what lets `cd /tmp && npm publish` through: the pattern is `npm publish*`
+ * and the command does not start with it. It also let `sudo npm publish` and
+ * `sh -c "npm publish"` through, for the same reason.
+ *
+ * So the denylist is checked per SEGMENT, with the wrappers stripped, and
+ * the payload of a `bash -c` is checked too - exactly the way the rules are
+ * checked. One list, one way of reading it.
+ *
+ * @param {string} command
+ * @param {number} [depth]
+ * @returns {{ pattern: string, segment: string } | null}
+ */
+export declare function checkDenied(command: string, depth?: number): {
+    pattern: string;
+    segment: string;
+} | null;
+/**
  * @param {string} command
  * @param {Rule[]} [rules]
  * @param {number} [depth]

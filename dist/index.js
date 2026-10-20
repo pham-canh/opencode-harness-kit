@@ -9,6 +9,56 @@ import { join as join3, resolve as resolve2 } from "node:path";
 // src/rules.js
 import { homedir, tmpdir } from "node:os";
 import { resolve as resolvePath, sep } from "node:path";
+
+// src/denylist.js
+var BASH_DENYLIST = [
+  // `git push` is intentionally absent: it falls through to the `*` ask rule
+  // so opencode prompts for human approval before publishing.
+  "rm -rf *",
+  "rm -fr *",
+  "curl * | sh",
+  "curl * | bash",
+  "chmod 777 *",
+  "chmod 777*",
+  "gh pr create*",
+  "gh pr merge*",
+  "gh pr close*",
+  "gh release*",
+  "gh repo delete*",
+  // Publishing to a registry. The allowlist had a blanket `npm*`, so
+  // `npm publish` was ALLOWED - no prompt, no question - while GLOBAL.md says
+  // to ask before publishing. The mechanical layer contradicted the judgement
+  // layer, which is the exact failure this kit is built to catch.
+  //
+  // The registry is the one destination where a mistake cannot be undone by
+  // deleting a file.
+  "npm publish*",
+  "npm unpublish*",
+  "npm deprecate*",
+  "npm login*",
+  "npm adduser*",
+  "npm token *",
+  "npm owner *",
+  "yarn publish*",
+  "pnpm publish*",
+  "bun publish*"
+];
+function matchesPattern(command, pattern) {
+  const re = new RegExp(
+    "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[\\s\\S]*") + "$"
+  );
+  return re.test(command);
+}
+function deniedBy(command) {
+  const cmd = String(command ?? "").trim();
+  if (!cmd) return null;
+  for (const pattern of BASH_DENYLIST) {
+    if (matchesPattern(cmd, pattern)) return pattern;
+  }
+  return null;
+}
+
+// src/rules.js
 var CASE_INSENSITIVE_FS = process.platform === "darwin" || process.platform === "win32";
 function expandHome(p) {
   if (p === "~") return homedir();
@@ -313,6 +363,24 @@ function matches(rule, text) {
   if (!rule.test?.test(text)) return false;
   return !rule.unless?.test(text);
 }
+function checkDenied(command, depth = 0) {
+  if (!command || !command.trim()) return null;
+  const parts = segments(command);
+  const normalized = parts.map((seg) => stripPrefixes(seg));
+  for (let i = 0; i < parts.length; i++) {
+    const pattern = deniedBy(normalized[i]);
+    if (pattern) return { pattern, segment: parts[i] };
+  }
+  if (depth < MAX_SHELL_DEPTH) {
+    for (const seg of parts) {
+      const payload = shellPayload(seg);
+      if (!payload) continue;
+      const hit = checkDenied(payload, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
 function checkBash(command, rules = BASH_RULES, depth = 0) {
   if (!command || !command.trim()) return null;
   const parts = segments(command);
@@ -348,54 +416,6 @@ function checkWrite(target, rules = WRITE_RULES, root = "") {
       why: `this project's files are the ones you were asked to change, and ${root} is where they live`,
       segment: target
     };
-  }
-  return null;
-}
-
-// src/denylist.js
-var BASH_DENYLIST = [
-  // `git push` is intentionally absent: it falls through to the `*` ask rule
-  // so opencode prompts for human approval before publishing.
-  "rm -rf *",
-  "rm -fr *",
-  "curl * | sh",
-  "curl * | bash",
-  "chmod 777 *",
-  "chmod 777*",
-  "gh pr create*",
-  "gh pr merge*",
-  "gh pr close*",
-  "gh release*",
-  "gh repo delete*",
-  // Publishing to a registry. The allowlist had a blanket `npm*`, so
-  // `npm publish` was ALLOWED - no prompt, no question - while GLOBAL.md says
-  // to ask before publishing. The mechanical layer contradicted the judgement
-  // layer, which is the exact failure this kit is built to catch.
-  //
-  // The registry is the one destination where a mistake cannot be undone by
-  // deleting a file.
-  "npm publish*",
-  "npm unpublish*",
-  "npm deprecate*",
-  "npm login*",
-  "npm adduser*",
-  "npm token *",
-  "npm owner *",
-  "yarn publish*",
-  "pnpm publish*",
-  "bun publish*"
-];
-function matchesPattern(command, pattern) {
-  const re = new RegExp(
-    "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[\\s\\S]*") + "$"
-  );
-  return re.test(command);
-}
-function deniedBy(command) {
-  const cmd = String(command ?? "").trim();
-  if (!cmd) return null;
-  for (const pattern of BASH_DENYLIST) {
-    if (matchesPattern(cmd, pattern)) return pattern;
   }
   return null;
 }
@@ -516,14 +536,14 @@ var GuardPlugin = async ({ worktree, directory }) => {
   command: ${truncate(hit.segment)}`);
           }
           const command = String(output.args?.command ?? "");
-          const pattern = deniedBy(command);
-          if (pattern) {
+          const denied = checkDenied(command);
+          if (denied) {
             refuse(
               input.tool,
-              `denied command (${pattern})`,
+              `denied command (${denied.pattern})`,
               "denied command",
-              `this command matches \`${pattern}\`, which the kit never allows.
-  command: ${truncate(command)}`
+              `this command matches \`${denied.pattern}\`, which the kit never allows.
+  command: ${truncate(denied.segment)}`
             );
           }
           return;
@@ -1299,7 +1319,7 @@ async function logPrune(worktree, profileId, stats) {
         profile: profileId,
         stubbed: stats.stubbed,
         kept: stats.kept,
-        savedBytes: stats.saved,
+        savedChars: stats.saved,
         threshold: stats.threshold
       }) + "\n"
     );

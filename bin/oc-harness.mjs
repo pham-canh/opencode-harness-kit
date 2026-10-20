@@ -14,7 +14,7 @@
 
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, join, relative, resolve } from "node:path"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { createInterface } from "node:readline/promises"
@@ -106,6 +106,9 @@ const bold = (s) => `\x1b[1m${s}\x1b[0m`
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
 const red = (s) => `\x1b[31m${s}\x1b[0m`
+// The colour out. The human report wants it; a JSON field does not, and a
+// script that greps the message gets escape bytes it has to know to strip.
+const plain = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "")
 const interactive = () => process.stdin.isTTY && !flag("--yes")
 
 /**
@@ -219,15 +222,21 @@ async function cmdList() {
 }
 
 function cmdShow(id) {
-  if (!id) fail("usage: oc-harness show <profile>")
-  const p = loadProfile(id)
+  const wantJson = flag("--json")
+  if (!id) fail("usage: oc-harness show <profile>", wantJson)
+  let p
+  try {
+    p = loadProfile(id)
+  } catch (err) {
+    fail(`profile "${id}" cannot be loaded: ${err instanceof Error ? err.message : String(err)}`, wantJson)
+  }
   const plan = planEffort(id)
   const retention = loadRetention().models[`${p.provider}/${p.model}`]
 
   // The machine-readable form. "What does this profile resolve to" is a
   // question a script asks - to check a config, to diff two profiles, to
   // feed a dashboard.
-  if (flag("--json")) {
+  if (wantJson) {
     console.log(
       JSON.stringify(
         {
@@ -254,7 +263,16 @@ function cmdShow(id) {
           ),
           effort: plan.roles,
           fallback: p.fallback ?? [],
-          notes: plan.notes ?? [],
+          // The human report calls these two things different things, so the
+          // JSON does too: "adjustments" are what the compiler changed about
+          // the plan, "notes" are what the profile says about itself.
+          adjustments: plan.notes ?? [],
+          notes: p.notes ?? null,
+          retention_note: retention?.note ?? null,
+          guard_rules: ruleNames().map((name) => {
+            const rule = [...BASH_RULES, ...WRITE_RULES].find((r) => r.name === name)
+            return { name, why: rule?.why ?? "" }
+          }),
         },
         null,
         2,
@@ -572,10 +590,13 @@ async function cmdInstall() {
     projectGit && (inTheKit || flag("--hook"))
       ? join(projectGit, ".git", "hooks", "pre-commit")
       : null
+  // The reason a hook was not installed, when it was not. The kit's own
+  // repository is the one place the hook belongs, so "not a git repository"
+  // was never the right answer for it.
   let hookState = !projectGit
     ? "skipped, not a git repository"
     : inTheKit
-      ? "skipped, not a git repository"
+      ? "skipped (the kit's own repository installs it)"
       : "skipped, a hook is the project's call (use --hook to install one)"
   if (hookDest && !process.env.OC_HARNESS_NO_HOOK) {
     let existing = null
@@ -1403,7 +1424,11 @@ const BACKUP_DIR = "backups"
  */
 function keepProfileBackup(path, text) {
   try {
-    const dir = join(dirname(path), "backups")
+    // NOT inside `profiles/`. That directory is published to npm, and a
+    // backup of a profile is not part of the package - so every refresh
+    // would add a file to the tarball, forever, with nothing pruning them.
+    // The backup belongs next to the config, where the other backups are.
+    const dir = join(CONFIG_DIR, "profile-backups")
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, "-")
     writeFileSync(join(dir, `${basename(path, ".json")}-${stamp}.json`), text)
@@ -1487,7 +1512,7 @@ function cmdCost() {
         if (!line.trim()) continue
         const r = JSON.parse(line)
         prunes++
-        saved += r.savedBytes ?? 0
+        saved += r.savedChars ?? 0
         stubbed += r.stubbed ?? 0
       }
     } catch {
@@ -1498,7 +1523,7 @@ function cmdCost() {
   if (!prunes) {
     console.log(`    ${stamp("nothing yet - the pruner has not run in this project")}`)
   } else {
-    console.log(`    ${bold(saved.toLocaleString("en-US"))} bytes removed over ${prunes} pass(es)`)
+    console.log(`    ${bold(saved.toLocaleString("en-US"))} characters removed over ${prunes} pass(es)`)
     console.log(`    ${bold(stubbed.toLocaleString("en-US"))} tool outputs stubbed`)
     console.log(`    ${stamp("the same context, re-sent on every request of the session")}`)
   }
@@ -1596,9 +1621,16 @@ function cmdUninstall() {
     } catch {
       continue
     }
+    // A symlink is not enough to make it ours. The user may have their own
+    // symlink in that directory - to their own prompts, to a shared folder -
+    // and "a symlink in prompts/ is the kit's" would delete it. A link whose
+    // target is inside this package is the kit's; anything else is kept.
     const ours = entries.filter((f) => {
       try {
-        return lstatSync(join(full, f)).isSymbolicLink()
+        const p = join(full, f)
+        if (!lstatSync(p).isSymbolicLink()) return false
+        const target = realpathSync(p)
+        return target.startsWith(ROOT + sep) || target.startsWith(ROOT + "/")
       } catch {
         return false
       }
@@ -1941,25 +1973,39 @@ async function cmdDoctor() {
   // In JSON mode the human report is not printed at all. A report that is
   // half prose and half JSON is a report a script has to strip lines off.
   const wantJson = flag("--json")
-  const human = []
-  const realLog = console.log
-  if (wantJson) console.log = (...a) => human.push(a.join(" "))
-  const restore = () => {
-    console.log = realLog
+  if (wantJson) {
+    // A catalogue that cannot be read is an error, and in JSON mode an
+    // error is a JSON object: a script that pipes the output into a parser
+    // gets something it can read rather than a parse failure.
+    try {
+      await fetchCatalog()
+    } catch (err) {
+      fail(
+        `the model catalogue could not be read: ${err instanceof Error ? err.message : String(err)}`,
+        true,
+      )
+    }
   }
+  // The human report is built while the JSON one is not, and in JSON mode
+  // the human lines go nowhere. They are collected rather than printed, so
+  // the two modes print exactly one thing each.
+  const realLog = console.log
+  if (wantJson) console.log = () => {}
   try {
-    await runDoctor(wantJson)
+    await runDoctor()
   } finally {
-    restore()
+    console.log = realLog
   }
   doctorReport.json = wantJson
   if (wantJson) console.log(JSON.stringify(doctorReport, null, 2))
   doctorExit()
 }
 
+// The report the doctor fills in. It is rebuilt from scratch every run, so a
+// second doctor in the same process does not inherit the first one's findings.
 const doctorReport = { ok: true, problems: 0, drift: 0, strict: false, findings: [], json: false }
 
-async function runDoctor(wantJson) {
+async function runDoctor() {
   const catalog = await fetchCatalog()
   const retention = loadRetention().models
   const ids = listProfileIds()
@@ -1969,9 +2015,11 @@ async function runDoctor(wantJson) {
   // The machine-readable form. "Is the install healthy" is a question a CI
   // job or a script asks, and the human report answers it in prose that has
   // to be parsed.
+  doctorReport.findings = []
   const findings = doctorReport.findings
   /** @param {string} level @param {string} profile @param {string} message */
-  const note = (level, profile, message) => findings.push({ level, profile, message })
+  const note = (level, profile, message) =>
+    findings.push({ level, profile, message: plain(message) })
 
   console.log(`\n${bold("doctor")}  ${stamp(`catalog ${Object.keys(catalog).length} providers`)}\n`)
 
@@ -2161,9 +2209,13 @@ function cmdLanes() {
           }
         : { requests: 0, avg_ms: null, avg_ctx: null, avg_reasoning: null, models: [] }
     }
+    // The key is "usage", not "lanes": `show --json` uses "lanes" for the
+    // lane TABLE - which model each lane runs on - and two commands in one
+    // package using one name for two different shapes is how a script ends
+    // up reading the wrong one.
     console.log(
       JSON.stringify(
-        { profile: activeId, requests, ignored, lanes: out },
+        { profile: activeId, requests, ignored, usage: out },
         null,
         2,
       ),
@@ -2363,7 +2415,22 @@ function cmdAgents() {
   console.log(`  ${stamp("add `model:` and `variant:` to the agent frontmatter, or map them in the profile")}\n`)
 }
 
-function fail(msg) {
+/**
+ * Stop, with a message.
+ *
+ * In JSON mode the message is a JSON object on STDOUT, so a script that pipes
+ * the output into a parser gets an error it can read instead of a parse
+ * failure. The human form still goes to stderr, where an error belongs.
+ *
+ * @param {string} msg
+ * @param {boolean} [wantJson]
+ */
+function fail(msg, wantJson = false) {
+  if (wantJson) {
+    console.log(JSON.stringify({ ok: false, error: plain(msg) }, null, 2))
+    console.error(`\n  ${red("error")} ${msg}\n`)
+    process.exit(1)
+  }
   console.error(`\n  ${red("error")} ${msg}\n`)
   process.exit(1)
 }

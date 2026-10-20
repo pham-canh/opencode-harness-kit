@@ -27,9 +27,16 @@ bug, and the reason is printed. Codes 3 and 4 mean the work did not land.
 | 0 | Everything checks out. |
 | 1 | Something does not. The problems are listed, one per line. |
 
-With `--watch`, the first poll exits 1 if anything is wrong and then keeps
-running. A failed catalogue fetch is not a finding: it is reported and
-skipped, and the models are not announced as withdrawn.
+`--check-models` exits 1 as soon as a profile has drifted from the live
+catalogue. `--watch` never exits: it polls, and reports only what CHANGED.
+
+A failed catalogue fetch is not a finding. It is reported, the models are not
+announced as withdrawn, and the poll carries on - a catalogue that cannot be
+read says nothing about the models in it.
+
+With `--json` the report is the only thing on stdout: a script that pipes it
+into a parser gets JSON, and a failure is a JSON object with an `error` in
+it, not a parse error.
 
 ## The measurement gates
 
@@ -55,6 +62,10 @@ attributable measurement carries the gate.
 |---|---|
 | 0 | The install is in place, or the change was confirmed. |
 | 1 | The install was refused, left alone, or a step failed. |
+
+`doctor` also exits 1 when there is no config, or no profile recorded in
+it: a kit that is installed but points at nothing is a broken install, and
+a check that passes it is not a check.
 
 Nothing is overwritten without a confirmation, unless `--yes` is given. With
 `--yes`, the old config is still written to the backup directory first.

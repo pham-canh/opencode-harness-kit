@@ -68,18 +68,33 @@ export function extractRefs(text) {
   // path:line
   for (const m of text.matchAll(/([\w./@~-]+\.[A-Za-z0-9]+):(\d+)/g)) push(m[1], m[2])
 
-  // path ... line 214
+  // path ... line 214, on ONE line.
   //
-  // The gap may CROSS A NEWLINE. An agent that answers in a markdown field
-  // writes the file on one line and the number on the next:
+  // The gap may not contain a full stop. A full stop is a sentence end, and
+  // an answer that says "the answer is in src/a.js. Unrelated note: see line
+  // 2 of the report" would otherwise pair the path with a line number that is
+  // about something else - inventing a claim the agent never made, and then
+  // scoring the answer against it. Under-claiming a line is better than
+  // claiming a wrong one.
+  for (const m of text.matchAll(/([\w./@~-]+\.[A-Za-z0-9]+)[^.\n]{0,40}?\blines?\s*:?\s*[*:_`\s]*(\d+)/gi))
+    push(m[1], m[2])
+
+  // path, then a line number on the NEXT line.
+  //
+  // The number has to be introduced by a label at the start of that line.
+  // An agent that answers in a markdown field writes the file on one line and
+  // the number on the next:
   //
   //     **File:** `src/profile.js`
   //     **Line:** 105
   //
   // and a gap that stops at the newline never pairs them, so the citation is
-  // lost and a correct answer is scored wrong. That is not a rare shape - it
-  // is the shape most of the answers took.
-  for (const m of text.matchAll(/([\w./@~-]+\.[A-Za-z0-9]+)[\s\S]{0,60}?\blines?\s*:?\s*[*:_`\s]*(\d+)/gi))
+  // lost and a correct answer is scored wrong. Requiring the label is what
+  // keeps this from pairing a path with a line number that belongs to the
+  // next sentence.
+  for (const m of text.matchAll(
+    /([\w./@~-]+\.[A-Za-z0-9]+)[^\n]{0,40}?\n[ \t]*[*_`]{0,2}[Ll]ines?[*_`]{0,2}\s*:?\s*[*_`\s]*(\d+)/g,
+  ))
     push(m[1], m[2])
 
   // The markdown field form, paired explicitly: the file and the number are
@@ -103,13 +118,17 @@ export function extractRefs(text) {
 // De-duplicate on the claimed position, keeping order. A bare path is dropped
 // when the same file was also cited with a line, since the line version is the
 // stronger claim and grading both double-counts one answer.
+//
+// The pairing that produces the line claim is what has to be careful, then -
+// and it is: a line that belongs to another sentence must not be paired with
+// the file at all. That is fixed where the pairs are made, not here.
 const seen = new Set()
 const unique = refs.filter((r) => {
-    const key = `${r.file}:${r.line}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  const key = `${r.file}:${r.line}`
+  if (seen.has(key)) return false
+  seen.add(key)
+  return true
+})
 const withLines = new Set(unique.filter((r) => r.line !== null).map((r) => r.file))
 return unique.filter((r) => r.line !== null || !withLines.has(r.file))
 }
@@ -138,6 +157,26 @@ export function resolveInTarget(target, ref) {
 }
 
 /**
+ * Whether a cited path is one of the excluded files or inside an excluded
+ * directory.
+ *
+ * @param {string} file
+ * @param {string[]} exclude
+ * @returns {boolean}
+ */
+export function isExcluded(file, exclude = []) {
+  const base = file.split("/").pop()
+  return exclude.some((x) => {
+    if (!x) return false
+    if (x.endsWith("/")) return file.startsWith(x)
+    // A file NAME excludes that file wherever it is: the suite is excluded as
+    // "tasks-self.json", and the citation is "eval/tasks-self.json".
+    if (file === x || base === x) return true
+    return file.startsWith(`${x}/`)
+  })
+}
+
+/**
  * Grade one answer.
  *
  * `want` is a substring of the line that answers the task. A window of
@@ -157,7 +196,10 @@ export function gradeAnswer(target, text, want, { window = 1, exclude = [] } = {
     // suite is this repository, and the suite's answer key is inside it, so
     // an agent that greps for the symbol can cite the answer key and pass
     // without reading the source.
-    if (exclude.some((x) => ref.file.endsWith(x))) {
+    // `exclude` holds both file names and DIRECTORIES. A file path never
+    // ends with a directory name, so `endsWith` never matched "dist/" and a
+    // citation to the build output was graded as evidence.
+    if (isExcluded(ref.file, exclude)) {
       return { ...ref, status: "excluded" }
     }
     let lines
@@ -182,7 +224,11 @@ export function gradeAnswer(target, text, want, { window = 1, exclude = [] } = {
   })
 
   const ok = checked.some((c) => c.status === "match" || c.status === "match-file")
-  const cited = checked.filter((c) => c.status !== "not-in-snapshot").length
+  // A citation is a file the agent named. One file cited twice - once with a
+  // line and once without - is one citation, not two.
+  const cited = new Set(
+    checked.filter((c) => c.status !== "not-in-snapshot").map((c) => c.file),
+  ).size
   return { ok, refs: checked, cited }
 }
 

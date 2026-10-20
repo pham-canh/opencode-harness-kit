@@ -438,7 +438,7 @@ test("the prune log lands in the project, not in whatever directory the shell wa
   assert.equal(line.profile, "fleet-safe")
   assert.ok(line.stubbed > 0, "the log says what was stubbed")
   assert.ok(
-    line.savedBytes > 0,
+    line.savedChars > 0,
     "the reported saving must be real: it is what the transform actually removed",
   )
   rmSync(dir, { recursive: true, force: true })
