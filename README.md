@@ -484,6 +484,10 @@ Your numbers stay on your machine; only the script is in the repo.
 | `router.ts` | `config`, `event`, `chat.message` | Moves a lane to the next rung of its chain when a route is spent. |
 | `telemetry.ts` | `event`, `tool.execute.after` | Local JSONL, gitignored, never a network call. |
 
+Both `.space/telemetry.jsonl` and `.space/prune.jsonl` are written in the
+**project**, not wherever opencode was started from. The prune log used to
+land in the process's working directory, which is often your home directory.
+
 `guard.ts` matches against the command a shell would actually run, not the text
 it was handed. It splits on shell separators, honours quotes so that a `;`
 inside a string is an argument rather than a second command, strips `env`,
@@ -494,11 +498,19 @@ not guard-blocked; it falls through to the `*` ask permission so opencode
 prompts for human approval before publishing.
 
 Writes are scoped to the project directory, with the OS temp directory as the
-one exception GLOBAL.md allows.
+one exception GLOBAL.md allows. That covers every tool that writes: `write`
+and `edit` by their path, `apply_patch` by the paths named in the patch, and
+a bash command by its **working directory** — a command run from `/etc` is
+writing outside the project, whatever the command is.
+
+A write tool whose arguments name no file is blocked rather than allowed
+through: a guard that cannot see what a write touches cannot scope it. And
+if the guard itself cannot decide, it blocks — a guard that quietly passes
+when broken is worse than none.
 
 Pruning keeps user messages, assistant prose, diffs, and the last few turns
-verbatim, and never touches the in-flight turn. Old reasoning is dropped, since
-stale reasoning is worse than none.
+verbatim, and never touches the in-flight turn. Old reasoning is dropped,
+since stale reasoning is worse than none.
 
 `router.ts` fails over **per lane**. A fleet has ten routes, so one spent
 route must not take the other nine down with it: the lane that used the dead
