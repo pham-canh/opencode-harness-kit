@@ -189,7 +189,14 @@ jobs:
           # idiom is what keeps the reason available.
           code=0
           npm publish "${args[@]}" > /tmp/publish.log 2>&1 || code=$?
-          grep -E "oidc|oidc/token|trust|ENOENT|E401|E403|E404|ENEEDAUTH|not authorized" /tmp/publish.log || true
+          # The whole log, not a filtered selection. A filter that misses the
+          # actual error is worse than no filter: it turns "npm exited 1" into
+          # "npm said nothing", which is a dead end.
+          if [ $code -ne 0 ]; then
+            echo "--- the last 40 lines npm printed ---"
+            tail -40 /tmp/publish.log
+            echo "--- end ---"
+          fi
           if [ $code -ne 0 ]; then
             # npm reports a refused OIDC exchange as "package not found", which
             # is what a missing or mismatched trusted publisher looks like
