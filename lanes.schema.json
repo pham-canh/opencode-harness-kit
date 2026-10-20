@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/pham-canh/space-harness/lanes.schema.json",
+  "title": "OpenCode harness lane table",
+  "description": "The jobs a fleet can hand out. A lane says what it is for and nothing about models: a profile says which lanes it enables and which model serves each one. The lane table is the single list of lane names in the kit; `src/profile.js` reads it, `src/config.js` compiles it into the generated config, and `profiles/schema.json` must name the same lanes.",
+  "type": "object",
+  "required": ["lanes"],
+  "additionalProperties": false,
+  "properties": {
+    "$comment": { "type": "string" },
+    "$schema": { "type": "string" },
+    "lanes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/lane" },
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]*$",
+        "description": "A lane name is a slug: it becomes an agent name, a prompt filename and a permission key."
+      }
+    }
+  },
+  "definitions": {
+    "lane": {
+      "type": "object",
+      "required": ["mode", "description", "prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["primary", "subagent"],
+          "description": "A primary agent is one a person talks to and that may delegate; a subagent is one that is only ever handed a job. OpenCode's own `AgentConfig.mode` allows a third value, `all`, which this kit does not use."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 20,
+          "description": "When to use this lane. The model reads it on every turn to choose a lane, so it has to be long enough to select on and different enough from the others not to overlap. Two lanes that sound alike are the failure mode of a large catalogue, not a large catalogue itself."
+        },
+        "steps": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Maximum agentic iterations before the lane is forced to answer in prose. A runaway lane reports instead of looping."
+        },
+        "permission": {
+          "type": "object",
+          "description": "Per-lane permission rules, merged over the ones already on the agent. A read-only lane sets `edit: deny`; a lane that runs commands lists them.",
+          "additionalProperties": true
+        },
+        "prompt": {
+          "type": "string",
+          "pattern": "^prompts/[a-z0-9-]+\\.md$",
+          "description": "The lane's instructions, relative to the kit root. The prompt body lives in a file, not in this table and not in the generated config, because an agent markdown file of the same name replaces the config entry wholesale."
+        }
+      }
+    }
+  }
+}

@@ -37,6 +37,7 @@
     "docs/*.md",
     "retention.yml",
     "lanes.json",
+    "lanes.schema.json",
     "GLOBAL.md",
     "README.md",
     "LICENSE"
