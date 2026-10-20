@@ -61,3 +61,36 @@ after — say which test does that.
 
 Bump nothing by hand in `package.json`: releases are cut by tagging `v*`, and the
 `publish` job reads the version from there.
+
+## Cutting a release
+
+```bash
+# 1. the version and the changelog entry
+npm version minor            # or major, or patch
+$EDITOR CHANGELOG.md        # the entry for the new version
+
+# 2. the tag, which is what triggers the publish
+git commit -am "release: <version>"
+git tag -a v<version> -m "<what the release is>"
+git push origin main v<version>
+```
+
+The tag triggers the workflow, the tests run, and the `publish` job publishes
+the tarball with a provenance statement.
+
+**The publish needs a token that can publish this package.** The `NPM_TOKEN`
+repo secret must be a granular npm token with write access to
+`opencode-harness-kit` (and the `Read and write` permission on the package, not
+only on the account). A token without it fails with a bare
+`404 Not Found - PUT https://registry.npmjs.org/opencode-harness-kit`, which
+reads like a missing package rather than a missing permission — the registry
+returns 404 for a package the token cannot touch.
+
+The `publish` job checks the token's access before it builds a tarball, so the
+failure names the permission rather than the registry.
+
+The GitHub release is written by hand from the CHANGELOG entry:
+
+```bash
+gh release create v<version> --title "<version> - <what it is>" --notes-file <notes>
+```
