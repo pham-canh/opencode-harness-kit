@@ -154,31 +154,6 @@ improvement from a NULL average.
   generated config says so where it happens, in the form
   `locate=unset(asked low)`.
 
-### Added
-
-- **`oc-harness use --memory` turns on a memory plugin.** The kit does not
-  implement memory, and it should not: a local vector store with embeddings, a
-  web UI, auto-capture and a user profile is a large thing to build badly, and
-  `opencode-mem` already is one. The entry is ADDED to the plugin list, so the
-  user's own plugins survive and a config that already has it does not grow a
-  second copy.
-
-- **`oc-harness doctor --check-models` and `--watch`.** The question a
-  free-tier user actually has to ask is "is one of my routes gone", and it is
-  not the same question as "has a profile drifted". `--check-models` answers it
-  in one run with a non-zero exit, which is the shape a cron wants; `--watch`
-  keeps running and reports only what CHANGED.
-
-- **`eval/measure-prune.mjs`.** The attributable measurement of the pruner,
-  described above.
-
-- **The A/B suite is reproducible.** The old one ran against
-  `lablab-harness@8a674f5`, which is not public. A result nobody can check is
-  not a result. The new suite runs against the kit's own tree at a pinned
-  commit, so `git clone && git checkout <sha>` reproduces it exactly.
-
-### Changed
-
 - `npm run check` is the offline gate — build, typecheck, tests — and is green
   on a checkout that has never seen an OpenCode login. The live half moved to
   `npm run check:install`, which needs a machine that has run OpenCode. The
@@ -212,6 +187,45 @@ improvement from a NULL average.
 - Both `.space/telemetry.jsonl` and `.space/prune.jsonl` are written in the
   project. The prune log used to land in the process's working directory,
   which is often your home directory.
+### Added
+
+- **The demo is back on the front page.** `docs/demo/pitch.mp4` and
+  `docs/demo-loop.gif` are in the README again, and `video/` still holds the
+  take script, the voiceover and the recording driver. The film was recorded
+  against an earlier version of the kit, and the README now says so next to
+  it rather than leaving a front page that quietly misstates the project's own
+  numbers - which is the reason 0.4.3 removed it in the first place, and the
+  reason it should not have been removed without putting the film back.
+
+- **`OPENCODE_HARNESS_CATALOG_URL` overrides where the live model catalogue
+  comes from.** A mirror is one use; a local fixture is another, and a test
+  that reached models.dev would fail on a machine with no network. The `file://`
+  spelling is read directly, so a fixture needs no external binary.
+
+- **`OC_HARNESS_NO_HOOK` skips the pre-commit hook.** A test that writes an
+  executable git hook into the repository it is testing is a test that changes
+  the repository.
+
+- **`oc-harness use --memory` turns on a memory plugin.** The kit does not
+  implement memory, and it should not: a local vector store with embeddings, a
+  web UI, auto-capture and a user profile is a large thing to build badly, and
+  `opencode-mem` already is one. The entry is ADDED to the plugin list, so the
+  user's own plugins survive and a config that already has it does not grow a
+  second copy.
+
+- **`oc-harness doctor --check-models` and `--watch`.** The question a
+  free-tier user actually has to ask is "is one of my routes gone", and it is
+  not the same question as "has a profile drifted". `--check-models` answers it
+  in one run with a non-zero exit, which is the shape a cron wants; `--watch`
+  keeps running and reports only what CHANGED.
+
+- **`eval/measure-prune.mjs`.** The attributable measurement of the pruner,
+  described above.
+
+- **The A/B suite is reproducible.** The old one ran against
+  `lablab-harness@8a674f5`, which is not public. A result nobody can check is
+  not a result. The new suite runs against the kit's own tree at a pinned
+  commit, so `git clone && git checkout <sha>` reproduces it exactly.
 
 ### Security
 

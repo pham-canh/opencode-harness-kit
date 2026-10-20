@@ -5,7 +5,8 @@ Regenerate with:
 
     npm run measure            # human-readable table
     npm run measure -- --json  # machine-readable
-    npm run measure:check      # same, but exits 1 if the kit regresses
+    npm run measure:prune      # the pruner, on real sessions
+    npm run measure:check      # the gate
     npm run attribute          # where the context actually went
 
 The source is the install database, opened read-only. Nothing here is estimated
@@ -16,6 +17,36 @@ Everything in this file comes from the commands above. The A/B section at the
 bottom runs the same task with and without the kit; it is six agent runs, which
 is enough to be worth reading and not enough to be worth trusting.
 
+## Two measurements, and the difference between them
+
+**`npm run measure` is an OBSERVATION about one install.** It compares the work
+before the kit landed with the work after, and the work is never the same. It
+reported the context per request going UP by 16% on one install, with twice as
+many reads and twice as many messages in the second window - a number about
+the jobs, not about the kit. Its windows are now fixed and equal around the
+split, and the report says how long they were; the context drop is skipped
+with a note when the two sides did wildly different amounts of work, because a
+gate that fails for reasons nobody can act on is a gate people switch off.
+
+**`npm run measure:prune` is ATTRIBUTABLE.** opencode stores the message
+parts unpruned - the pruner rewrites the outgoing request, not the history -
+so the stored parts of a real session are exactly what the pruner was given.
+Replaying the real pruner over them measures what it removed, on the same
+messages, with and without.
+
+    npm run measure:prune
+
+| | |
+|---|---|
+| sessions | 60 (last 30d, at least 6 assistant messages each) |
+| context before | 15,130,845 characters |
+| context after | 2,953,140 characters |
+| **removed** | **80.5%** |
+| parts stubbed | 6,608 |
+
+**`eval/ab.mjs` is the CONTROLLED comparison** - the same task with and
+without the kit, graded on the file after the run. It is at the bottom.
+
 ## Method
 
 Three edges divide the database into two windows:
@@ -25,16 +56,17 @@ Three edges divide the database into two windows:
   else does.
 - **before** / **after** - the outer bounds of the two windows.
 
-`npm run measure` defaults the before-edge to seven days before the split.
-`--before` takes an ISO timestamp, so `--before 2026-09-17T15:38:46.850Z` is
-how the original baseline in `README.md` was reproduced. Passing `--before`
-with no value falls back to the seven-day default rather than erroring.
+`npm run measure` defaults BOTH edges to seven days around the split, so the
+two windows are the same length. `--before` takes an ISO timestamp, so
+`--before 2026-09-17T15:38:46.850Z` is how the original baseline in
+`README.md` was reproduced. `--days` changes the window length, and `--since`
+puts the unbounded "everything since the install" window back.
 
 A read counts as **narrow** when the caller bounded it with `offset` or
 `limit`. `README.md` counted `offset` alone; that is the 423 figure below, and
 this script's 501 is the same reads plus the ones bounded only by `limit`.
 
-## Result 1 - the week before versus since the install
+## Result 1 - a week before the install against a week after
 
     npm run measure
 
