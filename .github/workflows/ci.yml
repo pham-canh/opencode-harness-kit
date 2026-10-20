@@ -140,8 +140,11 @@ jobs:
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
             args+=(--provenance)
           fi
-          npm publish "${args[@]}" > /tmp/publish.log 2>&1
-          code=$?
+          # The runner runs every script with `bash -e`, so a failing npm
+          # publish would exit before the log could be read. The `|| code=$?`
+          # idiom is what keeps the reason available.
+          code=0
+          npm publish "${args[@]}" > /tmp/publish.log 2>&1 || code=$?
           grep -E "oidc|oidc/token|trust|ENOENT|E401|E403|E404|ENEEDAUTH|not authorized" /tmp/publish.log || true
           if [ $code -ne 0 ]; then
             echo "::error::npm publish failed (exit $code). With no NPM_TOKEN this is trusted publishing: check that npmjs.com lists this repository and workflow (ci.yml) as a trusted publisher, that the workflow name matches exactly, that the repository matches, and that the configuration has had its first successful publish within 2 days. With a token it is usually a token without WRITE access to the opencode-harness-kit package - npm answers 404 for a package the token cannot touch, which reads like a missing package."
