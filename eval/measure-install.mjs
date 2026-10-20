@@ -58,7 +58,7 @@ let days
 try {
   days = numberFlag("--days") ?? 7
 } catch (err) {
-  console.error(String(err.message))
+  console.error(String(errorMessage(err)))
   process.exit(1)
 }
 if (days <= 0) {
@@ -96,7 +96,7 @@ try {
   minNarrow = numberFlag("--min-narrow")
   minCtxDrop = numberFlag("--min-ctx-drop")
 } catch (err) {
-  console.error(String(err.message))
+  console.error(String(errorMessage(err)))
   process.exit(1)
 }
 
@@ -115,6 +115,19 @@ if (!existsSync(DB)) {
 import { pct, readsPerSearch, ctxDropPct as computeCtxDropPct } from "./metrics.js"
 import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
 import { numberFlag, stringFlag } from "./flags.mjs"
+
+/**
+ * The message of a caught value, whatever it turned out to be.
+ *
+ * `catch` gives `unknown` under strict mode, and the file is not strict -
+ * but a message is what these scripts exist to print.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err)
+}
 
 function query(sql) {
   return queryDb(DB, sql)

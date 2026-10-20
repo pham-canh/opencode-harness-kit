@@ -29,6 +29,19 @@ import { fileURLToPath } from "node:url"
 import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
 import { countFlag, numberFlag } from "./flags.mjs"
 
+/**
+ * The message of a caught value, whatever it turned out to be.
+ *
+ * `catch` gives `unknown` under strict mode, and the file is not strict -
+ * but a message is what these scripts exist to print.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err)
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, "..")
 const DIST = join(ROOT, "dist", "index.js")
@@ -57,7 +70,7 @@ try {
   // A gate of 0% is a valid gate, so this one is a plain number.
   minSaved = numberFlag("--min-saved")
 } catch (err) {
-  console.error(String(err.message))
+  console.error(String(errorMessage(err)))
   process.exit(1)
 }
 // The population: sessions in a time window, with enough assistant messages

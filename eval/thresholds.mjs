@@ -20,6 +20,19 @@ import { median } from "./metrics.js"
 import { countFlag } from "./flags.mjs"
 import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
 
+/**
+ * The message of a caught value, whatever it turned out to be.
+ *
+ * `catch` gives `unknown` under strict mode, and the file is not strict -
+ * but a message is what these scripts exist to print.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err)
+}
+
 const args = process.argv.slice(2)
 const flag = (...n) => {
   const i = args.findIndex((a) => n.includes(a))
@@ -45,7 +58,7 @@ let minReads
 try {
   minReads = countFlag("--min-reads") ?? 10
 } catch (err) {
-  console.error(String(err.message))
+  console.error(String(errorMessage(err)))
   process.exit(1)
 }
 const sql = `
