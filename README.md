@@ -348,8 +348,10 @@ oc-harness link       just the plugin, no prompts or skills
 oc-harness verify     check the install against the profile; non-zero on drift
 oc-harness agents     report agents the effort tiering does not reach
 oc-harness lanes      report which lanes the fleet actually used
+oc-harness lanes --json   the same report, for a script
 oc-harness trust      set up npm trusted publishing for this package
 oc-harness doctor     re-check profiles against models.dev and the live config
+oc-harness doctor --watch  poll the catalogue, and report only what changed
 oc-harness refresh --all   re-derive every shipped profile against the live catalogue
 oc-harness upgrade    check for a newer kit, refresh the profiles, rewrite the config
 oc-harness backups   the configs that were replaced, newest first
@@ -362,6 +364,10 @@ oc-harness run        drive .space/tasks.md to done with the build agent
 
 Every flag accepts both spellings: `--profile fleet-safe` and
 `--profile=fleet-safe` are the same flag.
+
+Every command that can fail says so in its exit code, so a script can tell
+"the kit says no" from "the kit broke".
+[`docs/EXIT-CODES.md`](docs/EXIT-CODES.md) lists them.
 
 `oc-harness <anything-else>` now exits non-zero with the list of real commands,
 instead of printing help and reporting success.
