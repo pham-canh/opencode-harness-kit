@@ -449,6 +449,12 @@ A lane that is never used is a description the model reads on every turn and
 a free model doing nothing. Cut it from the profile's `roles` and the lane
 leaves the config with it.
 
+The `build` row is not comparable with the others: it includes the turns
+that did the delegating, so it counts the work of the other nine lanes. A
+one-line `build` reply on its own is about a third of that number, and
+rather more on a cold start. [`docs/ROUTING.md`](docs/ROUTING.md) has the
+per-profile tables and what each row measures.
+
 One request is one assistant message, which is one round trip to the provider:
 a lane that makes three tool calls makes three requests. The counters come
 from `.space/telemetry.jsonl`, written by the plugin, never sent anywhere, and

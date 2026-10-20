@@ -33,6 +33,7 @@ import { elapsedSeconds, median } from "./metrics.js"
 import { countFlag, numberFlag } from "./flags.mjs"
 import { gradeAnswer, gradeMutation } from "./verify.mjs"
 import { checkPremises } from "./premises.mjs"
+import { parseJsonc } from "../src/profile.js"
 
 /**
  * The message of a caught value, whatever it turned out to be.
@@ -359,16 +360,44 @@ function sanitizeCopy(dir) {
   return n
 }
 
+/**
+ * The model the kit-on arm will use, read from the live config.
+ *
+ * @returns {string | null}
+ */
+function liveModel() {
+  for (const name of ["opencode.jsonc", "opencode.json"]) {
+    const p = join(REAL_HOME, ".config/opencode", name)
+    if (!existsSync(p)) continue
+    try {
+      const m = parseJsonc(readFileSync(p, "utf8"))?.model
+      if (typeof m === "string" && m) return m
+    } catch {}
+  }
+  return null
+}
+
 // A kit-free home. Config and instructions come from nowhere; auth and the
 // session store are symlinked back so the run is a normal opencode run.
-function makeNokitHome() {
+//
+// The model is PINNED to the one the kit-on arm uses. An empty config left
+// opencode to pick its own default, and that default is not the model the
+// kit-on arm was on: the two arms were then measuring two different models
+// and calling the difference the kit's cost. Worse, the default it picked
+// did not answer at all - four kit-off runs hit the timeout with no output
+// and no tool call, and a timed-out run has no context and no tools, so it
+// enters the medians as a fast, empty, wrong answer.
+//
+// The comparison this file exists to make is "the same model, with the kit
+// and without it". The model is now pinned to make that literally true, and
+// the report prints it so a reader can check.
+function makeNokitHome(model) {
   const home = mkdtempSync(join(tmpdir(), "opencode-ab-"))
   mkdirSync(join(home, ".config/opencode"), { recursive: true })
   mkdirSync(join(home, ".local/share"), { recursive: true })
-  writeFileSync(
-    join(home, ".config/opencode/opencode.json"),
-    JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2),
-  )
+  const config = { $schema: "https://opencode.ai/config.json" }
+  if (model) config.model = model
+  writeFileSync(join(home, ".config/opencode/opencode.json"), JSON.stringify(config, null, 2))
   const link = join(home, ".local/share/opencode")
   try {
     symlinkSync(join(REAL_HOME, ".local/share/opencode"), link, "dir")
@@ -493,7 +522,12 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
   }
 }
 
-const nokit = rescoreDir ? null : makeNokitHome()
+const armModel = liveModel()
+if (!armModel) {
+  console.warn("  warn: no model in the live config - the kit-off arm will use opencode's default,")
+  console.warn("        which is not necessarily the model the kit-on arm uses.")
+}
+const nokit = rescoreDir ? null : makeNokitHome(armModel)
 const outDir = rescoreDir ?? mkdtempSync(join(tmpdir(), "opencode-ab-out-"))
 const before = fingerprint(target)
 
@@ -501,6 +535,7 @@ console.log(`A/B: ${jobs.length} task(s) x ${reps} rep(s) per arm${rescoreDir ? 
 console.log(`  target  ${target}`)
 for (const j of jobs) console.log(`  task    ${j.id}`)
 console.log(`  timeout ${runTimeoutMs / 1000}s per run`)
+console.log(`  model   ${armModel ?? "(opencode's default - NOT pinned)"}`)
 if (nokit) console.log(`  kit-off home ${nokit}`)
 console.log("")
 
@@ -669,6 +704,7 @@ if (!rescoreDir) {
 console.log(`  target unchanged: ${before === after ? "yes" : `NO (${before} -> ${after})`}`)
 console.log(`  raw streams: ${outDir}`)
 console.log(`  kit-off home: ${nokit}`)
+console.log(`  model: ${armModel ?? "(opencode's default - NOT pinned)"}`)
 
 if (before !== after) {
   console.error("")
