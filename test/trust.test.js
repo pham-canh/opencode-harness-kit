@@ -15,8 +15,9 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { execFileSync, spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { execFileSync, spawn, spawnSync } from "node:child_process"
+import { createServer } from "node:http"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -106,7 +107,7 @@ esac
   )
   try {
     const r = spawnSync("node", [CLI, "trust"], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OC_TRUST_NO_BROWSER: "1" },
       encoding: "utf8",
     })
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
@@ -114,6 +115,86 @@ esac
     assert.match(out, /did not create the trusted publisher/, out)
     assert.notEqual(r.status, 0, "a failed create must not exit 0")
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("each npm command gets its own two-factor challenge", async () => {
+  // The code a browser flow returns is valid for the challenge that asked for
+  // it and for nothing else. Carrying one from one command to the next makes
+  // the second command send a code that is already spent - and the registry
+  // answers that with a DIFFERENT challenge, one that wants an authenticator
+  // code rather than a browser. The failure looks like "npm wants something
+  // else now" and nothing like the cause.
+  const calls = []
+  let issued = 0
+
+  const server = createServer((req, res) => {
+    issued += 1
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end(JSON.stringify({ token: `TOKEN-${issued}` }))
+  })
+  void issued
+  const dir = mkdtempSync(join(tmpdir(), "ock-trust-otp-"))
+  const bin = join(dir, "bin")
+  mkdirSync(bin, { recursive: true })
+  const log = join(dir, "argv.log")
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const port = server.address().port
+    writeFileSync(
+      join(bin, "npm"),
+      `#!/bin/sh
+echo "$@" >> "${log}"
+case "$1" in
+  --version) echo "11.21.1" ;;
+  whoami) echo "someone" ;;
+  trust)
+    # happy when it is given a code, and a challenge when it is not
+    for a in "$@"; do
+      case "$a" in
+        --otp=*)
+          if [ "$2" = "list" ]; then echo "[]"; else echo "CREATED"; fi
+          exit 0 ;;
+      esac
+    done
+    echo '{"error":{"code":"EOTP","doneUrl":"http://127.0.0.1:${port}/-/v1/done?authId=bbb"}}}'
+    exit 1
+    ;;
+  *) exit 1 ;;
+esac
+`,
+      { mode: 0o755 },
+    )
+    // spawn, not spawnSync: the fake registry is an HTTP server in THIS
+    // process, and spawnSync would block the event loop that has to answer
+    // it. That is a deadlock, not a slow test.
+    const r = await new Promise((resolve) => {
+      const child = spawn("node", [CLI, "trust"], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OC_TRUST_NO_BROWSER: "1" },
+      })
+      let stdout = ""
+      let stderr = ""
+      child.stdout.on("data", (d) => (stdout += d))
+      child.stderr.on("data", (d) => (stderr += d))
+      child.on("close", (code) => resolve({ code, stdout, stderr }))
+    })
+    const out = `${r.stdout}${r.stderr}`
+    assert.match(out, /the trusted publisher is configured/, out)
+
+    const lines = readFileSync(log, "utf8").split("\n").filter(Boolean)
+    const otps = lines.map((l) => (l.match(/--otp=(\S+)/) || [])[1]).filter(Boolean)
+    assert.equal(otps.length >= 2, true, `expected two challenges, got ${JSON.stringify(otps)}`)
+    assert.notEqual(
+      otps[0],
+      otps[1],
+      "the second command must not reuse the first command's code",
+    )
+  } finally {
+    // fetch keeps its connection alive, and close() waits for it. A test that
+    // leaves a socket open is a test that never finishes.
+    server.closeAllConnections()
+    server.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })

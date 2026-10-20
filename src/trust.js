@@ -87,11 +87,10 @@ function npm(args, opts = {}) {
  * Run npm with its output captured.
  *
  * @param {string[]} args
- * @param {{ otp?: string }} [state]
+ * @param {string[]} [extra] arguments to add, such as `--otp=<code>`
  * @returns {{ out: string, code: number }}
  */
-function npmCaptured(args, state = {}) {
-  const extra = state.otp ? [`--otp=${state.otp}`] : []
+function npmCaptured(args, extra = []) {
   const r = spawnSync("npm", [...args, ...extra], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -117,26 +116,44 @@ function npmCaptured(args, state = {}) {
  * it, and npm then gives up and prints a URL nobody can open. So the flow is
  * done here, where the URL can be recovered.
  *
+ * EACH CALL GETS ITS OWN CHALLENGE. The code a browser flow returns is valid
+ * for the challenge that asked for it and for nothing else, so carrying one
+ * from one npm command to the next makes the second command send a code that
+ * is already spent, and the registry answers that with a different challenge
+ * - one that wants an authenticator code rather than a browser.
+ *
  * @param {string[]} args
- * @param {{ otp?: string }} [state]
+ * @param {{ otp?: string }} [state] the user's own code, if they gave one
  * @returns {Promise<{ out: string, code: number }>}
  */
 async function npmWithOtp(args, state = {}) {
-  let result = npmCaptured(args, state)
+  const userOtp = state.otp ? [`--otp=${state.otp}`] : []
+  let result = npmCaptured(args, userOtp)
   if (result.code === 0) return result
 
-  const m = /"doneUrl"\s*:\s*"[^"]*authId=([a-f0-9-]+)"/.exec(result.out)
-  if (!m) return result
-  const authId = m[1]
-  const authUrl = `https://www.npmjs.com/auth/cli/${authId}`
-  const doneUrl = `https://registry.npmjs.org/-/v1/done?authId=${authId}`
+  // The URLs come FROM the body, not from a guess. Guessing the done URL
+  // sends a real request to the registry with a made-up id, and the registry
+  // answers "forbidden" - which is not a token, so the wait runs its full
+  // length and then reports that nobody answered.
+  const done = /"doneUrl"\s*:\s*"([^"]+)"/.exec(result.out)
+  if (!done) return result
+  const doneUrl = done[1]
+  const auth = /"authUrl"\s*:\s*"([^"]+)"/.exec(result.out)
+  const authId = /authId=([a-f0-9-]+)/.exec(doneUrl)
+  const authUrl = auth ? auth[1] : `https://www.npmjs.com/auth/cli/${authId?.[1] ?? ""}`
 
   // Open it if this machine can. The URL is printed either way, because a
   // browser that cannot be opened here can be opened anywhere.
-  try {
-    execFileSync("xdg-open", [authUrl], { stdio: "ignore", timeout: 10_000 })
-  } catch {
-    // No browser here. The URL below is the way out.
+  //
+  // OC_TRUST_NO_BROWSER turns the opening off, which is what a test needs:
+  // a test that opens a browser on the machine it runs on is a test that
+  // breaks whatever the person at the keyboard was doing.
+  if (!process.env.OC_TRUST_NO_BROWSER) {
+    try {
+      execFileSync("xdg-open", [authUrl], { stdio: "ignore", timeout: 10_000 })
+    } catch {
+      // No browser here. The URL below is the way out.
+    }
   }
   console.error("")
   console.error(bold("  npm needs to confirm it is you."))
@@ -151,8 +168,8 @@ async function npmWithOtp(args, state = {}) {
     console.error(red("  no answer came back, so nothing was changed."))
     return result
   }
-  state.otp = token
-  result = npmCaptured(args, state)
+  // The code is used for THIS call only.
+  result = npmCaptured(args, [`--otp=${token}`])
   return result
 }
 

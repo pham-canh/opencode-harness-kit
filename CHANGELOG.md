@@ -14,6 +14,25 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-10-20
+
+### Fixed
+
+- **Each npm command gets its own two-factor challenge.** The code a browser
+  flow returns is valid for the challenge that asked for it and for nothing
+  else, so carrying one from one command to the next made the second command
+  send a code that was already spent - and the registry answered that with a
+  different challenge, one that wants an authenticator code rather than a
+  browser. The failure looked like "npm wants something else now" and nothing
+  like the cause.
+- **The URLs come from the response body, not from a guess.** The done URL
+  was rebuilt from the id, which sent a real request to the registry with a
+  made-up id; the registry answered "forbidden", which is not a token, so the
+  wait ran its full length and then reported that nobody had answered.
+- **`OC_TRUST_NO_BROWSER` turns the browser off.** A test that opens a
+  browser on the machine it runs on is a test that breaks whatever the
+  person at the keyboard was doing.
+
 ## [0.3.8] — 2026-10-20
 
 ### Fixed
@@ -358,7 +377,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/pham-canh/space-harness/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/pham-canh/space-harness/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/pham-canh/space-harness/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/pham-canh/space-harness/compare/v0.3.5...v0.3.6
