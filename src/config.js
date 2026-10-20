@@ -272,12 +272,12 @@ export function generateConfig(p, opts = {}) {
 
     compaction,
     // OpenCode's own default (2000 lines / 51200 bytes), reached back from an
-    // earlier 200 / 8192. The tight setting truncated 415 of 2,959 measured
-    // `read` calls, and 418 calls were issued with an `offset` to fetch the
+    // earlier 200 / 8192. The tight setting truncated 415 of 2,966 measured
+    // `read` calls, and 423 calls were issued with an `offset` to fetch the
     // rest: the truncation causes the re-read, one for one. At the measured
     // 17.3s median per request that round trip costs far more than the tokens
     // it saves, and prune.ts already bounds old tool output deterministically.
-    // Only 14 of 2,959 reads exceed 51,200 bytes, so this ceiling is not the
+    // Only 14 of 2,966 reads exceed 51,200 bytes, so this ceiling is not the
     // thing that limits context. `oc-harness baseline` re-measures all four
     // numbers if this ever needs arguing again.
     tool_output: { max_lines: 2000, max_bytes: 51200 },

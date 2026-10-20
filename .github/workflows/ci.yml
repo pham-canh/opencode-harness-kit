@@ -29,7 +29,7 @@ jobs:
       # dist/ is committed, so test:all rebuilds before the tests that import it.
       # test:all is deliberately the offline subset: measure/attribute read the
       # install database and ~/.config/opencode, neither of which exists here.
-      - run: npm run test:all
+      - run: npm run check
       - name: CLI smoke test
         run: |
           node bin/oc-harness.mjs list
@@ -39,6 +39,12 @@ jobs:
           # every lane it serves. Assert the count is zero, not merely that the
           # word appears somewhere — an unmanaged key inherited from a dirty
           # local config once faked this check green.
+          #
+          # The check runs against an empty config dir, or a config left over
+          # from a previous step would carry its own `variant` keys into the
+          # merge and the count would not be zero.
+          export OPENCODE_CONFIG_DIR="$RUNNER_TEMP/opencode-smoke"
+          mkdir -p "$OPENCODE_CONFIG_DIR"
           test "$(node bin/oc-harness.mjs use longcat-2.5-preview-free --print | grep -c '"variant"')" = "0"
           # A fleet puts ten different models behind ten lanes.
           test "$(node bin/oc-harness.mjs use fleet-all --print | grep -c '"model": "opencode/')" -ge "10"
@@ -51,6 +57,11 @@ jobs:
           node bin/oc-harness.mjs agents
           # Reuses the same scratch config dir, so the config-drift check inside
           # doctor reads the config installed above instead of the runner's.
+          #
+          # doctor fails on a broken install, and on catalogue drift only under
+          # --strict. A provider changing a context window is not a broken
+          # install, and a CI job that goes red on that teaches people to
+          # ignore the job.
           node bin/oc-harness.mjs doctor
 
   publish:

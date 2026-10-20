@@ -96,8 +96,8 @@ a client cannot currently tell a short quota window from a permanent block.
 
 ## A copied plugin loads and does nothing
 
-The bundle finds `profiles/`, `prompts/`, `retention.yml` and `lanes.json` by
-walking up from its own file. A symlink resolves to the real path, so a
+The bundle finds `profiles/` and `lanes.json` by walking up from its own file,
+and `retention.yml` next to them. A symlink resolves to the real path, so a
 symlinked plugin finds the kit's data. A **copy** does not: it looks beside
 itself, finds nothing, and every profile lookup fails.
 

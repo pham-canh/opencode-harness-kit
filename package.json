@@ -42,6 +42,8 @@
     "CHANGELOG.md",
     "MIGRATION.md",
     "README.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "scripts": {
@@ -50,8 +52,10 @@
     "test": "node --test \"test/*.test.js\"",
     "test:all": "npm run build && npm run typecheck && npm test",
     "test:install": "npm run measure:check && npm run attribute",
-    "check": "npm run test:all && npm run test:install && node bin/oc-harness.mjs verify",
-    "check:online": "npm run check && node bin/oc-harness.mjs doctor",
+    "check": "npm run test:all",
+    "check:install": "npm run test:all && npm run test:install && node bin/oc-harness.mjs verify",
+    "check:online": "npm run check:install && node bin/oc-harness.mjs doctor",
+    "doctor": "node bin/oc-harness.mjs doctor",
     "baseline": "node bin/baseline.mjs",
     "release:trust": "node bin/oc-harness.mjs trust",
     "eval": "node eval/run.mjs",

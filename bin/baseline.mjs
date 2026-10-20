@@ -184,7 +184,7 @@ const paidEquivalent =
 //
 // This exists because the kit once shipped max_lines 200 / max_bytes 8192 on
 // the reasoning that tight truncation "saves context", and a later install
-// measured 415 of 2,959 reads exceeding 8 KB against 418 reads issued with an
+// measured 415 of 2,966 reads exceeding 8 KB against 423 reads issued with an
 // `offset`. Truncation causes the re-read roughly one for one, and at the
 // measured ~17s median per request that round trip is more expensive than the
 // tokens it saves. Re-run this before changing these numbers again.
