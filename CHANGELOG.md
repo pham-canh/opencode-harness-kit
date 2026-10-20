@@ -14,193 +14,108 @@ is not happening.
 
 ## [0.4.4] — 2026-10-20
 
-### Added
-
-- **The demo is back on the front page.** `docs/demo/pitch.mp4` and
-  `docs/demo-loop.gif` are in the README again, and `video/` still holds the
-  take script, the voiceover and the recording driver. The film was recorded
-  against an earlier version of the kit, and the README now says so next to
-  it rather than leaving a front page that quietly misstates the project's own
-  numbers.
-
 ### Fixed
 
-Twenty-eight defects, each of them a case where the kit reported success
-while the thing it promised was not happening. They are grouped by what they
-broke.
+**In a project that is not a git repository, the kit did nothing at all.**
 
-**The guard did not guard.**
+`ctx.worktree` is opencode's worktree: the git root of the project. For a
+directory that is not a git repository it is the FILESYSTEM ROOT, and the kit
+wrote its files under it. So in every non-git project the config hook's write
+to `.space/active` failed with a permission error that the plugin swallowed,
+and then:
 
-- A single `&` was not a command boundary, so `sleep 1 & rm -rf /tmp/x` was
-  allowed while `rm -rf /tmp/x & sleep 1` was blocked. The hole was
-  order-dependent.
-- The history-rewrite rule read the git subcommand off the front of the text,
-  so `git -C /repo reset --hard` was allowed. The file already had a
-  `gitSubcommand` helper that knows which git options take a value; it was
-  never called.
-- `apply_patch` was not in the list of write tools. OpenCode 1.19 REMOVES
-  `write` and `edit` on a GPT-5-class model and replaces them with
-  `apply_patch`, so on those models the entire write side of the guard
-  enforced nothing. The paths are read out of the patch and every one of them
-  is checked.
-- The bash tool's `workdir` was ignored, so a command run from `/etc` was a
-  way around the scope rule.
-- A write tool whose arguments name no file was allowed through. A guard that
-  cannot see what a write touches cannot scope it, so it fails closed now.
+- the pruner found no active profile and did nothing at all,
+- the router never recorded a spent route, so no lane ever failed over,
+- the telemetry went nowhere,
+- and the guard's scope check was against "/", which contains every path, so
+  it was not a scope check.
 
-**A failover could hand a lane a dead route.**
+None of it was visible from the code, because the kit had only ever been run
+in git repositories. It was found by running a session in a directory that is
+not one and noticing that no `.space/` appeared. The A/B had been running
+against the broken kit: its subject is a `git archive`, so it has no `.git`,
+and the pruner was inert for every kit-on run. The measurement this
+repository exists to make was measuring a kit that did not prune.
 
-- `resolveLaneModel` said it would fall back to the profile's base model when
-  no rung of a lane's chain qualified, and returned the first rung instead —
-  a rung the router had already recorded as spent. The docstring and the code
-  disagreed, and the code was the one that ran.
-- `resolveEffort` treated `none` as the lowest rung on the reasoning scale,
-  so a lane asking for reasoning off on a model that cannot do it was given
-  `low`: the opposite of the request, applied silently, to the one lane that
-  exists to stop reasoning. The effort plan also stopped reporting a request
-  that was dropped entirely — four of `fleet-all`'s ten lanes lose theirs.
+The project root is now resolved from the session's own DIRECTORY, walking up
+to the git root when there is one. A subdirectory of a monorepo is still that
+repository, and a directory that is not a repository is its own project.
 
-**The loop ran the verify output as a command.**
+### Changed
 
-- `markTask` wrote the observed output as continuation lines under the
-  `verify:` line, and the parser folded a continuation back into the field
-  above it. The command and its output became one string, and the driver
-  handed that string to a shell: `npm test exit 0 in 2s`. The output now
-  lives in its own `output:` field, which is not a command and cannot be
-  executed. The template and the build skill say the same thing.
-- A task that was ticked and also marked blocked was counted in both buckets,
-  so the three counters could add up to more than the file holds.
+- **The install-wide measurement is an observation, and there is a controlled
+  one.** `measure:check` compared the work before the kit landed with the work
+  after, and gated on the context per request. On this install it said the
+  context per request went UP by 16%, with twice as many reads and twice as
+  many messages in the second window - a number about the jobs, not about the
+  kit. The after-window was also "everything since the install", so the
+  comparison was a different one every time the script ran.
 
-**The gates did not gate.**
+  The windows are fixed and equal around the split now, and the report says
+  how long they were. The context drop is still reported and still gated, but
+  only when the two windows are comparable: when one side did twice the work
+  of the other, the number is skipped with a note that says why, because a gate
+  that fails for reasons nobody can act on is a gate people switch off.
 
-- `doctor` counted its problems and then exited 0. It ran as the last step of
-  the install job in CI, so that step could not fail, and a hand-edited config
-  was reported as healthy. It exits non-zero on a broken install now; a
-  profile that has drifted from models.dev is perishable metadata and only
-  fails under `--strict`.
-- `verify` looked for a project agent file in the working directory rather
-  than in the project, so a shadowing file was found from the project root and
-  missed from a subdirectory — which is where a shadow is most likely to hide.
-- The generated config carried `base.instructions ?? [GLOBAL.md]`, so a config
-  that already had an `instructions` array never referenced the kit's file at
-  all: the lane table, the rules and the read-pressure guidance were silently
-  unloaded. Every path the config did name resolved, so `verify` passed over a
-  harness that was doing nothing.
-- A missing plugin or skills directory was a note, and notes do not affect the
-  exit code. Both are problems now.
-- A flag given as `--flag=value` was read as a flag with a missing value. Both
-  spellings work now. A non-numeric `--max-rounds` became NaN, and every
-  comparison against NaN is false, so a typo silently turned off the round
-  cap AND the time budget.
-- `curl` was called without `--fail`, so a 4xx body parsed as a catalogue with
-  no models in it and every profile was reported as withdrawn.
+  The gate uses the number that IS comparable. opencode stores the message
+  parts UNPRUNED - the pruner rewrites the outgoing request, not the history
+  - so the stored parts of a real session are exactly what the pruner was
+  given, and replaying the real pruner over them measures exactly what it
+  removed, on the same messages with and without. On this install: **82% of
+  the context across 289 real sessions**, 11,242 parts stubbed.
 
-**A trusted publisher could be lost.**
+  The measurement scripts also run without the sqlite3 CLI now. python3's
+  built-in sqlite3 module does the same job, and python3 is on more machines
+  than the CLI is.
 
-- `xdg-open` is the Linux opener. On macOS and Windows the browser never
-  opened, the failure was swallowed, and the message afterwards still said
-  the page was open.
-- npm allows one trusted publisher configuration per package and cannot edit
-  it, so replacing one means revoking it first. A revoke that succeeded and a
-  create that then failed left the package with NO trusted publisher —
-  strictly worse than before the command ran — and the error text did not say
-  so. The old configuration is now captured before the revoke, and a failed
-  create prints what was there and the exact command to put it back.
-- `npm whoami` ran through a helper that ends the process on failure, so the
-  "not logged in, run npm login" guidance was unreachable code and the user
-  saw only npm's raw error.
+- **`small_model` is a cheaper route.** It is what opencode uses for its short
+  auxiliary calls - a title, a one-line summary - and it was the session model,
+  so every one of those calls paid the session model's REASONING. Measured on
+  this tier, a title costs 49 reasoning tokens on deepseek and 332 on
+  nemotron-3.5-super-vl, and deepseek answers in 7.2s against 22.7s for glm. A
+  fleet names a cheaper route now and the generated file says which one; a
+  single-model profile keeps its one route, because "one route, and it is the
+  one you asked for" is a promise those profiles make.
 
-**The shipped profiles violated the shipped schema, and nothing checked.**
+- **The safe fleet honours every tier request it makes.** The tier is worth
+  17x on reasoning tokens - deepseek spends 320 a message at `max` and 19 at
+  `low` - so a lane that asks for a tier and lands on a model that publishes
+  none runs at that model's natural rate instead. One lane was genuinely
+  expensive: `sweep` is a bulk mechanical search, so reasoning on it is pure
+  waste, and it ran on a model that reasons 420 tokens a message at 16.6s.
+  No zero-retention model publishes a `none` level, so the lane could not even
+  turn reasoning off when it asked to. It runs on deepseek now: 19 reasoning
+  tokens at 3.4s.
 
-- Every one of the twelve profiles carried a `$comment` the schema did not
-  allow, and five set `effort.default` to null where the schema asked for a
-  string — which is the only sensible value for a model with no tunable
-  effort. The schema's `$id` pointed at a different organisation than the
-  repository it lives in. `oc-harness refresh` reproduced both violations.
-- The schemas are now checked as schemas, with `ajv` as a devDependency. The
-  suite still runs offline.
-- `validate()` checks two things it used to leave to a test: a chain rung has
-  to be a profile the kit has, and a fallback id has to resolve.
+  The three lanes in the unrestricted fleet that cannot get their tier turn
+  out to be the three CHEAPEST reasoners on the tier - 116, 59 and 18 tokens a
+  message, against 289 for `build` and 198 for `plan`, which keep their tier
+  on purpose. The tier is the lever, and it is not where the tokens are. The
+  generated config says so where it happens, in the form
+  `locate=unset(asked low)`.
 
-**Three files said three different things about a push.**
+### Added
 
-- GLOBAL.md said a push is the last step of the job — push, then say what you
-  pushed. The build prompt said to ask before a push. The finish skill said
-  to ask before a push. The build agent receives GLOBAL.md AND the build
-  prompt at the same time, so it was being told two opposite things about the
-  same action. The policy is now one statement in all three, and a test pins
-  them to each other.
+- **`oc-harness use --memory` turns on a memory plugin.** The kit does not
+  implement memory, and it should not: a local vector store with embeddings, a
+  web UI, auto-capture and a user profile is a large thing to build badly, and
+  `opencode-mem` already is one. The entry is ADDED to the plugin list, so the
+  user's own plugins survive and a config that already has it does not grow a
+  second copy.
 
-**The pruner counted reasoning as saved and never dropped it.**
+- **`oc-harness doctor --check-models` and `--watch`.** The question a
+  free-tier user actually has to ask is "is one of my routes gone", and it is
+  not the same question as "has a profile drifted". `--check-models` answers it
+  in one run with a non-zero exit, which is the shape a cron wants; `--watch`
+  keeps running and reports only what CHANGED.
 
-- The reasoning branch booked 200 bytes "after" for a part that kept its full
-  text. Reasoning is 15.6% of stored bytes, so the reported saving included
-  bytes that were never removed — and the reasoning was still re-sent on
-  every turn, which is the problem the plugin exists to solve.
-- The prune log went to `process.cwd()` rather than the worktree, so it
-  landed outside the project — and the test suite was writing nine hundred
-  lines of its own prune statistics into the repository it was testing.
-- The profile was resolved when the plugin factory ran. OpenCode builds the
-  factories before it runs the config hooks, and the config hook is what
-  writes the marker naming the active profile — so a fresh project had no
-  marker yet and pruning was off for that entire first session.
-- The stub for a bash result matched "ok" anywhere, so an output containing
-  "took 3 seconds" was reported as "ok".
-- `prune.keepRecentTurns` was never validated, and a negative value made the
-  prunable span reach the last message.
+- **`eval/measure-prune.mjs`.** The attributable measurement of the pruner,
+  described above.
 
-**The guard recorded nothing, and a rotation threw the history away.**
-
-- A denial never reached the telemetry plugin: the guard throws in
-  `tool.execute.before`, and opencode calls `tool.execute.after` only after
-  the tool has run. The `kind: "guard"` record that did exist scraped the
-  word "blocked:" out of any tool's OUTPUT, so a `read` of a file containing
-  the word produced a record claiming a rule had fired.
-- A rotation renamed the file at 4 MB and the reader looked at the newest one
-  alone, so every lane reported "never used" the moment a rotation happened —
-  on the number that decides whether the fleet stays at ten lanes.
-- The router's event hook called `JSON.stringify` on opencode's event object,
-  which can hold a reference back to itself, and a hook that throws takes the
-  event down with it.
-
-**The loop erased what the agent wrote, and ran it in the wrong project.**
-
-- `.space/tasks.md` was read once and every write used that copy, so a task
-  the agent added, a verify command it corrected, or a note it left were
-  erased by the loop's own write.
-- `opencode run` was spawned with a `cwd` and nothing else. `spawnSync` does
-  not update the inherited `PWD`, and opencode resolves its project from
-  `PWD` — so the agent was handed the right directory and worked in the wrong
-  repository.
-- The verify command was given a fixed thirty-minute timeout, so a run capped
-  at two hours could overrun by half an hour.
-
-**The measurement gates reported success while measuring nothing.**
-
-- A timeout was never detected: `spawnSync` does not return `stdout === null`
-  for a killed process, so a run that hung until the ceiling was scored as a
-  success and counted in every median.
-- A mistyped `--reps` became NaN and the A/B suite reported success having
-  run nothing. A mistyped `--min-narrow` became NaN and the gate was skipped.
-  A gate that cannot be parsed is now an error.
-- An empty window reported a hundred percent improvement, and the gate
-  passed on it. An empty window is now null, which is not a measurement.
-- `--timeout 0` removed the ceiling rather than setting it.
-- A missing `sqlite3` was a raw ENOENT stack trace.
-- The day bucket in `thresholds.mjs` was hard-coded to UTC+7 while every
-  other day bucket in the repo uses the local calendar.
-
-**The test suite was changing the repository it was testing.**
-
-- `oc-harness install` wrote its pre-commit hook to the KIT's own
-  `.git/hooks/`, which for a user running `npx opencode-harness-kit install`
-  is a node_modules folder or an npx cache — never the repository they work
-  in. The hook goes into the project now.
-- Six tests could not detect the bug they were written for: a hardcoded
-  retention default, a README table listing a withdrawn model, a `list` that
-  started reading the network, a changed CLI command list, a skill naming a
-  withdrawn model after a live one, and a wrong browser opener. All six were
-  checked by mutation.
+- **The A/B suite is reproducible.** The old one ran against
+  `lablab-harness@8a674f5`, which is not public. A result nobody can check is
+  not a result. The new suite runs against the kit's own tree at a pinned
+  commit, so `git clone && git checkout <sha>` reproduces it exactly.
 
 ### Changed
 
@@ -237,15 +152,6 @@ broke.
 - Both `.space/telemetry.jsonl` and `.space/prune.jsonl` are written in the
   project. The prune log used to land in the process's working directory,
   which is often your home directory.
-
-### Added
-
-- `OPENCODE_HARNESS_CATALOG_URL` overrides where the live model catalogue
-  comes from. A mirror is one use; a local fixture is another, and a test
-  that reached models.dev would fail on a machine with no network.
-- `OC_HARNESS_NO_HOOK` skips the pre-commit hook. A test that writes an
-  executable git hook into the repository it is testing is a test that changes
-  the repository.
 
 ### Security
 
