@@ -43,13 +43,30 @@ const installStamp = existsSync(installDir)
   ? statSync(installDir).mtimeMs
   : Date.now() - 7 * 864e5
 
-// Three edges, not two: the comparison is "the week before the install" versus
-// "everything since". `--split` is where the kit landed; the two outer edges
-// just bound the windows. The default before-edge is one week before the split,
-// which is the window README.md:174-180 was measured over.
+// Three edges, not two, and the two outer windows are the SAME LENGTH.
+//
+// The after-window used to be "everything since the install", which grows
+// without bound. That makes the comparison a different one every time the
+// script runs: a week after the install it compares 7 days against 7 days,
+// and a month after it compares 7 days against 30, and the answer moves
+// because the WORK moved, not because the kit did. A gate whose number
+// changes because you ran it on a different day is not a gate.
+//
+// The windows are now fixed and equal around the split: `--days` of work on
+// each side. `--since` puts the old unbounded behaviour back, for the case
+// where the question really is "everything since".
+const days = Number(flag("--days") ?? 7)
+if (!Number.isFinite(days) || days <= 0) {
+  console.error(`--days must be a positive number, got: ${flag("--days")}`)
+  process.exit(1)
+}
 const split = flag("--split") ? Date.parse(flag("--split")) : installStamp
-const before = flag("--before") ? Date.parse(flag("--before")) : split - 7 * 864e5
-const after = flag("--after") ? Date.parse(flag("--after")) : Date.now()
+const before = flag("--before") ? Date.parse(flag("--before")) : split - days * 864e5
+const after = flag("--after")
+  ? Date.parse(flag("--after"))
+  : flag("--since")
+    ? Date.now()
+    : Math.min(Date.now(), split + days * 864e5)
 
 if (Number.isNaN(before) || Number.isNaN(after) || Number.isNaN(split)) {
   console.error("--before/--after/--split take an ISO timestamp, e.g. 2026-10-08T05:41:00Z")
@@ -155,9 +172,35 @@ const ctxDropPct = computeCtxDropPct(before_.avg_ctx, after_.avg_ctx)
 // A window of a few hundred reads moves with the day's task mix. Say so instead
 // of letting a small sample pass as a result. A window with NO reads is the
 // thinnest there is.
-const thin = after_.reads < 500
+//
+// BOTH windows are checked. A comparison against a thin before-window is a
+// comparison against noise, and the report said nothing about it.
+const thin = after_.reads < 500 || before_.reads < 500
+
+// The two windows are the same LENGTH now, and that is the most that can be
+// said for them. They are still not the same WORK, and a number computed
+// across two different jobs is a number about the jobs.
+const confounders = []
+if (before_.reads > 0 && after_.reads > 0) {
+  const ratio = after_.reads / before_.reads
+  if (ratio >= 2 || ratio <= 0.5) {
+    confounders.push(
+      `the two windows did ${ratio >= 2 ? "more" : "less"} than twice the work (${before_.reads} vs ${after_.reads} reads), so the comparison is between different jobs`,
+    )
+  }
+}
+if (before_.messages > 0 && after_.messages > 0) {
+  const ratio = after_.messages / before_.messages
+  if (ratio >= 2 || ratio <= 0.5) {
+    confounders.push(
+      `the two windows did ${ratio >= 2 ? "more" : "less"} than twice the messages (${before_.messages} vs ${after_.messages}), so the comparison is between different jobs`,
+    )
+  }
+}
 
 const failures = []
+/** @type {string[]} */
+const skipped = []
 if (minNarrow !== null) {
   if (after_.reads === 0) {
     failures.push("no reads in the after window, so the narrow-read share cannot be measured")
@@ -166,7 +209,16 @@ if (minNarrow !== null) {
   }
 }
 if (minCtxDrop !== null) {
-  if (ctxDropPct === null) {
+  if (confounders.length) {
+    // The number is about the jobs, not about the kit. Gating on it anyway
+    // means the gate fails for reasons nobody can act on, and a gate that
+    // fails for reasons nobody can act on is a gate people switch off.
+    //
+    // The ATTRIBUTABLE measurement of the same thing - the pruner replayed
+    // over the stored history of real sessions - is eval/measure-prune.mjs,
+    // and that is the one the gate uses.
+    skipped.push("context per request")
+  } else if (ctxDropPct === null) {
     failures.push("no context data in the after window, so the drop cannot be measured")
   } else if (ctxDropPct < minCtxDrop) {
     failures.push(`context per request fell ${ctxDropPct}% < ${minCtxDrop}%`)
@@ -184,6 +236,8 @@ const report = {
   after_window: after_,
   ctx_drop_pct: ctxDropPct,
   thin_sample: thin,
+  confounders,
+  skipped,
   verdict,
   failures,
 }
@@ -201,6 +255,9 @@ console.log(`  db      ${DB}`)
 console.log(`  before  ${report.before}`)
 console.log(`  split   ${report.split}   <- kit installed`)
 console.log(`  after   ${report.after}`)
+console.log(
+  `  window  ${Math.round((split - before) / 864e5)}d before, ${Math.round((after - split) / 864e5)}d after`,
+)
 console.log("")
 console.log(row("", "before", "after"))
 console.log(row("read calls", before_.reads, after_.reads))
@@ -214,8 +271,21 @@ console.log("")
 console.log(`  context per request: ${ctxDropPct === null ? "n/a" : `${ctxDropPct}% ${ctxDropPct >= 0 ? "lower" : "HIGHER"}`}`)
 if (thin) {
   console.log("")
-  console.log(`  NOTE  ${after_.reads} reads in the after window is a thin sample.`)
+  console.log(
+    `  NOTE  ${before_.reads} reads before and ${after_.reads} after: a thin sample on at least one side.`,
+  )
   console.log("        Treat the direction as a hint, not a result.")
+}
+for (const skip of skipped) {
+  console.log("")
+  console.log(`  NOTE  ${skip} is reported but NOT gated: the two windows are not comparable.`)
+  console.log("        eval/measure-prune.mjs is the attributable measurement of the same thing.")
+}
+for (const c of confounders) {
+  console.log("")
+  console.log(`  NOTE  ${c}.`)
+  console.log("        The A/B in eval/RESULTS.md is the controlled measurement;")
+  console.log("        this one is an observation about one install.")
 }
 if (failures.length) {
   console.log("")
