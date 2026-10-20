@@ -36,8 +36,8 @@ The three steps `init` runs, spelled out for when you want to know what
 happened (prefix with `npx` or `./bin/oc-harness.mjs` to taste):
 
 ```bash
-oc-harness use space-bunny-free   # compile the profile
-oc-harness install                # link the agents, skills and GLOBAL.md
+oc-harness use fleet-safe    # compile the profile
+oc-harness install                # link the plugin, prompts, skills and GLOBAL.md
 oc-harness verify                 # prove the install is whole
 ```
 
@@ -56,12 +56,52 @@ you get two projects that share a name and nothing else.
 This kit puts the answers in a profile:
 
 ```
-profiles/space-bunny-free.json     ← the model
-src/                               ← no model name anywhere in here
+profiles/fleet-safe.json     ← the models
+lanes.json                   ← the jobs
+src/                         ← no model name anywhere in here
 ```
 
-Same plugin source, five shipped profiles, five different behaviours. The test
-suite asserts that rather than taking it on faith.
+Same plugin source, twelve shipped profiles, twelve different behaviours. The
+test suite asserts that rather than taking it on faith.
+
+## A fleet, not a model
+
+The default profile is a **fleet**: ten jobs, ten free models, one session.
+
+| lane | job | model |
+|---|---|---|
+| `build` | write and verify the change | MiniMax M3.1 Flash |
+| `plan` | turn a request into a plan | Beam |
+| `reviewer` | read a change in two passes | Nemotron 3 Ultra |
+| `locate` | find where something lives | Nemotron 3.5 Lightning |
+| `verify` | run the project's checks | Big Pickle |
+| `vision` | read an image or a screenshot | MiMo-V2.6 Flash |
+| `doc` | read a long document or a spec | GLM 5.3 Flash |
+| `schema` | produce JSON or a JSON schema | DeepSeek V4.1 Flash |
+| `sweep` | sweep a lot of code mechanically | Nemotron 3.5 Super VL |
+| `longform` | read a megabyte, or write alternatives | LongCat 2.5 Preview |
+
+Each lane is an OpenCode agent with its own model, its own context window and
+its own effort level. You do not switch models: you hand the job to the lane
+that has it. A delegation inside one session runs two different models — that
+was measured, not assumed:
+
+```
+agent=build    modelID=minimax-m3.1-flash-free
+agent=reviewer modelID=glm-5.3-flash-free
+agent=build    modelID=minimax-m3.1-flash-free
+```
+
+Why ten lanes and not one model: the free tier is genuinely uneven, and the
+difference is measurable. Beam answers in 4-6 seconds with a 1M window; GLM
+takes 16-27 seconds and is the careful one; Nemotron Super VL is the only
+model on the tier that publishes a `none` effort level, which makes
+"reasoning off" a job of its own. Putting each on the job it is good at is
+worth more than any single "best" model.
+
+The full table, with the measurements behind every choice and the three
+capabilities the tier turns out not to have, is in
+[`docs/ROUTING.md`](docs/ROUTING.md).
 
 ## What the compiler derives
 
@@ -69,24 +109,35 @@ Given a profile, `oc-harness use` writes an `opencode.jsonc` with every
 model-dependent number already worked out and commented:
 
 ```
-$ oc-harness use deepseek-v4-flash-free --print
+$ oc-harness use fleet-safe --print
 
-// profile      deepseek-v4-flash-free
-// context      200,000 tokens
-// input cap    200,000 tokens
-// reasoning    low < high < max
+// profile      fleet-safe
+// model        opencode/minimax-m3.1-flash-free
+// lanes        10 enabled, each on the first model its chain allows
+// context      1,000,000 tokens
+// input cap    1,000,000 tokens  (narrowest lane; governs the shared reserve)
+// output cap   512,000 tokens
+// reasoning    low < medium < high < xhigh < max
 // retention    zero-retention
 //
 // Derived numbers, do not hand-edit:
-//   compaction.reserved  24,000   (12% of the input cap)
-//   prune threshold      176,000  (input cap minus reserve)
-//   role effort          plan=max  build=high  reviewer=max  locate=low  verify=low
-//   agent steps          build=40  plan=25  reviewer=15  locate=12  verify=20
+//   compaction.reserved  24,000  (12% of the narrowest input cap in play)
+//   prune threshold      176,000  (narrowest input cap minus reserve)
+//   role effort          plan=max  build=max  reviewer=max  locate=unset  ...
+//   lane models          build=minimax-m3.1-flash-free (out 512,000)  plan=...
 ```
 
-Against a 1M-context model, the same source produces `reserved 62,915` and
-`prune threshold 461,373`. Nobody edits those by hand, and nobody copies a
-200k-tuned config onto a 1M model and wonders why it overflows.
+Two numbers in there are worth explaining, because both were the wrong way
+round at some point:
+
+- **The reserve is sized by the *narrowest* lane, not the widest.** A fleet
+  mixes a 1M model with 200k models and `compaction.reserved` is one number
+  for the whole config. Sizing it by the widest model reserves 125,829 tokens
+  and leaves every 200k lane with 74k usable — which is where the lane stops
+  working.
+- **A lane's model is a chain, not a pin.** Free routes get withdrawn in days.
+  Every lane lists the models that could serve it, best first, and the first
+  rung the profile's privacy ceiling allows is the one that runs it.
 
 ### Levels are resolved, never emitted raw
 
@@ -94,16 +145,21 @@ A role asking for `max` on a model whose top level is `xhigh` gets `xhigh`, and
 the substitution is reported:
 
 ```
-$ oc-harness show muse-spark-1.3-contributor-free
-  effort levels        minimal < low < medium < high < xhigh
-  role effort
-    plan       xhigh      (requested max)
-  adjustments
-    ! role plan asked for max; muse-spark-1.3-contributor-free tops out at xhigh.
+$ oc-harness show fleet-safe
+  lanes
+  build                minimax-m3.1-flash-free  out 512,000
+  plan                 deepseek-v4.1-flash-free  out 32,000
+  ...
+  lane effort
+    plan       max
+    locate     (unset)    (requested low)
 ```
 
-A model with no tunable effort at all gets **no** `variant` written, rather than
-a level it does not have.
+A model with no tunable effort at all gets **no** `variant` written, rather
+than a level it does not have. OpenCode does not validate the variant it is
+given — `--variant max` on a model that publishes no effort levels is accepted
+and silently ignored — so resolving it here is the only thing standing between
+a profile and a nonsense request.
 
 ## Privacy is a first-class field
 
@@ -111,61 +167,42 @@ a level it does not have.
 provider does with your prompts. `retention.yml` is hand-curated for that
 reason, and a profile cannot be installed until a human has stated its terms.
 
+Three levels, not two. `zero-retention` keeps nothing. `retained` does not
+train but keeps the data for a stated window — Beam keeps prompts for 30 days
+for safety reasons, which is not the same promise, so it gets its own value.
+`may-train` may use them to improve the model.
+
 ```
 $ oc-harness list
-  ▸ space-bunny-free       1,048,576      max  zero-retention
-  ✗ muse-spark-1.3-contributor-free
-      Provider may train on your prompts and completions (Meta contributor
-      tier). Top effort is xhigh, not max.
+  ▸ fleet-safe               200,000      max      10  zero-retention
+    fleet-all                200,000      max      10  may-train
+    beam-free             1,048,576      max       5  retained
 ```
 
-The excluded model is still installable with `--yes`, and the warning repeats
-on install. It is not hidden, it is labelled.
+The fleet's privacy is a *ceiling*, not a label. `fleet-safe` declares
+`maxRetention: zero-retention` and every lane resolves to a model at or below
+it; `fleet-all` declares `may-train` and every lane gets the model built for
+it. One file covers ten jobs either way.
 
 ## Shipped profiles
 
-| profile | context | top effort | retention |
-|---|---|---|---|
-| `space-bunny-free` (default) | 1,048,576 | `max` | zero-retention |
-| `muse-split-free` | 1,048,576 | `max` | **may train** |
-| `x-preview-f-free` | 1,000,000 | `max` | zero-retention |
-| `longcat-2.5-preview-free` | 1,000,000 | — | zero-retention |
-| `deepseek-v4-flash-free` | 200,000 | `max` | zero-retention |
-| `muse-spark-1.3-contributor-free` | 1,048,576 | `xhigh` | **may train** |
+| profile | lanes | context | top effort | retention |
+|---|---|---|---|---|
+| `fleet-safe` (default) | 10 | 200,000 | `max` | zero-retention |
+| `fleet-all` | 10 | 200,000 | `max` | **may train** |
+| `minimax-m3.1-flash-free` | 5 | 1,000,000 | `max` | zero-retention |
+| `beam-free` | 5 | 1,048,576 | `max` | retained |
+| `deepseek-v4.1-flash-free` | 5 | 200,000 | `max` | zero-retention |
+| `glm-5.3-flash-free` | 5 | 200,000 | `max` | zero-retention |
+| `longcat-2.5-preview-free` | 5 | 1,000,000 | — | zero-retention |
+| `nemotron-3.5-super-vl-free` | 5 | 1,048,576 | `xhigh` | **may train** |
+| `nemotron-3-ultra-free` | 5 | 1,000,000 | — | **may train** |
+| `nemotron-3.5-lightning-free` | 5 | 262,144 | — | **may train** |
+| `mimo-v2.6-flash-free` | 5 | 200,000 | — | **may train** |
+| `big-pickle` | 5 | 200,000 | — | **may train** |
 
-### Split profiles
-
-A profile normally puts one model behind every role. `roleModels` is the way to
-split that, for when the best free model and the highest-output model are not the
-same model:
-
-```jsonc
-"model": "space-bunny-free",          // base: every role not named below
-"roleModels": {
-  "plan":     { "model": "muse-spark-1.3-contributor-free", "levels": ["minimal","low","medium","high","xhigh"] },
-  "build":    { "model": "muse-spark-1.3-contributor-free", "levels": ["minimal","low","medium","high","xhigh"] },
-  "locate":   { "model": "space-bunny-free", "levels": ["low","medium","high","xhigh","max"] }
-}
-```
-
-Three things fall out of this that are easy to get wrong, so they are enforced:
-
-- **`levels` is required when the model differs.** Effort is resolved against the
-  levels of the model the role actually runs on. `plan` asking for `max` on a
-  model that stops at `xhigh` lands on `xhigh`, instead of writing a `max` variant
-  the model has no meaning for.
-- **Retention is the least private model in the file, not the base one.** A base
-  of `zero-retention` with a `may-train` role is a `may-train` profile. The
-  generated header prints that, with the model responsible, and so do
-  `oc-harness use` and `oc-harness show`.
-- **Each role's output cap is its own.** A split role inherits the limits of the
-  model it names, so a `build` on a 131,072-token model cannot spend the base's
-  524,288.
-
-`muse-split-free` is the shipped example, and it is deliberately not the default:
-three of its five roles run on Muse Spark, a Meta contributor-tier endpoint whose
-provider may train on your prompts. Install it for public or throwaway
-repositories.
+The five-lane profiles run everything on one model, which is the right shape
+when you want one route and want to know exactly which one.
 
 ## Requirements
 
@@ -186,15 +223,16 @@ a `.bak` next to the file, including under `--yes`.
 
 ```
 oc-harness list       profiles with retention and caveats
-oc-harness show <id>  resolved effort, derived numbers, fallback queue
-oc-harness init       pick a free profile, then install + verify
+oc-harness show <id>  resolved lanes, derived numbers, fallback chains
+oc-harness init       pick a free profile, then install + use + verify
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness use <id> --dryrun   print what would be written, write nothing
 oc-harness refresh <id> re-derive a profile against the live model list
-oc-harness install    symlink the plugin, agents, skills and GLOBAL.md
-oc-harness link       just the plugin and instruction file, no agents or skills
+oc-harness install    symlink the plugin, prompts, skills and GLOBAL.md
+oc-harness link       just the plugin and instruction file, no prompts or skills
 oc-harness verify     check the install against the profile; non-zero on drift
 oc-harness agents     report agents the effort tiering does not reach
+oc-harness lanes      report which lanes the fleet actually used
 oc-harness doctor     re-check profiles against models.dev and the live config
 oc-harness baseline   measure the current install
 ```
@@ -205,46 +243,74 @@ instead of printing help and reporting success.
 ### `verify` is the command that matters
 
 A generated config is only half an install. The other half is the instruction
-file it names, the agent files it declares, and the plugin that enforces the
-guard — and every one of those can be missing while the config still validates
-and still looks correct.
+file it names, the prompt files the lanes point at, and the plugin that
+enforces the guard — and every one of those can be missing while the config
+still validates and still looks correct.
 
 That is not hypothetical. On a real install of this kit, `opencode.jsonc`
-pointed at a `GLOBAL.md` that did not exist, declared three agents whose markdown
-files had never been copied, and had `build` — the *default* agent — hand-pinned
-to a `may-train` model while every generated field still matched the profile.
-Nothing errored. `opencode agent list` simply did not show those agents.
+pointed at a `GLOBAL.md` that did not exist, declared three agents whose
+prompt files had never been copied, and had `build` — the *default* agent —
+hand-pinned to a `may-train` model while every generated field still matched
+the profile. Nothing errored. `opencode agent list` simply did not show those
+agents.
 
-So `verify` exits non-zero when the config has drifted from its profile, when an
-instruction path does not resolve, when a tiered role has no agent file, when an
-agent names a model that is not active, or when a stripped schema key is present:
+So `verify` exits non-zero when the config has drifted from its profile, when
+an instruction path does not resolve, when a lane has no prompt file, when an
+installed agent file shadows a lane, when a lane names a model that is not the
+active one, or when a stripped schema key is present:
 
 ```
 $ oc-harness verify
 
-verify  profile space-bunny-free -> ~/.config/opencode/opencode.jsonc
+verify  profile fleet-safe -> ~/.config/opencode/opencode.jsonc
 
-  ✓ config matches profile space-bunny-free
+  ✓ config matches profile fleet-safe
   ✓ instruction ~/.config/opencode/GLOBAL.md resolves
+  ✓ prompt build.md installed
+  ...
   ✓ plugin linked
+  ✓ 4 skill(s) valid
 
   install is consistent with the profile
 ```
 
-`doctor` now reports the same config drift alongside its models.dev check, because
-"the profile is fine" and "the installed config matches the profile" are
-different questions and only one of them was being asked.
+`doctor` now reports the same config drift alongside its models.dev check,
+because "the profile is fine" and "the installed config matches the profile"
+are different questions and only one of them was being asked.
 
 `doctor` exists because free models get withdrawn within days. It diffs each
 profile against live metadata and reports drift:
 
 ```
-✓ space-bunny-free    matches catalog
-! muse-spark-1.3-contributor-free  drift
-    input 524288 -> 1048576
+✓ fleet-safe    matches catalog
+! beam-free     drift
+    output 131072 -> 262144
 ```
 
-That drift was real; `doctor` found it during development.
+That drift was real; `doctor` found it during development. It also reports a
+lane whose whole chain has left the catalogue, which is a lane with no model
+at all.
+
+### `lanes` is how the fleet gets smaller
+
+Ten lanes is a hypothesis. `oc-harness lanes` counts the calls:
+
+```
+$ oc-harness lanes
+
+  lane            calls     avg ms  model
+  ----------------------------------------------------------------
+  plan               12       4820  deepseek-v4.1-flash-free
+  build              47       6310  minimax-m3.1-flash-free
+  reviewer            0          -  glm-5.3-flash-free     never called
+  ...
+  1 lane(s) were never called    cut candidates, not defects
+```
+
+A lane that is never called is a description the model reads on every turn and
+a free model doing nothing. Cut it from the profile's `roles` and the lane
+leaves the config with it. The counters come from `.space/telemetry.jsonl`,
+written by the plugin, never sent anywhere.
 
 ## Measuring before tuning
 
@@ -282,7 +348,7 @@ unconditional.
 **Read pressure is 11.9 whole-file reads per search.** Every production harness
 in the study in `docs/KNOWN-LIMITS.md` searches before reading; this one mostly
 did not. That is a prompt problem, not a config problem, and the fix is a rule
-in `GLOBAL.md` and in the agent files rather than a number.
+in `GLOBAL.md` and in the lane prompts rather than a number.
 
 **Truncation and re-read are the same number.** 441 reads were cut by the
 200-line cap and 423 were re-read with an `offset`. Truncation was not saving
@@ -298,8 +364,8 @@ Your numbers stay on your machine; only the script is in the repo.
 |---|---|---|
 | `guard.ts` | `tool.execute.before` | Blocks destructive commands in code. Fail-closed. |
 | `prune.ts` | `experimental.chat.messages.transform` | Replaces old tool output with a one-line stub. |
-| `router.ts` | `config`, `event`, `chat.message` | Moves to the next profile when a route is spent. |
-| `telemetry.ts` | `event`, `tool.execute.after` | Local JSONL, gitignored, never a network call. |
+| `router.ts` | `config`, `event`, `chat.message` | Moves a lane to the next rung of its chain when a route is spent. |
+| `telemetry.ts` | `event`, `chat.message`, `tool.execute.after` | Local JSONL, gitignored, never a network call. |
 
 `guard.ts` matches against the command a shell would actually run, not the text
 it was handed. It splits on shell separators, honours quotes so that a `;`
@@ -309,12 +375,18 @@ So `cd repo && rm -rf /`, `sudo rm -rf /` and `bash -c "rm -rf /"` are all
 caught, while `git log --grep push` and `echo push` are not. `git push` is
 not guard-blocked; it falls through to the `*` ask permission so opencode
 prompts for human approval before publishing.
+
 Writes are scoped to the project directory, with the OS temp directory as the
 one exception GLOBAL.md allows.
 
 Pruning keeps user messages, assistant prose, diffs, and the last few turns
 verbatim, and never touches the in-flight turn. Old reasoning is dropped, since
 stale reasoning is worse than none.
+
+`router.ts` fails over **per lane**. A fleet has ten routes, so one spent
+route must not take the other nine down with it: the lane that used the dead
+model moves to the next rung of its own chain, and every other lane keeps the
+model it had.
 
 ## Install
 
@@ -330,13 +402,13 @@ Two commands, in this order, if you already know which profile you want
 checkout — they are the same program):
 
 ```bash
-oc-harness use space-bunny-free   # writes opencode.jsonc
+oc-harness use fleet-safe   # writes opencode.jsonc
 oc-harness install                # writes everything that file points at
 ```
 
-`install` symlinks (not copies) the plugin, `agents/`, `skills/` and `GLOBAL.md`
-into `~/.config/opencode/`, so this repo stays the single source of truth and an
-edit here takes effect on the next opencode start.
+`install` symlinks (not copies) the plugin, `prompts/`, `skills/` and
+`GLOBAL.md` into `~/.config/opencode/`, so this repo stays the single source
+of truth and an edit here takes effect on the next opencode start.
 
 Then restart opencode. Check it took:
 
@@ -350,8 +422,20 @@ the plugin records it in the project's `.space/active` at startup so pruning
 picks up the right thresholds. To pin a profile explicitly instead:
 
 ```bash
-export OPENCODE_HARNESS_PROFILE=space-bunny-free
+export OPENCODE_HARNESS_PROFILE=fleet-safe
 ```
+
+### Why the model is in the config and not in a file
+
+An agent markdown file of the same name replaces the config entry wholesale,
+and a file with no `model:` line makes the agent inherit the caller's model.
+Both were observed on OpenCode 1.19, and both fail silently: the config still
+looks correct and the lane runs on a model nobody chose.
+
+So the lanes live in `agent.<lane>` in the generated config, their prompt
+bodies live in `prompts/`, and `oc-harness verify` fails when an installed
+agent file shadows a lane. `oc-harness install` removes the agent files an
+earlier version of this kit left behind, for exactly that reason.
 
 ### On your phone
 
@@ -383,12 +467,12 @@ free-model profiles all live server-side; the phone only needs a keyboard.
 ### Permissions: why `edit` is `allow`
 
 The generated config sets `permission.edit: "allow"`, which looks like it
-contradicts the read-only roles. It does not, and the reason is an ordering rule
-worth knowing before you edit these by hand.
+contradicts the read-only lanes. It does not, and the reason is an ordering
+rule worth knowing before you edit these by hand.
 
 OpenCode appends the **global** permission rule *after* the agent's own, and
 **the last matching rule wins**. So a global `edit: "ask"` silently overrides
-every agent's `edit: "deny"` — and the read-only roles can edit files after a
+every agent's `edit: "deny"` — and the read-only lanes can edit files after a
 prompt. `allow` is the permissive *implicit default* and emits no rule at all,
 which leaves each agent's `deny` deciding. Verified with `opencode agent list`:
 
@@ -402,28 +486,33 @@ verify     edit -> deny
 
 Writes outside the project still ask, via `external_directory`.
 
-## Roles
+## Lanes
 
-| role | mode | job | effort |
+| lane | mode | job | effort |
 |---|---|---|---|
 | `build` | primary | writes and verifies code | middle |
 | `plan` | primary | turns a request into an executable plan | highest |
 | `reviewer` | subagent | two passes, never edits | highest |
 | `locate` | subagent | finds code, reports `file:line`, never designs | lowest |
 | `verify` | subagent | runs checks, never fixes them | lowest |
+| `vision` | subagent | reads an image or a screenshot | model's |
+| `doc` | subagent | reads a long document or a spec | model's |
+| `schema` | subagent | produces JSON a program can parse | highest |
+| `sweep` | subagent | bulk mechanical sweep, no judgement | lowest |
+| `longform` | subagent | very long context, or several answers | model's |
 
 `locate` is deliberately *not* called `scout`: OpenCode ships a built-in `scout`
 subagent for dependency and external-docs research, and shipping our own file
 under that name shadowed it with `bash: deny` so it could not do the one thing
 the built-in exists for.
 
-Each role carries a `steps` cap. It is a loop breaker, not a quality knob: on
+Each lane carries a `steps` cap. It is a loop breaker, not a quality knob: on
 exhaustion OpenCode forces a text-only response, so an agent that has stopped
 making progress reports rather than looping until the context is gone.
 
 ## The skill loop
 
-The roles above are the *who*. The skills are the *order*, and they load by
+The lanes above are the *who*. The skills are the *order*, and they load by
 name from `skills/`:
 
 | skill | step | hands to |
@@ -445,8 +534,10 @@ decides it ships.
 ## Known limits
 
 Read [docs/KNOWN-LIMITS.md](docs/KNOWN-LIMITS.md) before relying on failover.
-The short version: no OpenCode plugin hook can change a live session's model,
-so switching happens at the next session, not mid-flight.
+The short version: no OpenCode plugin hook can change the model of a running
+session, so switching happens at the next session, not mid-flight. What a
+plugin *can* do is move a lane to the next rung of its chain before the
+session starts.
 
 ## Development
 
@@ -486,7 +577,8 @@ Measured results, and the limits they do not cross, are in
 [eval/RESULTS.md](eval/RESULTS.md).
 
 `docs/RESEARCH.md` records where the numbers came from and what was tried and
-rejected.
+rejected. `docs/ROUTING.md` records the fleet: which model serves which job,
+and the measurements behind each choice.
 
 ## Contributing
 

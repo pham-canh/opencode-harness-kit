@@ -1,0 +1,136 @@
+{
+  "$comment": "Lane definitions: the ten jobs a fleet can hand out, one per free model. No model names live here - a lane says what it is for, and a profile says which model serves it. The compiler reads this file to write agent.<lane> into the generated config, and `install` links prompts/ so the prompt body is live-editable.",
+  "$schema": "./lanes.schema.json",
+  "lanes": {
+    "build": {
+      "mode": "primary",
+      "description": "Writes and verifies code. Use when the plan is settled and files need to change.",
+      "steps": 40,
+      "permission": { "edit": "allow" },
+      "prompt": "prompts/build.md"
+    },
+    "plan": {
+      "mode": "primary",
+      "description": "Turns a request into an executable plan. Use when a task is vague, spans several files, or two people could disagree about what done means.",
+      "steps": 25,
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "*": "deny",
+          "git status *": "allow",
+          "git log *": "allow",
+          "git diff *": "allow",
+          "git show*": "allow",
+          "git -C * status*": "allow",
+          "git -C * log*": "allow",
+          "git -C * diff*": "allow",
+          "grep*": "allow",
+          "rg*": "allow",
+          "find*": "allow",
+          "cat*": "allow",
+          "ls*": "allow"
+        }
+      },
+      "prompt": "prompts/plan.md"
+    },
+    "reviewer": {
+      "mode": "subagent",
+      "description": "Reviews a change in two passes and never edits. Use after a build step, before a commit or a release decision.",
+      "steps": 15,
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "*": "deny",
+          "git status *": "allow",
+          "git log *": "allow",
+          "git diff *": "allow",
+          "git show*": "allow",
+          "git -C * status*": "allow",
+          "git -C * log*": "allow",
+          "git -C * diff*": "allow",
+          "grep*": "allow",
+          "rg*": "allow",
+          "cat*": "allow"
+        }
+      },
+      "prompt": "prompts/reviewer.md"
+    },
+    "locate": {
+      "mode": "subagent",
+      "description": "Finds where something lives and reports file:line evidence. Use before planning or changing anything, to close a gap in what is already known.",
+      "steps": 12,
+      "permission": { "edit": "deny", "bash": "deny" },
+      "prompt": "prompts/locate.md"
+    },
+    "verify": {
+      "mode": "subagent",
+      "description": "Runs the project's checks and reports the real result. Use before claiming a task is done.",
+      "steps": 20,
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "*": "ask",
+          "git status *": "allow",
+          "git diff *": "allow",
+          "mkdir*": "allow",
+          "ps*": "allow",
+          "python3 -m pytest*": "allow",
+          "pytest*": "allow",
+          "ruff*": "allow",
+          "mypy*": "allow",
+          "black*": "allow",
+          "npm test*": "allow",
+          "npm run *": "allow",
+          "npx tsc*": "allow",
+          "cargo test*": "allow",
+          "go test*": "allow"
+        }
+      },
+      "prompt": "prompts/verify.md"
+    },
+    "vision": {
+      "mode": "subagent",
+      "description": "Reads an image, a screenshot or a diagram and reports what is in it. Use when the answer depends on pixels and not on a text file.",
+      "steps": 12,
+      "permission": { "edit": "deny", "bash": "deny" },
+      "prompt": "prompts/vision.md"
+    },
+    "doc": {
+      "mode": "subagent",
+      "description": "Reads a long document or a spec and reports what it says. Use for a paper, a manual, or a specification the code has to match.",
+      "steps": 12,
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "*": "ask",
+          "pdftotext*": "allow",
+          "python3 -c*": "allow",
+          "cat*": "allow",
+          "ls*": "allow"
+        }
+      },
+      "prompt": "prompts/doc.md"
+    },
+    "schema": {
+      "mode": "subagent",
+      "description": "Produces a JSON object or a JSON schema that matches one. Use when the output has to be parsed by a program and not read by a person.",
+      "steps": 15,
+      "permission": { "edit": "deny", "bash": "deny" },
+      "prompt": "prompts/schema.md"
+    },
+    "sweep": {
+      "mode": "subagent",
+      "description": "Scans a lot of code mechanically and reports the matches. Use for bulk sweeps where speed matters more than judgement.",
+      "steps": 12,
+      "permission": { "edit": "deny", "bash": "deny" },
+      "prompt": "prompts/sweep.md"
+    },
+    "longform": {
+      "mode": "subagent",
+      "description": "Reads a very long document set, or writes several different versions of one answer. Use for a megabyte of context, or when the task wants alternatives rather than one answer.",
+      "steps": 20,
+      "permission": { "edit": "deny", "bash": "deny" },
+      "prompt": "prompts/longform.md"
+    }
+  }
+}

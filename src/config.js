@@ -3,8 +3,31 @@
 // Config that does not depend on the model - permission allowlist, pruning
 // defaults, experimental flags - is fixed here. Everything model-specific is
 // derived from the profile, so switching models changes only the profile file.
+//
+// A fleet profile turns several models on at once, and there is one hard
+// constraint that shapes the whole file:
+//
+//   The model lives in the CONFIG, never in a markdown agent file.
+//
+// An agent file of the same name replaces the config entry wholesale, and a
+// file without a `model:` line makes the agent inherit the caller's model
+// instead. Both were verified against OpenCode 1.19: a conflicting file won,
+// and a file with no model ran on the parent session's model. So the lanes
+// live in `agent.<lane>` here, and their prompt bodies live in prompts/ and
+// are referenced with a path opencode can resolve.
 
-import { pruneThreshold, reservedTokens, inputCap, effectiveRetention, resolveRoleModel, resolveRoles, resolveDefaultVariant, roleSplitModels } from "./profile.js"
+import {
+  pruneThreshold,
+  reservedTokens,
+  inputCap,
+  effectiveRetention,
+  resolveRoleModel,
+  resolveRoles,
+  resolveDefaultVariant,
+  roleSplitModels,
+  promptRef,
+  loadLanes,
+} from "./profile.js"
 
 import { join } from "node:path"
 import { homedir } from "node:os"
@@ -67,8 +90,8 @@ export const BASH_ALLOWLIST = [
   "git rev-parse*", "git config --get*", "git remote*", "git blame*",
   "git stash list*", "git ls-files*", "git describe*", "git shortlog*", "git --version*",
   // `git -C <dir> <read-verb>` only. A bare `git -C *` would allow `git -C x push`.
-  "git -C * status*", "git -C * log*", "git -C * diff*", "git -C * rev-parse*",
-  "git -C * ls-files*", "git -C * show*",
+  "git -C * status*", "git -C * log*", "git -C * diff*",
+  "git -C * rev-parse*", "git -C * ls-files*", "git -C * show*",
   // Staging is local and reversible; publishing is not and stays gated.
   "git add*",
   // `chmod 777` is denied below. `+x` is ordinary build work.
@@ -103,65 +126,61 @@ export const BASH_DENYLIST = [
 ]
 
 /**
- * Iteration cap per role, written as `agent.<role>.steps`.
- *
- * `steps` is a loop breaker rather than a quality knob. On exhaustion OpenCode
- * forces a text-only response, so an agent that has stopped making progress
- * reports what it has instead of silently looping until the context is gone.
- * The caps are sized to the role's real work: build gets room because it runs
- * the edit-verify-fix cycle, verify gets room because a full suite is many
- * commands, and the read-only roles are capped tight because they have one job.
- */
-export const AGENT_STEPS = /** @type {Record<string, number>} */ ({
-  build: 40,
-  plan: 25,
-  reviewer: 15,
-  locate: 12,
-  verify: 20,
-})
-
-/** Roles the kit writes, with the permissions that keep them honest. */
-const AGENT_PERMISSIONS = /** @type {Record<string, Record<string, string>>} */ ({
-  plan: { edit: "deny" },
-  reviewer: { edit: "deny" },
-  locate: { edit: "deny", bash: "deny" },
-  verify: { edit: "deny" },
-})
-
-/**
  * @param {Profile} p
- * @param {{ base?: Record<string, any>, comments?: boolean }} [opts]
+ * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string> }} [opts]
  * @returns {string}
  */
 export function generateConfig(p, opts = {}) {
   const base = opts.base ?? {}
+  const unhealthy = opts.unhealthy
   const model = `${p.provider}/${p.model}`
-  const roles = resolveRoles(p)
+  const roles = resolveRoles(p, { unhealthy })
   const instructionsPath = globalInstructionsPath()
+  const lanes = loadLanes()
 
   const agent = { ...(base.agent ?? {}) }
+  /** Lanes the primary agents are allowed to delegate to. */
+  const delegable = Object.keys(roles).filter(
+    (r) => lanes[r]?.mode !== "primary",
+  )
+
   for (const [role, level] of Object.entries(roles)) {
     if (level === undefined) continue
+    const lane = lanes[role]
     const existing = { ...(agent[role] ?? {}) }
-    const rm = resolveRoleModel(p, role)
+
     // The model is pinned, never inherited. Preserving a model already written
     // on the agent is how `build` ended up on a `may-train` model while the rest
     // of the file claimed the profile's zero-retention one: the compiler was
     // asked to re-run over a hand-edited config and kept the hand-edit.
-    //
-    // `roleModels` is the one sanctioned way a role differs, because it is
-    // declared in the profile next to the model it points at and validated
-    // against retention.yml. Still an assignment, never a preserved value.
+    const rm = resolveRoleModel(p, role, { unhealthy })
     existing.model = rm ? `${p.provider}/${rm.model}` : model
+
     if (level === null) delete existing.variant
     else existing.variant = level
-    if (AGENT_PERMISSIONS[role]) {
-      existing.permission = {
-        ...(existing.permission ?? {}),
-        ...AGENT_PERMISSIONS[role],
+
+    if (lane) {
+      if (lane.description) existing.description = lane.description
+      if (lane.mode) existing.mode = lane.mode
+      if (lane.steps) existing.steps = lane.steps
+      existing.prompt = promptRef(role)
+      if (lane.permission) {
+        existing.permission = {
+          ...(existing.permission ?? {}),
+          ...lane.permission,
+        }
       }
     }
-    if (AGENT_STEPS[role]) existing.steps = AGENT_STEPS[role]
+
+    // A primary agent may hand work to a lane. The rule is per-agent, and it
+    // is last-match-wins, so the allow list has to come after the deny.
+    if (lane?.mode === "primary" && delegable.length) {
+      existing.permission = {
+        ...(existing.permission ?? {}),
+        task: { "*": "deny", ...Object.fromEntries(delegable.map((r) => [r, "allow"])) },
+      }
+    }
+
     agent[role] = existing
   }
 
@@ -179,7 +198,7 @@ export function generateConfig(p, opts = {}) {
   delete compaction.tail_turns
   compaction.auto = true
   compaction.prune = true
-  compaction.reserved = reservedTokens(p)
+  compaction.reserved = reservedTokens(p, { unhealthy })
 
   const base_ = { ...base }
   // Two keys are dropped from the inherited config outright rather than merged.
@@ -202,7 +221,7 @@ export function generateConfig(p, opts = {}) {
     // No top-level `variant`. The 1.18.35 Config schema sets
     // `additionalProperties: false` and has no `variant` key, so OpenCode
     // strips it from the resolved config - verified with `opencode debug
-    // config`. The per-role tiering is carried by `agent.<role>.variant`,
+    // config`. The per-lane tiering is carried by `agent.<lane>.variant`,
     // which is a real schema key, and `effort.js` sets the session default at
     // the `config` hook where the runtime does still see it.
     default_agent: base.default_agent ?? "build",
@@ -240,11 +259,11 @@ export function generateConfig(p, opts = {}) {
       // `allow` here is load-bearing in a way that is easy to get backwards, and
       // it is pinned rather than inherited for the same reason the model is: an
       // inherited `ask` survives regeneration and re-breaks every read-only
-      // role.
+      // lane.
       //
       // OpenCode appends the global rule AFTER the agent's own, and last match
       // wins, so a global `edit: "ask"` silently overrides every agent's
-      // `edit: "deny"` and the read-only roles can edit files after a prompt.
+      // `edit: "deny"` and the read-only lanes can edit files after a prompt.
       // `allow` is the implicit default and emits no rule at all, which leaves
       // the per-agent `deny` intact. Writes outside the project are still
       // gated by `external_directory`, which defaults to `ask`.
@@ -265,33 +284,37 @@ export function generateConfig(p, opts = {}) {
     harness: {
       profile: p.id,
       ...(p.fallback?.length ? { fallback: p.fallback[0] } : {}),
-      threshold: pruneThreshold(p),
+      threshold: pruneThreshold(p, { unhealthy }),
     },
   }
 
-  return render(out, p, { comments: opts.comments ?? true, instructionsPath })
+  return render(out, p, { comments: opts.comments ?? true, instructionsPath, unhealthy })
 }
 
 /**
  * @param {Record<string, any>} cfg
  * @param {Profile} p
- * @param {{ comments: boolean, instructionsPath?: string }} opts
+ * @param {{ comments: boolean, instructionsPath?: string, unhealthy?: Set<string> }} opts
  * @returns {string}
  */
 function render(cfg, p, opts) {
   const c = opts.comments ? "// " : ""
   const instructionsPath = opts.instructionsPath ?? globalInstructionsPath()
+  const unhealthy = opts.unhealthy
+  const lanes = loadLanes()
   const input = p.limits.input ?? p.limits.context
   const levels = p.effort?.levels ?? []
-  const roles = resolveRoles(p)
+  const roles = resolveRoles(p, { unhealthy })
 
-  const effective = effectiveRetention(p)
-  // The input cap that actually governs context management, which on a split
-  // profile is the widest role model rather than the base. The header must name
-  // it, or `reserved` and `prune` read as arithmetic against a number that is
-  // not the one they used.
-  const effectiveInput = inputCap(p)
+  const effective = effectiveRetention(p, { unhealthy })
+  // The input cap that actually governs context management, which on a fleet
+  // profile is the NARROWEST lane model rather than the base. The header must
+  // name it, or `reserved` and `prune` read as arithmetic against a number that
+  // is not the one they used.
+  const effectiveInput = inputCap(p, { unhealthy })
   const splits = Object.keys(p.roleModels ?? {})
+  const laneRows = roleSplitModels(p, { unhealthy })
+
   const head = [
     `${c}Generated by opencode-harness-kit. Edit profiles/${p.id}.json instead`,
     `${c}of this file, then re-run: oc-harness use ${p.id}`,
@@ -300,35 +323,37 @@ function render(cfg, p, opts) {
     `${c}model        ${p.provider}/${p.model}`,
     ...(splits.length
       ? [
-          `${c}split        ${splits.map((r) => `${r}=${p.roleModels?.[r]?.model}`).join("  ")}`,
-          `${c}             (roles not listed above run on the base model above)`,
+          `${c}lanes        ${splits.length} enabled, each on the first model its chain allows`,
         ]
       : []),
     `${c}context      ${p.limits.context.toLocaleString("en-US")} tokens`,
-    `${c}input cap    ${input.toLocaleString("en-US")} tokens${effectiveInput !== input ? `  (base model; ${effectiveInput.toLocaleString("en-US")} governs split roles)` : ""}`,
+    `${c}input cap    ${input.toLocaleString("en-US")} tokens${effectiveInput !== input ? `  (narrowest lane; governs the shared reserve)` : ""}`,
     `${c}output cap   ${p.limits.output.toLocaleString("en-US")} tokens`,
     `${c}reasoning    ${levels.length ? levels.join(" < ") : "(not tunable)"}`,
-    // The header must name the retention that actually applies, which with a
-    // split is the least private model in the file, not the base one. Printing
-    // `p.retention` here is the same class of bug as the inherited `build`
-    // model: the file claims a privacy property the agents do not have.
     `${c}retention    ${effective.retention}${effective.retention === "may-train" ? "  <-- prompts may train a model" : ""}`,
     ...(effective.retention !== p.retention
       ? [
           `${c}             base ${p.provider}/${p.model} is ${p.retention}, but ${effective.worst} makes the whole file ${effective.retention}`,
         ]
       : []),
-    `${c}`,
-    `${c}Derived numbers, do not hand-edit:`,
-    `${c}  compaction.reserved  ${reservedTokens(p).toLocaleString("en-US")}  (${Math.round((p.effort?.reserveShare ?? 0.12) * 100)}% of the governing input cap${effectiveInput !== input ? `, ${effectiveInput.toLocaleString("en-US")} for the widest split role` : ""}, held back for reasoning growth)`,
-    `${c}  prune threshold      ${pruneThreshold(p).toLocaleString("en-US")}  (governing input cap minus reserve)`,
-    `${c}  role effort          ${Object.entries(roles).map(([k, v]) => `${k}=${v ?? "unset"}`).join("  ")}`,
-    ...(roleSplitModels(p).length
+    ...(p.maxRetention && p.maxRetention !== p.retention
       ? [
-          `${c}  role models          ${roleSplitModels(p).map((r) => `${r.role}=${r.model}${r.limits ? ` (out ${r.limits.output.toLocaleString("en-US")})` : ""}`).join("  ")}`,
+          `${c}ceiling      ${p.maxRetention} - a lane may only resolve to a model at or below this`,
         ]
       : []),
-    `${c}  agent steps          ${Object.entries(AGENT_STEPS).filter(([r]) => roles[r]).map(([r, n]) => `${r}=${n}`).join("  ")}`,
+    `${c}`,
+    `${c}Derived numbers, do not hand-edit:`,
+    `${c}  compaction.reserved  ${reservedTokens(p, { unhealthy }).toLocaleString("en-US")}  (${Math.round((p.effort?.reserveShare ?? 0.12) * 100)}% of the narrowest input cap in play, held back for reasoning growth)`,
+    `${c}  prune threshold      ${pruneThreshold(p, { unhealthy }).toLocaleString("en-US")}  (narrowest input cap minus reserve)`,
+    `${c}  role effort          ${Object.entries(roles).map(([k, v]) => `${k}=${v ?? "unset"}`).join("  ")}`,
+    ...(laneRows.length
+      ? [
+          `${c}  lane models          ${laneRows.map((r) => `${r.role}=${r.model}${r.limits ? ` (out ${r.limits.output.toLocaleString("en-US")})` : ""}`).join("  ")}`,
+        ]
+      : []),
+    `${c}  agent steps          ${Object.entries(roles)
+      .map(([k]) => `${k}=${lanes[k]?.steps ?? 0}`)
+      .join("  ")}`,
   ]
 
   if (!levels.length) {
@@ -336,7 +361,7 @@ function render(cfg, p, opts) {
   } else {
     head.push(
       `${c}`,
-      `${c}Effort is per-role above. There is no top-level "variant" key: the 1.18.35`,
+      `${c}Effort is per-lane above. There is no top-level "variant" key: the 1.18.35`,
       `${c}Config schema rejects it, and the router sets the session default at runtime.`,
     )
   }

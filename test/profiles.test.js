@@ -1,6 +1,11 @@
 // The central claim of this kit: switching models is a data edit, not a code
 // change. These tests are the proof, so they assert behaviour differences
 // between profiles rather than just that the code runs.
+//
+// The second claim, new with the fleet profiles: ten jobs, ten models, one
+// session, and no lane left without one. That is asserted here too, because a
+// fleet that quietly loses a lane to a retention ceiling is a fleet that
+// looks fine in the config and does the wrong thing in a session.
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -9,20 +14,27 @@ import {
   loadProfile,
   resolveEffort,
   resolveRoles,
+  resolveRoleModel,
+  resolveLaneChain,
+  resolveLaneModel,
   reservedTokens,
   pruneThreshold,
   normalize,
   listProfileIds,
   loadRetention,
+  modelRetention,
+  retentionAllowed,
   ProfileError,
   validate,
-  resolveRoleModel,
   modelsInPlay,
   effectiveRetention,
   roleSplitModels,
   inputCap,
   parseJsonc,
   profileIdFromConfig,
+  loadLanes,
+  laneNames,
+  LANE_NAMES,
 } from "../src/profile.js"
 import { existsSync, readdirSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -45,15 +57,98 @@ function parseGenerated(text) {
   return JSON.parse(text.slice(i))
 }
 
+/**
+ * The ten free models the tier is serving, checked against the live catalog on
+ * 2026-10-19. A profile missing one of them is a job with nobody to do it.
+ */
+const FREE_MODELS = [
+  "beam-free",
+  "big-pickle",
+  "deepseek-v4.1-flash-free",
+  "glm-5.3-flash-free",
+  "longcat-2.5-preview-free",
+  "mimo-v2.6-flash-free",
+  "minimax-m3.1-flash-free",
+  "nemotron-3-ultra-free",
+  "nemotron-3.5-lightning-free",
+  "nemotron-3.5-super-vl-free",
+]
+
 test("every shipped profile loads and validates", () => {
   const ids = listProfileIds()
-  assert.ok(ids.length >= 5, `expected several profiles, found ${ids.length}`)
+  assert.ok(ids.length >= 12, `expected the model profiles and the fleets, found ${ids.length}`)
   for (const id of ids) {
     const p = loadProfile(id)
     assert.equal(p.id, id)
     assert.ok(p.limits.context > 0)
     assert.ok(p.limits.output > 0)
   }
+})
+
+test("every free model on the tier has a profile", () => {
+  const ids = listProfileIds()
+  for (const model of FREE_MODELS) {
+    assert.ok(ids.includes(model), `${model} has no profile`)
+  }
+})
+
+test("the fleet has one lane per free model, and no lane is left out", () => {
+  // Ten jobs, ten models. A model with no lane is a free model doing nothing;
+  // a lane with no model is a job nobody can do.
+  const p = loadProfile("fleet-all")
+  const lanes = Object.keys(p.roles)
+  assert.equal(lanes.length, 10)
+  const served = new Set()
+  for (const lane of lanes) {
+    const m = resolveLaneModel(p, lane).model
+    assert.ok(FREE_MODELS.includes(m), `lane ${lane} runs on ${m}, which is not a free model`)
+    served.add(m)
+  }
+  assert.equal(served.size, 10, `only ${served.size} distinct models serve the fleet`)
+  for (const model of FREE_MODELS) {
+    assert.ok(served.has(model), `${model} has no lane of its own`)
+  }
+})
+
+test("a fleet lane that loses its model walks the chain", () => {
+  const p = loadProfile("fleet-all")
+  const chain = resolveLaneChain(p, "plan")
+  assert.ok(chain.length >= 2, "a lane that can be withdrawn needs a chain")
+  const first = chain[0]
+  const second = chain[1]
+  const healthy = new Set([first])
+  const resolved = resolveLaneModel(p, "plan", { unhealthy: healthy })
+  assert.equal(resolved.model, second)
+  // The levels come from the model that ended up serving the lane, not from
+  // the one that went away.
+  assert.deepEqual(resolved.levels, loadProfile(second).effort.levels)
+})
+
+test("the retention ceiling decides which rung a lane may use", () => {
+  const safe = loadProfile("fleet-safe")
+  const all = loadProfile("fleet-all")
+  // fleet-safe must never resolve to a model that may train on the prompt.
+  for (const lane of Object.keys(safe.roles)) {
+    const model = resolveLaneModel(safe, lane).model
+    assert.equal(
+      modelRetention(model),
+      "zero-retention",
+      `fleet-safe put ${lane} on ${model}, which is ${modelRetention(model)}`,
+    )
+  }
+  // fleet-all may, and its plan lane is the one beam-free serves.
+  assert.equal(resolveLaneModel(all, "plan").model, "beam-free")
+  assert.equal(modelRetention("beam-free"), "retained")
+  assert.equal(resolveLaneModel(safe, "plan").model, "deepseek-v4.1-flash-free")
+})
+
+test("a model whose terms are unknown is never used", () => {
+  assert.equal(retentionAllowed("beam-free", "zero-retention"), false)
+  assert.equal(retentionAllowed("beam-free", "retained"), true)
+  assert.equal(retentionAllowed("minimax-m3.1-flash-free", "zero-retention"), true)
+  assert.equal(retentionAllowed("big-pickle", "zero-retention"), false)
+  assert.equal(retentionAllowed("big-pickle", "may-train"), true)
+  assert.equal(retentionAllowed("no-such-model", "may-train"), false)
 })
 
 test("effort resolution snaps a missing level onto one the model has", () => {
@@ -78,54 +173,55 @@ test("effort resolution snaps a missing level onto one the model has", () => {
 test("generated config never contains an effort level the model lacks", () => {
   for (const id of listProfileIds()) {
     const p = loadProfile(id)
-    const levels = p.effort?.levels ?? []
     const c = cfg(id)
     for (const [role, agent] of Object.entries(c.agent ?? {})) {
       const v = agent.variant
       if (v === undefined) continue
+      const resolved = resolveLaneModel(p, role)
+      const levels = resolved.levels.length ? resolved.levels : p.effort.levels
       assert.ok(
         levels.includes(v),
-        `${id}: role ${role} got variant "${v}" which is not in [${levels.join(",")}]`,
+        `${id}: lane ${role} got variant "${v}" which is not in [${levels.join(",")}]`,
       )
     }
     if (c.variant) {
-      assert.ok(levels.includes(c.variant), `${id}: top-level variant not available`)
+      assert.ok(p.effort.levels.includes(c.variant), `${id}: top-level variant not available`)
     }
   }
 })
 
-test("reserved tokens and prune threshold scale with the model", () => {
-  const bunny = normalize(loadProfile("space-bunny-free"))
-  const small = normalize(loadProfile("deepseek-v4-flash-free"))
-
-  // 12% of each input cap, floored at 8k.
-  assert.equal(reservedTokens(bunny), Math.round(bunny.limits.input * 0.12))
-  assert.equal(reservedTokens(small), Math.round(small.limits.input * 0.12))
-  assert.ok(reservedTokens(bunny) > reservedTokens(small))
-  assert.equal(pruneThreshold(small), small.limits.input - reservedTokens(small))
-
-  // A 1M-tuned profile must not be silently reused on a 200k model. The
-  // threshold is a real fraction of each model's own input cap, not a fixed
-  // number, so the small model's budget is dramatically tighter.
-  assert.ok(pruneThreshold(small) < pruneThreshold(bunny) / 2)
-  assert.ok(
-    Math.abs(reservedTokens(small) / small.limits.input - 0.12) < 1e-9,
-    "the reserve stays a proportional share of each model",
+test("reserved tokens and prune threshold size for the NARROWEST model in play", () => {
+  // The fleet mixes a 1M model with 200k models and `compaction.reserved` is
+  // one number for the whole config. Sizing it by the widest model would
+  // reserve 125k tokens and leave a 200k lane with 74k usable, which is where
+  // the lane stops working.
+  const fleet = loadProfile("fleet-safe")
+  const narrowest = Math.min(
+    ...roleSplitModels(fleet).map((s) => s.limits?.input ?? s.limits?.context),
   )
+  assert.equal(inputCap(fleet), narrowest)
+  assert.equal(reservedTokens(fleet), Math.round(narrowest * 0.12))
+  assert.equal(pruneThreshold(fleet), narrowest - reservedTokens(fleet))
+  // The base model is 1M, so the old rule would have reserved 125,829.
+  assert.ok(reservedTokens(fleet) < 30_000, "the reserve must fit the narrowest lane")
+
+  // A single-model profile sizes for its own model.
+  const single = normalize(loadProfile("beam-free"))
+  assert.equal(reservedTokens(single), Math.round(single.limits.input * 0.12))
+  assert.equal(pruneThreshold(single), single.limits.input - reservedTokens(single))
 })
 
 test("the same plugin source produces different behaviour per profile", () => {
-  const bunny = cfg("space-bunny-free")
-  const muse = cfg("muse-spark-1.3-contributor-free")
-  const longcat = cfg("longcat-2.5-preview-free")
-  const small = cfg("deepseek-v4-flash-free")
+  const safe = cfg("fleet-safe")
+  const all = cfg("fleet-all")
+  const single = cfg("beam-free")
 
-  // 1. The model itself.
-  assert.equal(bunny.model, "opencode/space-bunny-free")
-  assert.equal(muse.model, "opencode/muse-spark-1.3-contributor-free")
+  // 1. The session model.
+  assert.equal(safe.model, "opencode/minimax-m3.1-flash-free")
+  assert.equal(single.model, "opencode/beam-free")
 
   // 2. small_model never points at a different model, on any profile.
-  for (const [name, c] of Object.entries({ bunny, muse, longcat, small })) {
+  for (const [name, c] of Object.entries({ safe, all, single })) {
     assert.equal(c.small_model, c.model, `${name}: small_model diverged`)
   }
 
@@ -135,32 +231,29 @@ test("the same plugin source produces different behaviour per profile", () => {
   //    has no `variant`, so OpenCode strips it at load. An earlier version of
   //    this test asserted the stripped key, which meant it was asserting that
   //    dead config existed.
-  assert.equal(bunny.agent.plan.variant, "max")
-  assert.equal(bunny.agent.build.variant, "max")
-  assert.equal(bunny.agent.locate.variant, "low")
-  assert.equal(muse.agent.plan.variant, "xhigh", "resolved down from max")
-  assert.equal(muse.agent.plan.variant === "max", false)
-  assert.equal(longcat.agent.plan.variant, undefined, "no tunable effort, no variant")
-  assert.equal(longcat.agent.build.variant, undefined)
-  for (const c of [bunny, muse, longcat, small]) {
+  assert.equal(single.agent.plan.variant, "max")
+  assert.equal(single.agent.locate.variant, "low")
+  assert.equal(safe.agent.locate.variant, undefined, "no tunable effort, no variant")
+  for (const c of [safe, all, single]) {
     assert.equal("variant" in c, false, "top-level variant must not be emitted")
   }
 
-  // 4. Reserved budget differs because the input caps differ.
-  assert.ok(bunny.compaction.reserved > small.compaction.reserved)
+  // 4. Reserved budget differs because the narrowest lane differs. A fleet
+  //    carries 200k lanes, so its shared reserve is smaller than the one a
+  //    1M single-model profile reserves.
+  assert.ok(all.compaction.reserved < single.compaction.reserved)
 })
 
 test("temperature is only emitted for models that support it", () => {
-  const bunny = cfg("space-bunny-free")
-  assert.equal(bunny.temperature, undefined)
-  assert.equal(cfg("muse-spark-1.3-contributor-free").temperature, undefined)
+  assert.equal(cfg("minimax-m3.1-flash-free").temperature, undefined)
+  assert.equal(cfg("beam-free").temperature, undefined)
   // Both are left unset; the distinction lives in the profile, not the config.
-  assert.equal(loadProfile("space-bunny-free").supports.temperature, false)
-  assert.equal(loadProfile("muse-spark-1.3-contributor-free").supports.temperature, true)
+  assert.equal(loadProfile("minimax-m3.1-flash-free").supports.temperature, false)
+  assert.equal(loadProfile("beam-free").supports.temperature, true)
 })
 
 test("context settings that matter are switched on", () => {
-  const c = cfg("space-bunny-free")
+  const c = cfg("fleet-safe")
   assert.equal(c.subagent_depth, 2, "depth 1 blocks nested subagents")
   assert.equal(c.lsp, true, "omitting lsp disables it entirely")
   assert.equal(c.compaction.prune, true)
@@ -171,7 +264,7 @@ test("context settings that matter are switched on", () => {
 })
 
 test("bash allowlist keeps read-only work silent and gates the dangerous rest", () => {
-  const c = cfg("space-bunny-free")
+  const c = cfg("fleet-safe")
   const rules = c.permission.bash
 
   assert.equal(rules["*"], "ask", "unknown commands must still ask")
@@ -187,72 +280,58 @@ test("bash allowlist keeps read-only work silent and gates the dangerous rest", 
   assert.ok(BASH_ALLOWLIST.length > 60)
 })
 
-test("roles that must not edit are locked in the generated config", () => {
-  const c = cfg("space-bunny-free")
-  assert.equal(c.agent.plan.permission.edit, "deny")
-  assert.equal(c.agent.reviewer.permission.edit, "deny")
-  assert.equal(c.agent.locate.permission.edit, "deny")
+test("lanes that must not edit are locked in the generated config", () => {
+  const c = cfg("fleet-safe")
+  for (const role of ["plan", "reviewer", "locate", "verify", "vision", "doc", "schema", "sweep", "longform"]) {
+    assert.equal(c.agent[role].permission.edit, "deny", `${role} must be read-only`)
+  }
   assert.equal(c.agent.locate.permission.bash, "deny")
-  assert.equal(c.agent.verify.permission.edit, "deny")
+  assert.equal(c.agent.sweep.permission.bash, "deny")
 })
 
-test("every agent declares its own model, because variant needs it", () => {
-  // An unsplit profile keeps the strict one-model invariant. A split profile is
-  // the single sanctioned exception, and only via roleModels.
+test("every lane declares its own model, because variant needs it", () => {
   for (const id of listProfileIds()) {
     const c = cfg(id)
     const p = loadProfile(id)
     for (const [role, agent] of Object.entries(c.agent)) {
-      const want = p.roleModels?.[role]?.model ?? p.model
+      const resolved = resolveLaneModel(p, role)
+      const want = resolved ? resolved.model : p.model
       assert.equal(
         agent.model,
         `${p.provider}/${want}`,
-        `${id}: agent ${role} should be pinned to ${want}`,
+        `${id}: lane ${role} should be pinned to ${want}`,
       )
     }
   }
 })
 
-test("a split profile routes the heavy roles to their own model", () => {
-  const c = cfg("muse-split-free")
-  assert.equal(c.model, "opencode/space-bunny-free")
-  for (const role of ["plan", "build", "reviewer"]) {
-    assert.equal(
-      c.agent[role].model,
-      "opencode/muse-spark-1.3-contributor-free",
-      `${role} must run on the stronger model`,
-    )
-  }
-  for (const role of ["locate", "verify"]) {
-    assert.equal(
-      c.agent[role].model,
-      "opencode/space-bunny-free",
-      `${role} must stay on the high-output model`,
-    )
-  }
+test("a fleet puts a different model behind each lane", () => {
+  const c = cfg("fleet-all")
+  const models = Object.values(c.agent).map((a) => a.model)
+  assert.equal(new Set(models).size, 10, "a fleet that shares a model is not a fleet")
 })
 
-test("effort resolves against the role's own model, not the profile's", () => {
-  // plan and reviewer request `max`, which Muse Spark does not offer. Writing
-  // `max` onto those agents would put a variant the model has no meaning for.
-  const c = cfg("muse-split-free")
-  assert.equal(c.agent.plan.variant, "xhigh")
-  assert.equal(c.agent.reviewer.variant, "xhigh")
-  assert.equal(c.agent.build.variant, "high")
-  assert.equal(c.agent.locate.variant, "low")
-  const p = loadProfile("muse-split-free")
-  assert.equal(resolveRoleModel(p, "plan").levels.includes("max"), false)
-  assert.equal(resolveRoleModel(p, "locate").model, "space-bunny-free")
+test("a single-model profile runs every lane on the base model", () => {
+  const c = cfg("beam-free")
+  const p = loadProfile("beam-free")
+  for (const agent of Object.values(c.agent)) {
+    assert.equal(agent.model, "opencode/beam-free")
+  }
+  assert.equal(resolveRoleModel(p, "plan"), null, "no chain, no split")
 })
 
-test("an unsplit profile resolves effort exactly as before", () => {
-  const p = loadProfile("space-bunny-free")
-  assert.equal(resolveRoleModel(p, "plan"), null)
-  assert.equal(resolveRoles(p).plan, "max")
+test("effort resolves against the lane's own model, not the profile's", () => {
+  // The sweep lane runs on a model that publishes a `none` level, and the
+  // locate lane falls back to one with no levels at all in the safe fleet.
+  const all = cfg("fleet-all")
+  assert.equal(all.agent.sweep.variant, "none")
+  const safe = cfg("fleet-safe")
+  assert.equal(safe.agent.sweep.variant, undefined, "the fallback has no effort levels")
+  assert.equal(safe.agent.plan.variant, "max")
 })
 
 test("validate refuses a role model with no retention.yml entry", () => {
-  const p = loadProfile("muse-split-free")
+  const p = loadProfile("fleet-all")
   const broken = { ...p, roleModels: { plan: { model: "no-such-model-free" } } }
   assert.throws(
     () => validate(broken, "test"),
@@ -260,54 +339,40 @@ test("validate refuses a role model with no retention.yml entry", () => {
   )
   const nameless = { ...p, roleModels: { plan: {} } }
   assert.throws(() => validate(nameless, "test"), ProfileError)
-  const badLevels = { ...p, roleModels: { plan: { model: "space-bunny-free", levels: "xhigh" } } }
+  const badLevels = { ...p, roleModels: { plan: { model: "beam-free", levels: "xhigh" } } }
   assert.throws(() => validate(badLevels, "test"), ProfileError)
 })
 
-test("the header reports the retention that actually applies", () => {
-  const text = generateConfig(loadProfile("muse-split-free"))
-  // The base model is zero-retention, but three roles are not, so the header
-  // may not claim zero-retention for the file. This is the same lie as the
-  // inherited `build` model, and the guard against it is the header.
-  assert.match(text, /retention\s+may-train/)
-  assert.match(text, /makes the whole file may-train/)
-  assert.doesNotMatch(text, /retention\s+zero-retention/)
-  // An unsplit zero-retention profile still says so.
-  assert.match(
-    generateConfig(loadProfile("space-bunny-free")),
-    /retention\s+zero-retention/,
-  )
-})
-
-test("modelsInPlay and effectiveRetention see past the base model", () => {
-  const p = loadProfile("muse-split-free")
-  assert.deepEqual(modelsInPlay(p), [
-    "space-bunny-free",
-    "muse-spark-1.3-contributor-free",
-  ])
-  const eff = effectiveRetention(p)
-  assert.equal(eff.retention, "may-train")
-  assert.equal(eff.worst, "muse-spark-1.3-contributor-free")
-  // A profile that never leaves its base model is unaffected.
-  const plain = effectiveRetention(loadProfile("space-bunny-free"))
-  assert.equal(plain.retention, "zero-retention")
-})
-
-test("validate refuses a split role that is not one of the five managed roles", () => {
-  const p = loadProfile("muse-split-free")
-  // schema.json sets additionalProperties false, but nothing reads it at
-  // runtime, so a typo reached the compiler before this check existed.
-  const bad = { ...p, roleModels: { ...p.roleModels, scout: { model: "space-bunny-free" } } }
+test("validate refuses a lane that is not one of the managed lanes", () => {
+  const p = loadProfile("fleet-all")
+  const bad = { ...p, roleModels: { ...p.roleModels, scout: { model: "beam-free" } } }
   assert.throws(
     () => validate(bad, "test"),
     (e) => e instanceof ProfileError && /is not one of/.test(e.message),
   )
+  const badRole = { ...p, roles: { ...p.roles, scout: "max" } }
+  assert.throws(
+    () => validate(badRole, "test"),
+    (e) => e instanceof ProfileError && /is not one of/.test(e.message),
+  )
 })
 
-test("validate refuses a split role that has no matching roles entry", () => {
+test("validate refuses a chain that does not start with the lane's model", () => {
+  const p = loadProfile("fleet-all")
+  const bad = {
+    ...p,
+    roleModels: { ...p.roleModels, plan: { model: "beam-free", chain: ["deepseek-v4.1-flash-free", "beam-free"] } },
+  }
+  assert.throws(
+    () => validate(bad, "test"),
+    (e) => e instanceof ProfileError && /must start with its model/.test(e.message),
+  )
+})
+
+test("validate refuses a split lane that has no matching roles entry", () => {
   // resolveRoles walks `roles`, so this split would never reach an agent and
   // would read as installed while changing nothing.
-  const p = loadProfile("muse-split-free")
+  const p = loadProfile("fleet-all")
   const orphan = { ...p, roles: { ...p.roles } }
   delete orphan.roles.locate
   assert.throws(
@@ -316,52 +381,55 @@ test("validate refuses a split role that has no matching roles entry", () => {
   )
 })
 
-test("context management sizes for the widest model, not the base", () => {
-  const p = loadProfile("muse-split-free")
-  // Muse Spark takes 1,048,576 input against the base model's 524,288. Sizing
-  // for the base throttles plan/build/reviewer to under half their real window,
-  // which defeats the reason they run on the bigger model.
-  assert.equal(inputCap(p), 1048576)
-  assert.equal(reservedTokens(p), 125829)
-  assert.equal(pruneThreshold(p), 922747)
-  const conf = cfg("muse-split-free")
-  assert.equal(conf.compaction.reserved, 125829)
+test("the header reports the retention that actually applies", () => {
+  const text = generateConfig(loadProfile("fleet-all"))
+  // Five of the ten providers may train, so the header may not claim
+  // zero-retention for the file. This is the same lie as the inherited
+  // `build` model, and the guard against it is the header.
+  assert.match(text, /retention\s+may-train/)
+  assert.doesNotMatch(text, /retention\s+zero-retention/)
+  // The safe fleet says so, and says why.
+  const safe = generateConfig(loadProfile("fleet-safe"))
+  assert.match(safe, /retention\s+zero-retention/)
 })
 
-test("an unsplit profile keeps its own context numbers", () => {
-  // The widest-cap rule must not touch a profile that never splits.
-  const p = loadProfile("space-bunny-free")
-  assert.equal(inputCap(p), p.limits.input)
-  assert.equal(reservedTokens(p), Math.round(p.limits.input * 0.12))
-  assert.equal(pruneThreshold(p), p.limits.input - reservedTokens(p))
+test("modelsInPlay and effectiveRetention see past the base model", () => {
+  const p = loadProfile("fleet-all")
+  const inPlay = modelsInPlay(p)
+  assert.ok(inPlay.includes("beam-free"), "a lane's model is in play")
+  assert.ok(inPlay.includes("minimax-m3.1-flash-free"))
+  const eff = effectiveRetention(p)
+  assert.equal(eff.retention, "may-train")
+  // A profile that never leaves its base model is unaffected.
+  const plain = effectiveRetention(loadProfile("beam-free"))
+  assert.equal(plain.retention, "retained")
 })
 
-test("the header names each split role's real output cap", () => {
-  // The whole reason locate/verify stay on Space Bunny is its 524,288-token
-  // output ceiling against Muse Spark's 131,072. A header that prints only the
-  // base cap would let someone budget `build` at four times what it can emit.
-  const p = loadProfile("muse-split-free")
+test("the header names each lane's real output cap", () => {
+  // The whole reason locate stays on Lightning is its 262,144-token output
+  // ceiling against Beam's 131,072. A header that prints only the base cap
+  // would let someone budget `build` at four times what it can emit.
+  const p = loadProfile("fleet-all")
   const splits = roleSplitModels(p)
-  assert.equal(splits.length, 5)
-  const muse = splits.find((s) => s.role === "plan")
-  assert.equal(muse.limits.output, 131072)
-  const bunny = splits.find((s) => s.role === "build") // build is split too, check locate
-  assert.equal(bunny.model, "muse-spark-1.3-contributor-free")
-  assert.equal(splits.find((s) => s.role === "locate").limits.output, 524288)
+  assert.equal(splits.length, 10)
+  const locate = splits.find((s) => s.role === "locate")
+  assert.equal(locate.limits.output, 262144)
+  const build = splits.find((s) => s.role === "build")
+  assert.equal(build.limits.output, 512000)
   const text = generateConfig(p)
-  assert.match(text, /plan=muse-spark-1\.3-contributor-free \(out 131,072\)/)
-  assert.match(text, /locate=space-bunny-free \(out 524,288\)/)
+  assert.match(text, /locate=nemotron-3\.5-lightning-free \(out 262,144\)/)
+  assert.match(text, /build=minimax-m3\.1-flash-free \(out 512,000\)/)
 })
 
 test("retention.yml is parsed and separates safe from training routes", () => {
   const r = loadRetention()
-  assert.equal(r["opencode/space-bunny-free"].retention, "zero-retention")
-  assert.equal(r["opencode/muse-spark-1.3-contributor-free"].retention, "may-train")
+  assert.equal(r["opencode/minimax-m3.1-flash-free"].retention, "zero-retention")
+  assert.equal(r["opencode/big-pickle"].retention, "may-train")
+  assert.equal(r["opencode/beam-free"].retention, "retained")
   // Folded block scalars must collapse to a single readable line.
-  const note = r["opencode/muse-spark-1.3-contributor-free"].note
-  assert.ok(note.includes("train future Meta models"))
+  const note = r["opencode/beam-free"].note
+  assert.ok(note.includes("30 days"))
   assert.ok(!note.includes("\n"))
-  assert.ok(r["opencode/space-bunny-free"].note.includes("zero-retention"))
 })
 
 test("every profile has a retention.yml entry, and the two agree", () => {
@@ -369,35 +437,45 @@ test("every profile has a retention.yml entry, and the two agree", () => {
   let checked = 0
   for (const id of listProfileIds()) {
     const p = loadProfile(id)
-    const declared = r[`${p.provider}/${p.model}`]
-    assert.ok(
-      declared,
-      `${id} has no retention.yml entry, so \`oc-harness use\` would refuse it`,
-    )
-    assert.equal(
-      p.retention,
-      declared.retention,
-      `${id} says ${p.retention} but retention.yml says ${declared.retention}`,
-    )
+    // A fleet's retention is the worst of the models it resolves to, so the
+    // base model's entry is not the one to compare against.
+    const effective = effectiveRetention(p)
+    if (p.roleModels && Object.keys(p.roleModels).length) {
+      assert.ok(
+        ["zero-retention", "retained", "may-train"].includes(effective.retention),
+        `${id} resolved to an unknown retention`,
+      )
+    } else {
+      const declared = r[`${p.provider}/${p.model}`]
+      assert.ok(
+        declared,
+        `${id} has no retention.yml entry, so \`oc-harness use\` would refuse it`,
+      )
+      assert.equal(
+        p.retention,
+        declared.retention,
+        `${id} says ${p.retention} but retention.yml says ${declared.retention}`,
+      )
+    }
     checked++
   }
-  assert.ok(checked >= 5, "the loop must actually run, not skip everything")
+  assert.ok(checked >= 12, "the loop must actually run, not skip everything")
 })
 
 test("the plan explains every downgrade instead of hiding it", () => {
-  const muse = planEffort("muse-spark-1.3-contributor-free")
-  assert.equal(muse.roles.plan, "xhigh")
-  assert.ok(
-    muse.notes.some((n) => n.includes("tops out at xhigh")),
-    "an adjusted role must be reported",
-  )
+  const plan = planEffort("fleet-safe")
+  assert.ok(plan.laneModels.plan, "a fleet plan names the model per lane")
+  assert.notEqual(plan.laneModels.plan, "beam-free", "the safe fleet cannot use beam")
 
-  const longcat = planEffort("longcat-2.5-preview-free")
-  assert.ok(longcat.notes.some((n) => n.includes("no tunable reasoning effort")))
+  const single = planEffort("mimo-v2.6-flash-free")
+  assert.ok(
+    single.notes.some((n) => n.includes("no tunable reasoning effort")),
+    "a model with no effort levels has to say so",
+  )
 })
 
 test("validation rejects a profile that is missing something essential", () => {
-  const base = loadProfile("space-bunny-free")
+  const base = loadProfile("beam-free")
 
   const cases = [
     ["missing context", (p) => delete p.limits.context, /limits\.context/],
@@ -421,7 +499,7 @@ test("validation rejects a profile that is missing something essential", () => {
 test("an inherited config is merged, not replaced wholesale", () => {
   const base = { skills: { paths: ["/custom/skills"] }, permission: { edit: "deny" } }
   const out = parseGenerated(
-    generateConfig(loadProfile("space-bunny-free"), { base }),
+    generateConfig(loadProfile("fleet-safe"), { base }),
   )
   assert.deepEqual(out.skills.paths, ["/custom/skills"])
   assert.equal(out.permission.read, "allow")
@@ -435,11 +513,11 @@ test("an inherited config is merged, not replaced wholesale", () => {
 
 test("an inherited small_model pointing elsewhere is replaced", () => {
   const out = parseGenerated(
-    generateConfig(loadProfile("space-bunny-free"), {
+    generateConfig(loadProfile("fleet-safe"), {
       base: { small_model: "opencode/some-other-model-free" },
     }),
   )
-  assert.equal(out.small_model, "opencode/space-bunny-free")
+  assert.equal(out.small_model, "opencode/minimax-m3.1-flash-free")
 })
 
 // ---------------------------------------------------------------------------
@@ -454,21 +532,21 @@ test("an inherited small_model pointing elsewhere is replaced", () => {
 
 test("REGRESSION: a hand-edited agent model does not survive regeneration", () => {
   // This is the one that mattered. `build` - the default agent - had been moved
-  // onto muse-spark-1.3-contributor-free by hand while every other field still
-  // matched the profile, so the file claimed zero-retention and the retention
-  // was may-train. The compiler preserved the hand-edit because it only set the
+  // onto a may-train model by hand while every other field still matched the
+  // profile, so the file claimed zero-retention and the retention was
+  // may-train. The compiler preserved the hand-edit because it only set the
   // model when the agent had none.
   const out = parseGenerated(
-    generateConfig(loadProfile("space-bunny-free"), {
+    generateConfig(loadProfile("fleet-safe"), {
       base: {
-        agent: { build: { model: "opencode/muse-spark-1.3-contributor-free" } },
+        agent: { build: { model: "opencode/big-pickle" } },
       },
     }),
   )
   assert.equal(
     out.agent.build.model,
-    "opencode/space-bunny-free",
-    "the managed roles' models are pinned, not inherited",
+    "opencode/minimax-m3.1-flash-free",
+    "the managed lanes' models are pinned, not inherited",
   )
 })
 
@@ -479,22 +557,22 @@ test("REGRESSION: permission.edit is pinned to allow, not inherited as ask", () 
   // global at ask, `plan` resolved to ask; with it at allow, `plan` resolves to
   // deny and only `build` resolves to allow.
   const out = parseGenerated(
-    generateConfig(loadProfile("space-bunny-free"), {
+    generateConfig(loadProfile("fleet-safe"), {
       base: { permission: { edit: "ask" } },
     }),
   )
   assert.equal(out.permission.edit, "allow")
 })
 
-test("REGRESSION: the read-only roles keep their deny alongside a global allow", () => {
+test("REGRESSION: the read-only lanes keep their deny alongside a global allow", () => {
   // The fix for the prompt has to not open a write path. `allow` is opencode's
   // implicit default and emits no rule, so the per-agent deny is what decides.
-  const c = cfg("space-bunny-free")
+  const c = cfg("fleet-safe")
   assert.equal(c.permission.edit, "allow")
-  for (const role of ["plan", "reviewer", "locate", "verify"]) {
+  for (const role of ["plan", "reviewer", "locate", "verify", "vision", "doc", "schema", "sweep", "longform"]) {
     assert.equal(c.agent[role].permission.edit, "deny", `${role} must stay read-only`)
   }
-  assert.equal(c.agent.build.permission, undefined, "build inherits the global allow")
+  assert.notEqual(c.agent.build.permission.edit, "deny", "build is the one lane that writes")
 })
 
 test("REGRESSION: no top-level variant key is emitted for any profile", () => {
@@ -510,7 +588,7 @@ test("REGRESSION: no top-level variant key is emitted for any profile", () => {
 
 test("REGRESSION: an inherited tool_output or variant is dropped, not kept", () => {
   const out = parseGenerated(
-    generateConfig(loadProfile("space-bunny-free"), {
+    generateConfig(loadProfile("fleet-safe"), {
       base: { variant: "max", tool_output: { max_lines: 200, max_bytes: 8192 } },
     }),
   )
@@ -518,10 +596,26 @@ test("REGRESSION: an inherited tool_output or variant is dropped, not kept", () 
   assert.deepEqual(out.tool_output, { max_lines: 2000, max_bytes: 51200 })
 })
 
+test("REGRESSION: the model lives in the config, not in a markdown agent file", () => {
+  // Verified against OpenCode 1.19: an agent file of the same name replaces
+  // the config entry wholesale, and a file with no `model:` line makes the
+  // agent inherit the caller's model. Both were observed, so the kit keeps the
+  // model in the config and the prompt body in prompts/.
+  const c = cfg("fleet-safe")
+  for (const [lane, agent] of Object.entries(c.agent)) {
+    assert.ok(agent.model, `${lane} must pin its model in the config`)
+    assert.ok(agent.prompt, `${lane} must point at a prompt file`)
+    assert.ok(
+      String(agent.prompt).startsWith("{file:"),
+      "a relative prompt path is silently ignored by opencode",
+    )
+  }
+})
+
 test("the question tool is allowed, so a blocked agent can say so cheaply", () => {
   // OpenCode ships `question` as deny on every built-in agent, so an agent with
   // a genuine blocker could only fall back to prose.
-  const c = cfg("space-bunny-free")
+  const c = cfg("fleet-safe")
   assert.equal(c.permission.question, "allow")
 })
 
@@ -531,13 +625,13 @@ test("tool_output is at the measured ceiling, not a tight cap", () => {
   // causes the re-read roughly one for one, which at the measured ~17s median
   // costs more than the tokens it saves. Only 14 of 2,959 reads exceed 51,200
   // bytes, so this ceiling is not what limits context.
-  const c = cfg("space-bunny-free")
+  const c = cfg("fleet-safe")
   assert.equal(c.tool_output.max_bytes, 51200)
   assert.equal(c.tool_output.max_lines, 2000)
 })
 
 test("the read-only gh verbs are allowed and the mutating ones are not", () => {
-  const rules = cfg("space-bunny-free").permission.bash
+  const rules = cfg("fleet-safe").permission.bash
   for (const safe of ["gh pr list*", "gh pr view*", "gh issue list*", "gh repo view*", "gh auth status*"]) {
     assert.equal(rules[safe], "allow", `${safe} is read-only and should be allowed`)
   }
@@ -574,21 +668,33 @@ test("no allowlist entry can be reached by a publishing command", () => {
   }
 })
 
-test("every role has a step cap, so a runaway agent reports instead of looping", () => {
-  const c = cfg("space-bunny-free")
-  for (const role of ["build", "plan", "reviewer", "locate", "verify"]) {
+test("every lane has a step cap, so a runaway agent reports instead of looping", () => {
+  const c = cfg("fleet-safe")
+  for (const role of Object.keys(c.agent)) {
     assert.ok(
       Number.isInteger(c.agent[role].steps) && c.agent[role].steps > 0,
       `${role} needs a positive steps cap`,
     )
   }
-  // The read-only roles do one job; build runs the edit-verify-fix cycle.
+  // The read-only lanes do one job; build runs the edit-verify-fix cycle.
   assert.ok(c.agent.locate.steps < c.agent.build.steps)
   assert.ok(c.agent.reviewer.steps < c.agent.plan.steps)
 })
 
+test("the primary lanes may delegate, and the read-only ones may not", () => {
+  const c = cfg("fleet-safe")
+  // The primary agent hands work to the lanes and nothing else.
+  const task = c.agent.build.permission.task
+  assert.equal(task["*"], "deny")
+  assert.equal(task.reviewer, "allow")
+  assert.equal(task.build, undefined, "a primary agent is not a delegate target")
+  // A read-only lane has no task permission at all, so opencode removes the
+  // tool from its view.
+  assert.equal(c.agent.locate.permission.task, undefined)
+})
+
 test("instructions point at a file the installer creates", () => {
-  const c = cfg("space-bunny-free")
+  const c = cfg("fleet-safe")
   assert.deepEqual(c.instructions, [GLOBAL_INSTRUCTIONS])
   assert.ok(
     existsSync(join(ROOT, "GLOBAL.md")),
@@ -596,39 +702,26 @@ test("instructions point at a file the installer creates", () => {
   )
 })
 
-test("every tiered role has an agent file in the repo to install", () => {
-  // The install that motivated this shipped a config declaring reviewer,
-  // locate and verify while no agents/ directory existed anywhere, so all three
-  // silently fell back to opencode's defaults and `verify` reported "no project
-  // agents found" forever.
-  for (const role of Object.keys(resolveRoles(loadProfile("space-bunny-free")))) {
+test("every lane has a prompt file in the repo to install", () => {
+  // The install that prompted this shipped a config declaring reviewer,
+  // locate and verify while no prompt directory existed anywhere, so all three
+  // silently fell back to opencode's defaults and `verify` reported "no
+  // project agents found" forever.
+  for (const lane of laneNames()) {
     assert.ok(
-      existsSync(join(ROOT, "agents", `${role}.md`)),
-      `agents/${role}.md must exist so \`oc-harness install\` has something to link`,
+      existsSync(join(ROOT, "prompts", `${lane}.md`)),
+      `prompts/${lane}.md must exist so \`oc-harness install\` has something to link`,
     )
   }
 })
 
-test("agent files pin the profile's own model and a resolved variant", () => {
-  const p = loadProfile("space-bunny-free")
-  const want = `${p.provider}/${p.model}`
-  const roles = resolveRoles(p)
-  for (const role of Object.keys(roles)) {
-    const text = readFileSync(join(ROOT, "agents", `${role}.md`), "utf8")
-    const block = /^---\n([\s\S]*?)\n---/.exec(text)
-    assert.ok(block, `agents/${role}.md has no frontmatter`)
-    const fm = block[1]
-    assert.ok(
-      new RegExp(`^model: ${want.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m").test(fm),
-      `agents/${role}.md must name ${want}`,
-    )
-    if (roles[role]) {
-      assert.ok(
-        new RegExp(`^variant: ${roles[role]}\\s*$`, "m").test(fm),
-        `agents/${role}.md must ask for variant ${roles[role]}`,
-      )
-    }
-    assert.ok(/^steps: \d+\s*$/m.test(fm), `agents/${role}.md must cap steps`)
+test("the lane table names every lane and every lane has a job", () => {
+  const lanes = loadLanes()
+  assert.equal(lanes["build"].description.length > 0, true)
+  for (const lane of LANE_NAMES) {
+    assert.ok(lanes[lane], `lanes.json has no ${lane}`)
+    assert.ok(lanes[lane].description.length > 20, `${lane} needs a description the model can select on`)
+    assert.ok(lanes[lane].prompt, `${lane} needs a prompt`)
   }
 })
 
@@ -642,16 +735,32 @@ test("the kit does not shadow a built-in opencode subagent", () => {
   // are primary agents whose prompts the kit is meant to replace.
   const overridden = new Set(["build", "plan"])
   const shadowedSubagents = ["general", "explore", "scout", "compaction", "title", "summary"]
-  const ours = readdirSync(join(ROOT, "agents")).map((f) => f.replace(/\.md$/, ""))
+  const ours = laneNames()
   for (const name of ours) {
     if (overridden.has(name)) continue
     assert.ok(
       !shadowedSubagents.includes(name),
-      `agents/${name}.md shadows a built-in opencode subagent`,
+      `the ${name} lane shadows a built-in opencode subagent`,
     )
   }
-  assert.ok(ours.includes("locate"), "the local-code locator role should exist")
+  assert.ok(ours.includes("locate"), "the local-code locator lane should exist")
   assert.ok(!ours.includes("scout"), "scout must stay available to opencode")
+})
+
+test("a profile cannot enable a lane the kit does not manage", () => {
+  const p = loadProfile("fleet-all")
+  const bad = { ...p, roles: { ...p.roles, wizard: "max" } }
+  assert.throws(
+    () => validate(bad, "test"),
+    (e) => e instanceof ProfileError && /is not one of/.test(e.message),
+  )
+})
+
+test("the lane table and the managed lane list agree", () => {
+  // A lane in one and not the other is a lane that either cannot be enabled
+  // or has no job description, and both fail silently.
+  const lanes = Object.keys(loadLanes()).sort()
+  assert.deepEqual(lanes, [...LANE_NAMES].sort())
 })
 
 // --- JSONC -----------------------------------------------------------------
@@ -702,12 +811,12 @@ test("profileIdFromConfig reads a config carrying comments and trailing commas",
   const file = join(dir, "opencode.jsonc")
   writeFileSync(
     file,
-    '// generated by oc-harness\n{\n  "model": "opencode/x",\n  "harness": { "profile": "space-bunny-free", },\n}\n',
+    '// generated by oc-harness\n{\n  "model": "opencode/x",\n  "harness": { "profile": "fleet-safe", },\n}\n',
   )
   const prev = process.env.OPENCODE_CONFIG_DIR
   process.env.OPENCODE_CONFIG_DIR = dir
   try {
-    assert.equal(profileIdFromConfig(), "space-bunny-free")
+    assert.equal(profileIdFromConfig(), "fleet-safe")
   } finally {
     if (prev === undefined) delete process.env.OPENCODE_CONFIG_DIR
     else process.env.OPENCODE_CONFIG_DIR = prev

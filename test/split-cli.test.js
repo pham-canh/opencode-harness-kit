@@ -1,10 +1,10 @@
-// The CLI is where a split profile becomes real: `use` writes it, `verify`
-// decides whether the install still matches the profile, and `--dryrun` is the
-// only way to look without touching the user's config.
+// The CLI is where a fleet becomes real: `use` writes it, `verify` decides
+// whether the install still matches the profile, and `--dryrun` is the only way
+// to look without touching the user's config.
 //
-// The drift check deserves a test of its own. It compares each agent's model to
-// an expected one, and when a split profile arrived it compared every agent to
-// the base model, so `verify` reported drift forever on any split install. That
+// The drift check deserves a test of its own. It compares each lane's model to
+// an expected one, and when a fleet profile arrived it compared every lane to
+// the base model, so `verify` reported drift forever on any fleet install. That
 // is the worst possible failure for this command: it cries wolf on a correct
 // config, which teaches the user to stop running the one check that catches a
 // hand-edited `build`.
@@ -12,7 +12,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, renameSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -22,7 +22,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
 
 function sandbox() {
-  const dir = mkdtempSync(join(tmpdir(), "ock-split-"))
+  const dir = mkdtempSync(join(tmpdir(), "ock-fleet-"))
   return {
     dir,
     config: join(dir, "opencode.jsonc"),
@@ -33,8 +33,8 @@ function sandbox() {
 
 function run(box, args) {
   // `verify` exits non-zero for anything it finds wrong, and a bare sandbox is
-  // always wrong: no GLOBAL.md, no agents/, no skills. Asserting on its exit
-  // code here would be testing the sandbox, not the split. What matters is
+  // always wrong: no GLOBAL.md, no prompts/, no skills. Asserting on its exit
+  // code here would be testing the sandbox, not the fleet. What matters is
   // whether it reported config drift, so the exit code is deliberately ignored.
   const r = spawnSync("node", [CLI, ...args], { env: box.env, encoding: "utf8" })
   return `${r.stdout ?? ""}${r.stderr ?? ""}`
@@ -45,7 +45,7 @@ test("--dryrun prints the profile and writes nothing", () => {
   // the user's config. An unknown flag must never look like a safe one.
   const box = sandbox()
   try {
-    const out = run(box, ["use", "muse-split-free", "--dryrun"])
+    const out = run(box, ["use", "fleet-safe", "--dryrun"])
     assert.match(out, /dry run, nothing written/)
     assert.equal(existsSync(box.config), false, "--dryrun must not create a config")
   } finally {
@@ -53,27 +53,27 @@ test("--dryrun prints the profile and writes nothing", () => {
   }
 })
 
-test("verify reports a clean split install instead of permanent drift", () => {
+test("verify reports a clean fleet install instead of permanent drift", () => {
   const box = sandbox()
   try {
-    run(box, ["use", "muse-split-free", "--yes"])
+    run(box, ["use", "fleet-safe", "--yes"])
     const out = run(box, ["verify"])
-    assert.match(out, /config matches profile muse-split-free/)
+    assert.match(out, /config matches profile fleet-safe/)
     assert.doesNotMatch(out, /config drift/)
   } finally {
     box.cleanup()
   }
 })
 
-test("verify still catches a hand-edited split role", () => {
+test("verify still catches a hand-edited lane", () => {
   // The flip side: fixing drift must not have switched the check off.
   const box = sandbox()
   try {
-    run(box, ["use", "muse-split-free", "--yes"])
+    run(box, ["use", "fleet-all", "--yes"])
     const text = readFileSync(box.config, "utf8")
     writeFileSync(
       box.config,
-      text.replace("opencode/muse-spark-1.3-contributor-free", "opencode/some-other-free"),
+      text.replace("opencode/beam-free", "opencode/some-other-free"),
     )
     const out = run(box, ["verify"])
     assert.match(out, /config drift/)
@@ -82,11 +82,11 @@ test("verify still catches a hand-edited split role", () => {
   }
 })
 
-test("use reports the split and the retention that actually applies", () => {
+test("use reports the lane models and the retention that actually applies", () => {
   const box = sandbox()
   try {
-    const out = run(box, ["use", "muse-split-free", "--dryrun"])
-    assert.match(out, /split\s+plan=muse-spark-1\.3-contributor-free/)
+    const out = run(box, ["use", "fleet-all", "--dryrun"])
+    assert.match(out, /lane model\s+build=minimax-m3\.1-flash-free/)
     assert.match(out, /retention\s+may-train/)
     // The base model is zero-retention, so saying so unqualified would be the
     // exact lie this profile exists to avoid.
@@ -99,13 +99,33 @@ test("use reports the split and the retention that actually applies", () => {
 test("an unsplit profile still reports its own retention", () => {
   const box = sandbox()
   try {
-    const out = run(box, ["use", "space-bunny-free", "--dryrun"])
-    assert.match(out, /retention\s+zero-retention/)
-    assert.doesNotMatch(out, /split\s/)
+    const out = run(box, ["use", "beam-free", "--dryrun"])
+    assert.match(out, /retention\s+retained/)
+    assert.doesNotMatch(out, /lane model/)
   } finally {
     box.cleanup()
   }
 })
+
+test("a lane's model is written into the config, not into a prompt file", () => {
+  // The model lives in the config because an agent file of the same name
+  // replaces the config entry wholesale, and a file with no `model:` line
+  // makes the agent inherit the caller's model. Both were observed on
+  // OpenCode 1.19.
+  const box = sandbox()
+  try {
+    run(box, ["use", "fleet-all", "--yes"])
+    const cfg = parseJsonc(readFileSync(box.config, "utf8"))
+    const models = Object.values(cfg.agent).map((a) => a.model)
+    assert.equal(new Set(models).size, 10, "the fleet must put ten models behind ten lanes")
+    for (const agent of Object.values(cfg.agent)) {
+      assert.ok(agent.prompt, "every lane points at a prompt file")
+    }
+  } finally {
+    box.cleanup()
+  }
+})
+
 // --- `use` never overwrites without a way back -----------------------------
 
 test("`use --yes` still backs up the config it replaces", () => {
@@ -115,12 +135,12 @@ test("`use --yes` still backs up the config it replaces", () => {
   // nothing to restore from.
   const box = sandbox()
   try {
-    run(box, ["use", "space-bunny-free", "--yes"])
+    run(box, ["use", "beam-free", "--yes"])
     assert.ok(existsSync(box.config), "config should have been written")
 
     const marker = { customSetting: "do not lose me" }
     writeFileSync(box.config, JSON.stringify(marker, null, 2))
-    run(box, ["use", "space-bunny-free", "--yes"])
+    run(box, ["use", "beam-free", "--yes"])
 
     const backup = JSON.parse(readFileSync(`${box.config}.bak`, "utf8"))
     assert.deepEqual(backup, marker, "the replaced config should be recoverable verbatim")
@@ -135,16 +155,16 @@ test("`use` keeps hand-tuned keys through a comment + trailing comma edit", () =
   // the user's own keys gone -- no error, no backup notice.
   const box = sandbox()
   try {
-    run(box, ["use", "space-bunny-free", "--yes"])
+    run(box, ["use", "beam-free", "--yes"])
     writeFileSync(
       box.config,
-      '{\n  // my own tweaks\n  "model": "opencode/space-bunny-free",\n  "experimental": { "foo": true, },\n}\n',
+      '{\n  // my own tweaks\n  "model": "opencode/beam-free",\n  "experimental": { "foo": true, },\n}\n',
     )
-    run(box, ["use", "space-bunny-free", "--yes"])
+    run(box, ["use", "beam-free", "--yes"])
 
     const after = parseJsonc(readFileSync(box.config, "utf8"))
     assert.deepEqual(after.experimental, { batch_tool: true, continue_loop_on_deny: true, foo: true })
-    assert.equal(after.harness.profile, "space-bunny-free")
+    assert.equal(after.harness.profile, "beam-free")
   } finally {
     box.cleanup()
   }
@@ -154,11 +174,11 @@ test("`use` refuses to regenerate a config it cannot parse", () => {
   // Failing loudly beats writing out a config built on an empty base.
   const box = sandbox()
   try {
-    run(box, ["use", "space-bunny-free", "--yes"])
+    run(box, ["use", "beam-free", "--yes"])
     const original = '{ this is not json at all'
     writeFileSync(box.config, original)
 
-    const out = run(box, ["use", "space-bunny-free", "--yes"])
+    const out = run(box, ["use", "beam-free", "--yes"])
     assert.match(out, /not valid JSONC/i)
     assert.equal(readFileSync(box.config, "utf8"), original, "the broken file must be left untouched")
   } finally {
@@ -171,8 +191,44 @@ test("`show` reports the retention entry for the profile's own model", () => {
   // keyed `${provider}/${model}`, so `show` silently printed no retention line.
   const box = sandbox()
   try {
-    const out = run(box, ["show", "space-bunny-free"])
+    const out = run(box, ["show", "beam-free"])
     assert.match(out, /retention/i, `show should mention retention, got:\n${out}`)
+    assert.match(out, /30 days/, "the retention note should say what is retained")
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("verify fails when the plugin was copied out of the kit's tree", () => {
+  // A copied bundle finds no profiles beside itself, so it loads and does
+  // nothing: no guard, no pruning, no lane failover, no telemetry, and no
+  // error anywhere. The symlink is what prevents that, and this is the check
+  // that notices when somebody replaces the symlink with a copy.
+  const box = sandbox()
+  try {
+    run(box, ["use", "fleet-safe", "--yes"])
+    run(box, ["install"])
+    const plugin = join(box.dir, "plugins", "opencode-harness-kit.js")
+    copyFileSync(plugin, `${plugin}.copy`)
+    rmSync(plugin)
+    renameSync(`${plugin}.copy`, plugin)
+
+    const out = run(box, ["verify"])
+    assert.match(out, /cannot find its profiles/)
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("`lanes` reports which lanes the fleet used", () => {
+  // The lane table is a hypothesis until something counts the calls. A lane
+  // that was never called is a description the model reads every turn and a
+  // free model doing nothing.
+  const box = sandbox()
+  try {
+    const out = run(box, ["lanes"])
+    assert.match(out, /never called/)
+    assert.match(out, /sweep/)
   } finally {
     box.cleanup()
   }

@@ -52,3 +52,19 @@ explicitly rather than letting the review step find it.
 Do not re-read the plan, do not look for other improvements, and do not treat
 the review as a suggestion. A blocker that gets fixed together with a refactor
 cannot be verified on its own.
+
+## Lanes you can hand work to
+
+You do not switch models: you hand the job to the lane that has it, and it
+comes back with an answer.
+
+- `locate` - where something lives, with `file:line`. Read-only, so it costs
+  you nothing to ask it to look before you read.
+- `sweep` - a bulk search across a lot of code, reported as matches with no
+  judgement attached.
+- `verify` - running the project's checks and reporting the real output.
+- `vision` - reading a screenshot or a diagram that came with the task.
+- `schema` - producing JSON or a schema that has to be parsed by a program.
+
+Do the small jobs yourself. A lane is for a job that needs its own context
+window, its own model, or its own effort level, not for a one-line lookup.

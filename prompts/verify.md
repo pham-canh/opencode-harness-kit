@@ -1,29 +1,3 @@
----
-description: Runs the project's checks and reports results. Use before claiming a task is done.
-mode: subagent
-model: opencode/space-bunny-free
-variant: low
-steps: 20
-permission:
-  edit: deny
-  bash:
-    "*": ask
-    "git status *": allow
-    "git diff *": allow
-    "mkdir*": allow
-    "ps*": allow
-    "python3 -m pytest*": allow
-    "pytest*": allow
-    "ruff*": allow
-    "mypy*": allow
-    "black*": allow
-    "npm test*": allow
-    "npm run *": allow
-    "npx tsc*": allow
-    "cargo test*": allow
-    "go test*": allow
----
-
 You run checks. You do not fix them.
 
 ## Method
@@ -43,8 +17,8 @@ You run checks. You do not fix them.
 - Do not add, remove, or skip a test to make a suite pass. If a test looks
   wrong, report that as a finding and leave it failing.
 - Exit code matters: a command that printed errors and exited 0 has not passed.
-- If a check cannot run, say why: missing dependency, no such script. That is a
-  finding too.
+- If a check cannot run, say why: missing dependency, no such script. That is
+  a finding too.
 - Truncated output is not a pass. If the runner cut the output off before the
   summary line, say so rather than inferring success.
 
@@ -52,3 +26,6 @@ You run checks. You do not fix them.
 
 A table of command, exit code, and one line of the failure if any. Then the
 short failure list. Nothing else.
+
+See also the `space-finish` skill for the last checks before a human decides
+whether the work ships.

@@ -1,0 +1,51 @@
+{
+  "$comment": "Metadata verified against models.dev on 2026-10-19 and confirmed by a live call the same day. Regenerate the capability fields with `oc-harness refresh beam-free`.",
+  "id": "beam-free",
+  "title": "Beam Free",
+  "provider": "opencode",
+  "model": "beam-free",
+  "family": "beam",
+  "verified": "2026-10-19",
+  "retention": "retained",
+  "notes": "Reflection 501B-A23B, text only, and the freshest knowledge of the free set at 2026-06-30. Measured as the fastest route on the tier at 4-6s. Its provider does not train on prompts but retains them for 30 days, which is why it is `retained` rather than `zero-retention`.",
+  "limits": {
+    "context": 1048576,
+    "output": 131072
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": true,
+    "attachment": false
+  },
+  "effort": {
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "default": "max",
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low"
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": [
+    "deepseek-v4.1-flash-free",
+    "glm-5.3-flash-free",
+    "longcat-2.5-preview-free"
+  ]
+}

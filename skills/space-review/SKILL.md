@@ -8,6 +8,12 @@ description: Review a change in two passes, spec compliance then code quality, w
 The order matters. Quality opinions on a change that does the wrong thing are
 noise, and they bury the finding that mattered.
 
+The review itself belongs to the `reviewer` lane, which runs on its own model
+with its own context window: hand it the diff and the task, and take its
+findings. When the question is not "is this change wrong" but "does this change
+satisfy the spec, in every case the spec covers", that is the `audit` lane,
+which is slower and reads twice.
+
 ## Pass 1 - does it do what was asked
 
 Style is out of scope. Only the question of whether the task got done. The

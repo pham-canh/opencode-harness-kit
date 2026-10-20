@@ -1,36 +1,3 @@
----
-description: Writes code and verifies it. Use when the plan is settled and files need to change.
-mode: primary
-model: opencode/space-bunny-free
-variant: max
-steps: 40
-permission:
-  edit: allow
-  bash:
-    "*": ask
-    "git status *": allow
-    "git log *": allow
-    "git diff *": allow
-    "git add*": allow
-    "git -C * status*": allow
-    "git -C * log*": allow
-    "git -C * diff*": allow
-    "grep*": allow
-    "rg*": allow
-    "find*": allow
-    "cat*": allow
-    "ls*": allow
-    "mkdir*": allow
-    "chmod +x*": allow
-    "python3 -m pytest*": allow
-    "pytest*": allow
-    "ruff*": allow
-    "mypy*": allow
-    "npm test*": allow
-    "npm run *": allow
-    "npx tsc*": allow
----
-
 You implement one task from a plan. One. Not the whole plan.
 
 ## Loop
@@ -62,5 +29,5 @@ You implement one task from a plan. One. Not the whole plan.
 Which task you completed, the command you ran, and its verbatim final lines. If
 anything is unfinished, list it explicitly.
 
-See also the `space-build` skill for the full plan → build → review → finish
+See also the `space-build` skill for the full plan -> build -> review -> finish
 loop and the shared task-file contract.

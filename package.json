@@ -1,7 +1,7 @@
 {
   "name": "opencode-harness-kit",
   "version": "0.2.1",
-  "description": "Model-agnostic harness kit for OpenCode: capability profiles, role-based reasoning effort, context pruning, and measured baselines.",
+  "description": "Harness kit for OpenCode: capability profiles, a fleet of job lanes with one free model each, role-based reasoning effort, context pruning, and measured baselines.",
   "license": "MIT",
   "homepage": "https://github.com/pham-canh/space-harness#readme",
   "repository": {
@@ -32,12 +32,12 @@
     "dist/",
     "src/",
     "profiles/",
-    "examples/",
-    "retention.yml",
-    "GLOBAL.md",
-    "agents/",
+    "prompts/",
     "skills/",
     "docs/*.md",
+    "retention.yml",
+    "lanes.json",
+    "GLOBAL.md",
     "README.md",
     "LICENSE"
   ],

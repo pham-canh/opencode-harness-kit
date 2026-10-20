@@ -146,9 +146,10 @@ unfalsified. `eval` now prints the figure as `PROJECTION` with `measured: no`,
 and `baseline` reports per-model-per-variant medians so the claim becomes real
 once the tiering has actually been running.
 
-## Why Space Bunny Free is the default
+## Why the default is a fleet
 
-Scanning free models on OpenCode Zen for context, effort, and privacy together:
+Scanning free models on OpenCode Zen for context, effort, and privacy
+together, in the tier of 2026-10-07:
 
 | model | context | effort levels | retention |
 |---|---|---|---|
@@ -171,6 +172,16 @@ coverage and no public identity. Zero-retention and a `max` effort tier were
 judged worth those risks; that judgement is a default, not a fact, and
 `oc-harness use` makes reversing it one flag.
 
+**That default did not survive the month.** Four of those five models were
+withdrawn, including the one the default profile named. The tier of
+2026-10-19 has ten free models with ten different strengths, and no single
+one of them is best at everything: Beam answers in 4-6 seconds, GLM takes
+16-27 and is the careful one, Nemotron Super VL is the only model publishing
+a `none` effort level. The default became a **fleet** — ten jobs, ten models,
+one session — with a privacy ceiling rather than a single model. The reasoning
+and the measurements are in [`ROUTING.md`](ROUTING.md); the source study of
+the eleven production harnesses is in the section above.
+
 ## How the privacy list was assembled
 
 From the Privacy section of the OpenCode Zen docs, which states a general
@@ -179,6 +190,12 @@ retaining data. Two more, `x-preview-f-free` and `deepseek-v4-flash-free`, are
 not named in the exception list and so fall under the general policy. Those two
 are marked in `retention.yml` as inferred rather than quoted, because the
 distinction matters if you are handling someone else's code.
+
+The tier of 2026-10-19 needed a third value. `beam-free` does not train on
+prompts but "retains them for 30 days for safety reasons", which is neither
+"keeps nothing" nor "may train". Calling that zero-retention would have been
+the same kind of claim the file exists to prevent, so `retained` was added and
+the fleet's ceiling can be set to either side of it.
 
 ## What the ecosystem already covers
 
@@ -199,12 +216,49 @@ duplicating:
 The gap is the seam between a provider catalog and a config file. That is what
 this kit is for.
 
+## How many lanes a fleet can carry
+
+The fleet question was not answered by taste. Six sources, and what each one
+says:
+
+| source | what it says |
+|---|---|
+| arXiv:2609.00006, eleven production harnesses | The largest agent catalogue in the corpus is OpenCode's own, four named agents plus three hidden utility ones. Claude Code ships three, Codex two, OpenHands four, Mistral Vibe one delegable profile. **No harness in the corpus ships ten.** |
+| The same paper, Recommendation 12 | "Stay single-agent until you can point to a concrete breadth-first exploration phase where parallel context isolation clearly beats serial search." The evidence cited: multi-agent systems use ~15x more tokens than a chat baseline, and "most coding tasks involve fewer truly parallelizable tasks than research". |
+| The same paper, §7.2 | Per-agent specialization is "keyed on agent profile rather than on model generation" — the corpus keeps the agent catalogue small and expresses model differences as a *field*, not as more agents. |
+| LangChain's multi-agent guide | The explicit threshold: a system prompt enumerating the agents is right for "small, static agent lists (< 10 agents)"; above ten, agent discovery has to become a tool. |
+| `agentpatterns.ai`, on tool catalogues | Selection accuracy degrades as the catalogue grows: 7-85% drops as a tool catalogue expands, and Anthropic's own deferred tool search lifts Opus 4.5 from 79.5% to 88.1% selection accuracy by narrowing the choice to 3-5 options. |
+| `code-yeongyu/oh-my-openagent` (70k★, an OpenCode plugin) | The real counter-example, and the closest precedent: **four curated agents and ten categories**, each with its own ordered model chain, where the main agent picks a category and never a model name. It works because the categories are jobs, not models. |
+
+What they add up to: ten lanes sits at the edge rather than past it, and the
+reason it is tolerable is that the descriptions do not overlap. The failure
+mode of a large catalogue is similar descriptions, not many descriptions.
+
+So the fleet is built the way `omo` builds it — a job per lane, a chain per
+lane — and the number is treated as a hypothesis rather than a constant.
+`oc-harness lanes` counts the calls, and a lane nobody calls is cut.
+
+The other thing the sources settled is where the model lives. OpenCode's Task
+tool takes a free-string `subagent_type` and no model parameter, so the only
+way to put a different model behind a delegation is to define an agent with
+that model. `agent.<lane>` in the generated config does that, and it is also
+the only place the model can live without an agent markdown file shadowing it
+and quietly replacing it.
+
 ## Sources
 
 - arXiv:2609.00006 — Harness Engineering, eleven-harness source study
 - `https://opencode.ai/docs/zen/` — pricing, retention, free-tier terms
-- `https://opencode.ai/config.json` — the resolved config schema for 1.18.35
-- `@opencode-ai/plugin@1.18.35` `dist/index.d.ts` — the hook surface (the
-  version actually installed; re-check against it after any plugin bump)
+- `https://opencode.ai/config.json` — the resolved config schema
+- `@opencode-ai/plugin` `dist/index.d.ts` — the hook surface (the version
+  actually installed; re-check against it after any plugin bump)
 - `https://models.dev/api.json` — provider and model metadata
 - `anomalyco/opencode` issue #42977 — free-route 429 behaviour
+- `https://docs.langchain.com/oss/python/langchain/multi-agent/subagents` —
+  the agent-catalogue threshold
+- `https://github.com/1lucascb/agentpatterns.ai` — selection accuracy against
+  catalogue size
+- `https://github.com/code-yeongyu/oh-my-openagent` — a fleet of categories
+  with per-category model chains, in OpenCode
+- OpenCode 1.19.0, measured: agent-file precedence, `{file:...}` resolution,
+  binary-file refusal, and a two-model delegation inside one session
