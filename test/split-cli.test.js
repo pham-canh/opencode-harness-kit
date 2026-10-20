@@ -12,7 +12,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, renameSync } from "node:fs"
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, renameSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -177,7 +177,13 @@ test("`use --yes` still backs up the config it replaces", () => {
     writeFileSync(box.config, JSON.stringify(marker, null, 2))
     run(box, ["use", "beam-free", "--yes"])
 
-    const backup = JSON.parse(readFileSync(`${box.config}.bak`, "utf8"))
+    // The backup is a DIRECTORY of the last few configs, not one file that
+    // is overwritten on the next run. So "go back" is a thing a person can
+    // do, and the backup says which profile it was.
+    const dir = join(box.dir, "backups")
+    const files = readdirSync(dir).filter((f) => f.endsWith(".jsonc"))
+    assert.ok(files.length > 0, "the replaced config should be recoverable")
+    const backup = JSON.parse(readFileSync(join(dir, files[files.length - 1]), "utf8"))
     assert.deepEqual(backup, marker, "the replaced config should be recoverable verbatim")
   } finally {
     box.cleanup()

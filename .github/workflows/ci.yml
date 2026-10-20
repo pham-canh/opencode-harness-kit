@@ -17,6 +17,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: test-${{ github.ref }}
+      cancel-in-progress: true
     strategy:
       matrix:
         node: ['22.x']
@@ -125,6 +130,15 @@ jobs:
       # The id token is fetched with a plain GET. The exchange is not made
       # here: the publish below does that, through npm's own client, so the
       # provenance attestation is still generated.
+      - name: the tag and the package must agree
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "::error::the tag says $tag_version and package.json says $package_version."
+            echo "::error::publishing would publish $package_version under a v$tag_version tag."
+            exit 1
+          fi
       - name: print the OIDC claims npm matches against
         if: ${{ env.NODE_AUTH_TOKEN == '' }}
         run: |

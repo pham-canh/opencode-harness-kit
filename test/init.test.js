@@ -80,12 +80,10 @@ test("init is safe to re-run over a config it already wrote", () => {
 
   const second = run(["init", "--profile", "fleet-safe", "--yes"], env)
   assert.equal(second.exit, 0, `re-running init must not fail:\n${second.out}`)
-  assert.ok(
-    readdirSync(dir).includes("opencode.jsonc.bak"),
-    "the config being replaced is backed up, not dropped",
-  )
+  const backups = readdirSync(join(dir, "backups")).filter((f) => f.endsWith(".jsonc"))
+  assert.ok(backups.length > 0, "the config being replaced is backed up, not dropped")
   assert.equal(
-    readFileSync(join(dir, "opencode.jsonc.bak"), "utf8"),
+    readFileSync(join(dir, "backups", backups[backups.length - 1]), "utf8"),
     original,
     "the backup is the config that was there before, not the one written after",
   )

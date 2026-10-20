@@ -44,15 +44,19 @@
     "README.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
-    "LICENSE"
+    "LICENSE",
+    "eval/",
+    "test/"
   ],
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
     "typecheck": "tsc --noEmit",
+    "pretest": "node -e \"const fs=require('fs');if(!fs.existsSync('test')){console.error('no test directory here - this is an installed package, not a checkout');process.exit(1)}\"",
     "test": "node --test \"test/*.test.js\"",
     "test:all": "npm run build && npm run typecheck && npm test",
+    "test:dist": "git diff --exit-code -- dist/ || (echo \"dist/ is out of sync with src/. Run: npm run build && git add dist/\" && exit 1)",
+    "check": "npm run build && npm run test:dist && npm run typecheck && npm test",
     "test:install": "npm run measure:check && npm run attribute",
-    "check": "npm run test:all",
     "check:install": "npm run test:all && npm run test:install && node bin/oc-harness.mjs verify",
     "check:online": "npm run check:install && node bin/oc-harness.mjs doctor",
     "doctor": "node bin/oc-harness.mjs doctor",
@@ -78,14 +82,15 @@
   "engines": {
     "node": ">=22"
   },
-  "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.18.0"
-  },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.31",
     "@types/node": "^26.6.5",
     "ajv": "^8.20.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "pham-canh"
 }

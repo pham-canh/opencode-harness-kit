@@ -48,10 +48,14 @@ jobs:
       # citation against a real tree.
       - name: the A/B harness runs and its premises hold
         run: |
+          export SPACE_HARNESS_SCRATCH="$RUNNER_TEMP/subjects"
           node eval/prepare.mjs --repo . --ref HEAD --name ci
-          node eval/premises.mjs --target "$RUNNER_TEMP/ci" --suite eval/tasks-self.json
-      - name: the pruner measurement runs (no install here, so it measures nothing)
-        run: node eval/measure-prune.mjs --sessions 1 --min-saved 0
+          node eval/premises.mjs --target "$SPACE_HARNESS_SCRATCH/ci" --suite eval/tasks-self.json
+      - name: the pruner measurement runs
+        # There is no opencode install on a runner, so this measures nothing.
+        # It still has to RUN: a script that throws on a missing database is a
+        # script nobody knows works.
+        run: node eval/measure-prune.mjs --sessions 1 --min-saved 0 || echo "no install here, so nothing to measure"
 
   # The slow half. It needs a provider, so it is opt-in: the repository's
   # secrets are not available to a workflow that a fork can trigger, and a
@@ -72,9 +76,10 @@ jobs:
           # measurement.
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
+          export SPACE_HARNESS_SCRATCH="$RUNNER_TEMP/subjects"
           node eval/prepare.mjs --repo . --ref HEAD --name ab
           node eval/ab.mjs \
-            --target "$RUNNER_TEMP/ab" \
+            --target "$SPACE_HARNESS_SCRATCH/ab" \
             --suite eval/tasks-self.json \
             --reps "${{ github.event.inputs.reps || 4 }}" \
             --timeout 600

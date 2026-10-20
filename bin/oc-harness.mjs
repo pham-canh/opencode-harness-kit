@@ -521,8 +521,23 @@ async function cmdInstall() {
   // run in, found by walking up - the same way the telemetry file is found.
   const hookSrc = fileURLToPath(new URL("./git-hooks/pre-commit", import.meta.url))
   const projectGit = gitRoot(process.cwd())
-  const hookDest = projectGit ? join(projectGit, ".git", "hooks", "pre-commit") : null
-  let hookState = "skipped, not a git repository"
+  const inTheKit = projectGit !== null && resolve(projectGit) === resolve(ROOT)
+  // The hook is installed into the KIT's own repository, or into a project
+  // that asks for it with `--hook`.
+  //
+  // Installing it into every project that installs the kit is a surprise:
+  // the hook is a gate, and a gate nobody asked for is an obstacle. (Where it
+  // IS installed it is useful - the hook runs the PROJECT's own test script,
+  // not the kit's - but it is still the project's call.)
+  const hookDest =
+    projectGit && (inTheKit || flag("--hook"))
+      ? join(projectGit, ".git", "hooks", "pre-commit")
+      : null
+  let hookState = !projectGit
+    ? "skipped, not a git repository"
+    : inTheKit
+      ? "skipped, not a git repository"
+      : "skipped, a hook is the project's call (use --hook to install one)"
   if (hookDest && !process.env.OC_HARNESS_NO_HOOK) {
     let existing = null
     try {
@@ -1085,8 +1100,12 @@ async function cmdUse(id) {
     if (!flag("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
       fail("left the existing config alone")
     }
-    writeFileSync(`${CONFIG_FILE}.bak`, readFileSync(CONFIG_FILE))
-    console.error(stamp(`  existing config backed up to ${CONFIG_FILE}.bak`))
+    const kept = keepBackup(readFileSync(CONFIG_FILE))
+    if (kept) {
+      console.error(
+        stamp(`  existing config backed up to ${join(BACKUP_DIR, kept)}`),
+      )
+    }
   }
   writeFileSync(CONFIG_FILE, out)
   console.log(`\n  ${green("✓")} wrote ${CONFIG_FILE}`)
@@ -1312,6 +1331,87 @@ function applyLiveMetadata(p, live) {
  * So: check the registry for a newer kit, refresh every profile against the
  * live catalogue, and write the config again.
  */
+/**
+ * Put back the config the last `use` replaced.
+ *
+ * `use` keeps one `.bak` next to the config, and it OVERWRITES it on the
+ * next run. So there is no history, and the backup does not say which
+ * profile it was - so "go back to what I had" means "remember the old
+ * profile id and run use again", which is not something a person can do at
+ * 2am.
+ *
+ * The backup is now a DIRECTORY of the last few configs, each named with the
+ * profile it came from and the time it was written.
+ */
+const BACKUP_DIR = "backups"
+
+/**
+ * Keep a copy of the config before it is overwritten.
+ *
+ * @param {string} text the config as it is now
+ */
+function keepBackup(text) {
+  try {
+    const dir = join(CONFIG_DIR, BACKUP_DIR)
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    // The most recent first, and only a few: a backup nobody can read
+    // through is not a backup.
+    const files = readdirSync(dir).filter((f) => f.endsWith(".jsonc")).sort()
+    for (const f of files.slice(0, 9)) rmSync(join(dir, f), { force: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+    const name = `opencode-${stamp}.jsonc`
+    writeFileSync(join(dir, name), text)
+    return name
+  } catch {
+    return null
+  }
+}
+
+/**
+ * List the configs that were replaced.
+ */
+function cmdBackups() {
+  const dir = join(CONFIG_DIR, BACKUP_DIR)
+  if (!existsSync(dir)) {
+    console.log(`\n${bold("backups")}  ${stamp("none yet")}\n`)
+    return
+  }
+  const files = readdirSync(dir).filter((f) => f.endsWith(".jsonc")).sort().reverse()
+  console.log(`\n${bold("backups")}  ${stamp(`${files.length} config(s)`)}\n`)
+  for (const f of files) {
+    const full = join(dir, f)
+    let profile = "?"
+    try {
+      profile = parseJsonc(readFileSync(full, "utf8"))?.harness?.profile ?? "?"
+    } catch {}
+    console.log(`  ${f.padEnd(40)} ${stamp(`profile ${profile}`)}`)
+  }
+  console.log("")
+  console.log(stamp("restore one with: oc-harness restore <file>"))
+  console.log("")
+}
+
+/**
+ * Put a backup back.
+ */
+function cmdRestore(name) {
+  const dir = join(CONFIG_DIR, BACKUP_DIR)
+  if (!name) {
+    console.log(`\n${bold("restore")}  ${stamp("which one?")}\n`)
+    cmdBackups()
+    return
+  }
+  const file = name.includes("/") ? name : join(dir, name)
+  if (!existsSync(file)) fail(`no such backup: ${file}`)
+  if (existsSync(CONFIG_FILE)) {
+    writeFileSync(`${CONFIG_FILE}.bak`, readFileSync(CONFIG_FILE))
+  }
+  copyFileSync(file, CONFIG_FILE)
+  console.log(`\n  ${green("✓")} restored ${file} into ${CONFIG_FILE}\n`)
+  console.log(stamp("verify with: oc-harness verify"))
+  console.log("")
+}
+
 async function cmdUpgrade() {
   console.log(`\n${bold("upgrade")}\n`)
 
@@ -1736,9 +1836,35 @@ function cmdLanes() {
   // used" the moment a rotation happened.
   const files = findTelemetryFiles(process.cwd())
   const { lanes: stats, requests, ignored } = readLaneUsage(files)
+  const lanes = Object.keys(profile.roles ?? {})
+
+  // The machine-readable form, because "which lanes earn their place" is a
+  // question a script answers, not a person.
+  if (flag("--json")) {
+    const out = {}
+    for (const lane of lanes) {
+      const s = stats[lane]
+      out[lane] = s
+        ? {
+            requests: s.requests,
+            avg_ms: averageMs(s.ms),
+            avg_ctx: averageMs(s.ctx),
+            avg_reasoning: averageMs(s.reasoning),
+            models: [...s.models],
+          }
+        : { requests: 0, avg_ms: null, avg_ctx: null, avg_reasoning: null, models: [] }
+    }
+    console.log(
+      JSON.stringify(
+        { profile: activeId, requests, ignored, lanes: out },
+        null,
+        2,
+      ),
+    )
+    return
+  }
 
   console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${requests} lane request(s)`)}\n`)
-  const lanes = Object.keys(profile.roles ?? {})
   if (!lanes.length) {
     console.log(`  ${stamp("this profile enables no lanes")}\n`)
     return
@@ -1747,10 +1873,11 @@ function cmdLanes() {
     "  " + "lane".padEnd(12),
     "reqs".padStart(7),
     "avg ms".padStart(9),
-    "model".padEnd(32),
+    "avg ctx".padStart(10),
+    "model".padEnd(30),
   ].join("  ")
   console.log(head)
-  console.log("  " + "-".repeat(64))
+  console.log("  " + "-".repeat(70))
 
   let unused = 0
   for (const lane of lanes) {
@@ -1763,18 +1890,21 @@ function cmdLanes() {
           "  " + lane.padEnd(12),
           String(0).padStart(7),
           "-".padStart(9),
-          (model ?? "-").padEnd(32),
+          "-".padStart(10),
+          (model ?? "-").padEnd(30),
         ].join("  ") + yellow("  never used"),
       )
       continue
     }
     const avg = averageMs(s.ms)
+    const ctx = averageMs(s.ctx)
     console.log(
       [
         "  " + lane.padEnd(12),
         String(s.requests).padStart(7),
         String(avg ?? "-").padStart(9),
-        ([...s.models].join(", ") || model || "-").padEnd(32),
+        String(ctx ?? "-").padStart(10),
+        ([...s.models].join(", ") || model || "-").padEnd(30),
       ].join("  "),
     )
   }
@@ -1980,6 +2110,12 @@ try {
     case "upgrade":
       await cmdUpgrade()
       break
+    case "backups":
+      cmdBackups()
+      break
+    case "restore":
+      cmdRestore(args[1])
+      break
     case "link":
       cmdLink()
       break
@@ -2011,6 +2147,13 @@ try {
     case "run":
       await cmdRun()
       break
+    case "--version":
+    case "-v":
+    case "version":
+      console.log(
+        JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version,
+      )
+      break
     case "help":
     default:
       console.log(`
@@ -2029,6 +2172,8 @@ try {
     trust         set up npm trusted publishing for this package
     doctor    re-check profiles against models.dev and the installed config
     upgrade   check for a newer kit, refresh the profiles, rewrite the config
+    backups   the configs that were replaced, newest first
+    restore <file>  put one back
     baseline  measure the current opencode install
     run       drive .space/tasks.md to done with the build agent
 

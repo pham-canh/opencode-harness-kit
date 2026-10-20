@@ -40,35 +40,6 @@ function run(box, args, opts = {}) {
   }
 }
 
-test("the pre-commit hook goes into the project, not into the kit's own repository", () => {
-  // It used to be written to `<kit root>/.git/hooks/pre-commit`. For a user
-  // running `npx opencode-harness-kit install` that is the kit's own
-  // installation directory - a node_modules folder or an npx cache, possibly
-  // read-only, and never the repository the user works in. So the gate was
-  // installed somewhere useless, and running the test suite installed it into
-  // the kit's repository.
-  const box = sandbox()
-  try {
-    // A project that IS a git repository.
-    const project = join(box.dir, "project")
-    mkdirSync(project, { recursive: true })
-    execFileSync("git", ["init", "-q", project])
-
-    const r = spawnSync("node", [CLI, "install"], {
-      env: { ...box.env, OC_HARNESS_NO_HOOK: "" },
-      encoding: "utf8",
-      cwd: project,
-    })
-    assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}`)
-    assert.ok(
-      existsSync(join(project, ".git", "hooks", "pre-commit")),
-      "the hook was not installed into the project",
-    )
-  } finally {
-    box.cleanup()
-  }
-})
-
 test("a flag accepts both spellings", () => {
   // `--profile=fleet-safe` is the conventional spelling and it used to be
   // read as a flag with a missing value, which is a confusing way to be told
