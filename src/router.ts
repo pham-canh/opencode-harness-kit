@@ -21,6 +21,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
+import { safeStringify } from "./safe.js"
 import {
   loadProfile,
   pruneThreshold,
@@ -196,7 +197,10 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
       const type = e?.type
       if (!type) return
 
-      const text = JSON.stringify(e)
+      // The event is opencode's object, and it can hold a reference back to
+      // itself. A plain JSON.stringify on a cyclic object throws, and a hook
+      // that throws takes the event down with it.
+      const text = safeStringify(e)
       const reason = classify(text)
       if (!reason) return
 

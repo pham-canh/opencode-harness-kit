@@ -19,7 +19,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { findTelemetryFile, readLaneUsage, averageMs } from "../src/lane-usage.js"
+import { findTelemetryFile, findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
@@ -98,6 +98,42 @@ test("the telemetry file is found by walking up from a subdirectory", () => {
     mkdirSync(nested, { recursive: true })
     assert.equal(findTelemetryFile(nested), join(dir, ".space", "telemetry.jsonl"))
     assert.equal(findTelemetryFile(dir), join(dir, ".space", "telemetry.jsonl"))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a rotated telemetry file is still read", () => {
+  // The plugin rotates the file above 4 MB and renames the old one to
+  // `telemetry.jsonl.1`. The reader used to look at `telemetry.jsonl` alone,
+  // so a rotation silently threw the history away and every lane reported
+  // "never used" - on the number that decides whether the fleet stays at ten
+  // lanes.
+  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-rotate-"))
+  try {
+    const space = join(dir, ".space")
+    mkdirSync(space, { recursive: true })
+    writeFileSync(
+      join(space, "telemetry.jsonl.1"),
+      [
+        JSON.stringify({ t: "1", kind: "lane", id: "old1", agent: "build", model: "minimax-m3.1-flash-free", ms: 1000 }),
+        JSON.stringify({ t: "2", kind: "lane", id: "old2", agent: "locate", model: "longcat-2.5-preview-free", ms: 900 }),
+      ].join("\n"),
+    )
+    writeFileSync(
+      join(space, "telemetry.jsonl"),
+      JSON.stringify({ t: "3", kind: "lane", id: "new1", agent: "build", model: "minimax-m3.1-flash-free", ms: 4200 }),
+    )
+
+    const files = findTelemetryFiles(dir)
+    assert.equal(files.length, 2, "both the rotated file and the current one are found")
+    assert.match(files[0], /telemetry\.jsonl\.1$/, "the oldest comes first")
+
+    const { lanes, requests } = readLaneUsage(files)
+    assert.equal(requests, 3, "the history before the rotation is counted")
+    assert.equal(lanes.build.requests, 2, "a lane used before and after the rotation")
+    assert.equal(lanes.locate.requests, 1, "a lane only used before the rotation")
+    assert.equal(averageMs(lanes.build.ms), 2600, "both durations are averaged")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -1,6 +1,10 @@
 // src/index.ts
 import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join7 } from "node:path";
+
+// src/guard.ts
+import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
+import { join as join2, resolve } from "node:path";
 
 // src/rules.js
 import { homedir, tmpdir } from "node:os";
@@ -229,6 +233,7 @@ function shellPayload(segment) {
   if (c === -1 || c === tokens.length - 1) return null;
   return tokens.slice(c + 1).join(" ") || null;
 }
+var ASK_GATED = [/^\s*git\s+push\b/];
 var BASH_RULES = [
   {
     name: "secret exfiltration via shell",
@@ -347,8 +352,67 @@ function checkWrite(target, rules = WRITE_RULES, root = "") {
   return null;
 }
 
+// src/telemetry-store.ts
+import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
+import { join } from "node:path";
+var MAX_BYTES = 4 * 1024 * 1024;
+function logPath(dir) {
+  return join(dir, "telemetry.jsonl");
+}
+function rotate(file) {
+  try {
+    if (existsSync(file) && statSync(file).size > MAX_BYTES) {
+      renameSync(file, `${file}.1`);
+    }
+  } catch {
+  }
+}
+function write(dir, record) {
+  try {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const file = logPath(dir);
+    rotate(file);
+    appendFileSync(file, JSON.stringify({ t: (/* @__PURE__ */ new Date()).toISOString(), ...record }) + "\n");
+  } catch {
+  }
+}
+
 // src/guard.ts
 var MARKER = "[opencode-harness-kit] blocked";
+var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
+function pathsInPatch(text) {
+  const out = [];
+  const push = (p) => {
+    const v = p.trim();
+    if (!v) return;
+    if (v === "/dev/null") return;
+    if (!out.includes(v)) out.push(v);
+  };
+  for (const m of text.matchAll(/^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/gm)) {
+    push(m[1]);
+  }
+  for (const m of text.matchAll(/^\+\+\+\s+(?:b\/)?(.+)$/gm)) {
+    push(m[1]);
+  }
+  return out;
+}
+function writeTargets(tool, args) {
+  if (!args || typeof args !== "object") return [];
+  if (tool === "apply_patch") {
+    return pathsInPatch(String(args.patchText ?? args.patch ?? ""));
+  }
+  const out = [];
+  const one = (v) => {
+    if (typeof v === "string" && v) out.push(v);
+  };
+  one(args.filePath);
+  one(args.path);
+  for (const c of Array.isArray(args.changes) ? args.changes : []) {
+    one(c?.filePath);
+    one(c?.path);
+  }
+  return out;
+}
 function deny(why, detail) {
   throw new Error(
     `${MARKER}: ${why}
@@ -361,23 +425,59 @@ function truncate(s, n = 200) {
   return one.length > n ? `${one.slice(0, n)}...` : one;
 }
 var GuardPlugin = async ({ worktree }) => {
+  const telemetryDir = join2(worktree, ".space");
+  const refuse = (tool, rule, why, detail) => {
+    write(telemetryDir, { kind: "guard", tool, rule });
+    deny(why, detail);
+  };
   return {
     "tool.execute.before": async (input, output) => {
       try {
         if (input.tool === "bash") {
+          const raw = output.args?.workdir;
+          if (typeof raw === "string" && raw.trim()) {
+            const target = raw.startsWith("~") ? join2(homedir2(), raw.slice(1)) : resolve(worktree, raw);
+            if (!insideRoot(target, worktree) && !insideRoot(target, tmpdir2())) {
+              refuse(
+                input.tool,
+                "command outside the project",
+                "command runs outside the project",
+                `the working directory is ${truncate(target)}, and this project's files are the ones you were asked to change`
+              );
+            }
+          }
           const hit = checkBash(String(output.args?.command ?? ""));
-          if (hit) deny(hit.name, `${hit.why}
+          if (hit) {
+            refuse(input.tool, hit.name, hit.name, `${hit.why}
   command: ${truncate(hit.segment)}`);
+          }
           return;
         }
-        if (input.tool === "write" || input.tool === "edit" || input.tool === "patch") {
-          const target = String(output.args?.filePath ?? output.args?.path ?? "") || String(output.args?.changes?.[0]?.filePath ?? "");
-          const hit = checkWrite(target, void 0, worktree);
-          if (hit) deny(hit.name, `${hit.why}
+        if (WRITE_TOOLS.has(input.tool)) {
+          const targets = writeTargets(input.tool, output.args);
+          if (!targets.length) {
+            refuse(
+              input.tool,
+              "unknown write target",
+              "cannot tell what this write touches",
+              `the ${input.tool} tool's arguments name no file, so the scope of the write is unknown`
+            );
+          }
+          for (const target of targets) {
+            const hit = checkWrite(target, void 0, worktree);
+            if (hit) {
+              refuse(input.tool, hit.name, hit.name, `${hit.why}
   file: ${truncate(hit.segment)}`);
+            }
+          }
         }
       } catch (err) {
         if (err instanceof Error && err.message.startsWith(MARKER)) throw err;
+        write(telemetryDir, {
+          kind: "guard",
+          tool: input.tool,
+          rule: "guard failed closed"
+        });
         throw new Error(
           `${MARKER} (guard failed closed): ${err instanceof Error ? err.message : String(err)}`
         );
@@ -387,22 +487,22 @@ var GuardPlugin = async ({ worktree }) => {
 };
 
 // src/profile.js
-import { readFileSync, existsSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { homedir as homedir2 } from "node:os";
+import { readFileSync, existsSync as existsSync2, readdirSync } from "node:fs";
+import { dirname, join as join3, resolve as resolve2 } from "node:path";
+import { homedir as homedir3 } from "node:os";
 import { fileURLToPath } from "node:url";
 var HERE = dirname(fileURLToPath(import.meta.url));
 function findRoot(start) {
   let dir = start;
   for (let i = 0; i < 12; i++) {
-    if (existsSync(join(dir, "profiles"))) return dir;
+    if (existsSync2(join3(dir, "profiles"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return resolve(start, "..");
+  return resolve2(start, "..");
 }
-var ROOT = findRoot(resolve(HERE, ".."));
+var ROOT = findRoot(resolve2(HERE, ".."));
 var ProfileError = class extends Error {
 };
 var LANE_NAMES = [
@@ -425,12 +525,12 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [join(ROOT, "profiles")];
+  return [join3(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
-    const full = join(dir, `${id}.json`);
-    if (existsSync(full)) return full;
+    const full = join3(dir, `${id}.json`);
+    if (existsSync2(full)) return full;
   }
   return null;
 }
@@ -471,8 +571,8 @@ function normalize(p) {
 var laneCache = null;
 function loadLanes() {
   if (laneCache) return laneCache;
-  const file = join(ROOT, "lanes.json");
-  if (!existsSync(file)) {
+  const file = join3(ROOT, "lanes.json");
+  if (!existsSync2(file)) {
     throw new ProfileError(`lane table missing: ${file}`);
   }
   const parsed = JSON.parse(readFileSync(file, "utf8"));
@@ -494,8 +594,8 @@ function laneMeta(name) {
 var retentionCache = null;
 function loadRetention() {
   if (retentionCache) return retentionCache;
-  const file = join(ROOT, "retention.yml");
-  if (!existsSync(file)) {
+  const file = join3(ROOT, "retention.yml");
+  if (!existsSync2(file)) {
     retentionCache = { models: {}, defaults: {} };
     return retentionCache;
   }
@@ -827,10 +927,10 @@ function roleSplitModels(p, opts = {}) {
   });
 }
 function configDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join(homedir2(), ".config", "opencode");
+  return process.env.OPENCODE_CONFIG_DIR ?? join3(homedir3(), ".config", "opencode");
 }
 function configFilePath() {
-  return join(configDir(), "opencode.jsonc");
+  return join3(configDir(), "opencode.jsonc");
 }
 function parseJsonc(text) {
   let out = "";
@@ -905,7 +1005,7 @@ function profileIdFromConfig() {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv) return fromEnv.trim() || null;
   const file = configFilePath();
-  if (!existsSync(file)) return null;
+  if (!existsSync2(file)) return null;
   try {
     const parsed = parseJsonc(readFileSync(file, "utf8"));
     const harness = parsed?.harness;
@@ -920,17 +1020,17 @@ function profileIdFromConfig() {
 }
 
 // src/prune.ts
-import { readFileSync as readFileSync2, existsSync as existsSync2 } from "node:fs";
-import { join as join2 } from "node:path";
+import { readFileSync as readFileSync2, existsSync as existsSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 function activeProfileId(worktree) {
   const candidates = [
     process.env.OPENCODE_HARNESS_PROFILE,
-    join2(worktree, ".space", "active")
+    join4(worktree, ".space", "active")
   ];
   for (const f of candidates) {
     if (!f) continue;
     try {
-      if (existsSync2(f)) {
+      if (existsSync3(f)) {
         const v = readFileSync2(f, "utf8").trim();
         if (v) return v;
       }
@@ -973,7 +1073,7 @@ var PrunePlugin = async ({ worktree }) => {
     threshold: 0
   };
   let cached = null;
-  const resolve2 = () => {
+  const resolve3 = () => {
     if (cached) return cached;
     let profile = null;
     try {
@@ -995,7 +1095,7 @@ var PrunePlugin = async ({ worktree }) => {
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
-        const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve2();
+        const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve3();
         if (!profile) return;
         const messages = output.messages;
         if (!Array.isArray(messages) || messages.length === 0) return;
@@ -1093,12 +1193,12 @@ var PrunePlugin = async ({ worktree }) => {
   };
 };
 async function logPrune(worktree, profileId, stats) {
-  const dir = join2(worktree, ".space");
+  const dir = join4(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
     await appendFile(
-      join2(dir, "prune.jsonl"),
+      join4(dir, "prune.jsonl"),
       JSON.stringify({
         t: (/* @__PURE__ */ new Date()).toISOString(),
         profile: profileId,
@@ -1113,10 +1213,25 @@ async function logPrune(worktree, profileId, stats) {
 }
 
 // src/router.ts
-import { readFileSync as readFileSync3, writeFileSync, mkdirSync } from "node:fs";
-import { join as join3 } from "node:path";
+import { readFileSync as readFileSync3, writeFileSync, mkdirSync as mkdirSync2 } from "node:fs";
+import { join as join5 } from "node:path";
+
+// src/safe.ts
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return "[unstringifiable]";
+    }
+  }
+}
+
+// src/router.ts
 function healthPath(worktree) {
-  return join3(worktree, ".space", "health.json");
+  return join5(worktree, ".space", "health.json");
 }
 function readHealth(worktree) {
   try {
@@ -1127,7 +1242,7 @@ function readHealth(worktree) {
 }
 function writeHealth(worktree, h) {
   try {
-    mkdirSync(join3(worktree, ".space"), { recursive: true });
+    mkdirSync2(join5(worktree, ".space"), { recursive: true });
     writeFileSync(healthPath(worktree), JSON.stringify(h, null, 2));
   } catch {
   }
@@ -1222,7 +1337,7 @@ var RouterPlugin = async ({ worktree }) => {
       const e = event;
       const type = e?.type;
       if (!type) return;
-      const text = JSON.stringify(e);
+      const text = safeStringify(e);
       const reason = classify(text);
       if (!reason) return;
       const modelID = e.properties?.modelID ?? e.properties?.model ?? e.properties?.modelID;
@@ -1286,31 +1401,9 @@ function applySessionModel(cfg, profile, opts = {}) {
 }
 
 // src/telemetry.ts
-import { appendFileSync, mkdirSync as mkdirSync2, existsSync as existsSync4, statSync, renameSync } from "node:fs";
-import { join as join4 } from "node:path";
-var MAX_BYTES = 4 * 1024 * 1024;
-function logPath(dir) {
-  return join4(dir, "telemetry.jsonl");
-}
-function rotate(file) {
-  try {
-    if (existsSync4(file) && statSync(file).size > MAX_BYTES) {
-      renameSync(file, `${file}.1`);
-    }
-  } catch {
-  }
-}
-function write(dir, record) {
-  try {
-    if (!existsSync4(dir)) mkdirSync2(dir, { recursive: true });
-    const file = logPath(dir);
-    rotate(file);
-    appendFileSync(file, JSON.stringify({ t: (/* @__PURE__ */ new Date()).toISOString(), ...record }) + "\n");
-  } catch {
-  }
-}
+import { join as join6 } from "node:path";
 var TelemetryPlugin = async ({ worktree }) => {
-  const dir = join4(worktree, ".space");
+  const dir = join6(worktree, ".space");
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
@@ -1318,7 +1411,7 @@ var TelemetryPlugin = async ({ worktree }) => {
     event: async ({ event }) => {
       const type = event?.type;
       if (typeof type !== "string") return;
-      if (/error|rate|limit|quota/i.test(type)) {
+      if (/(^|[._-])(error|errors|rate|limit|limits|quota)([._-]|$)/i.test(type)) {
         write(dir, { kind: "provider-event", type, detail: truncate2(safeStringify(event)) });
         return;
       }
@@ -1337,14 +1430,9 @@ var TelemetryPlugin = async ({ worktree }) => {
       }
     },
     "tool.execute.after": async (input, output) => {
-      const text = typeof output?.output === "string" ? output.output : "";
-      if (text.includes("[opencode-harness-kit] blocked")) {
-        write(dir, { kind: "guard", tool: input.tool, rule: extractRule(text) });
-        return;
-      }
       const command = String(input.args?.command ?? "");
-      if (input.tool === "bash" && /git push|rm -rf|chmod 777/.test(command)) {
-        write(dir, { kind: "guard-attempt", tool: input.tool, command: truncate2(command) });
+      if (input.tool === "bash" && ASK_GATED.some((p) => p.test(command))) {
+        write(dir, { kind: "guard-allowed", tool: input.tool, command: truncate2(command) });
       }
     },
     dispose: async () => {
@@ -1374,19 +1462,8 @@ function laneOf(event) {
     ms: typeof ms === "number" && ms >= 0 ? ms : void 0
   };
 }
-function extractRule(output) {
-  const m = output.match(/blocked:\s*([^\n]+)/);
-  return m ? m[1].trim() : "unknown";
-}
 function truncate2(s, n = 300) {
   return s.length > n ? `${s.slice(0, n)}...` : s;
-}
-function safeStringify(value) {
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
 }
 
 // src/effort.js
@@ -1481,9 +1558,9 @@ var HarnessPlugin = async (ctx, options) => {
       applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }), {
         sessionModel
       });
-      const dir = join5(ctx.worktree, ".space");
+      const dir = join7(ctx.worktree, ".space");
       mkdirSync3(dir, { recursive: true });
-      writeFileSync2(join5(dir, "active"), `${id}
+      writeFileSync2(join7(dir, "active"), `${id}
 `);
     } catch {
     }
