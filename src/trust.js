@@ -63,6 +63,37 @@ export function repoOf(repository) {
 }
 
 /**
+ * Open a URL in the user's browser.
+ *
+ * `xdg-open` is the Linux opener. macOS uses `open` and Windows uses
+ * `rundll32`, so on two of the three platforms this kit claims to support
+ * the browser simply never opened - and the failure was swallowed, so the
+ * message afterwards still said the page was open.
+ *
+ * @param {string} url
+ * @returns {boolean} whether a browser was actually opened
+ */
+export function openBrowser(url) {
+  /** @type {Array<[string, string[]]>} */
+  const candidates =
+    process.platform === "darwin"
+      ? [["open", [url]]]
+      : process.platform === "win32"
+        ? [["rundll32", ["url.dll,FileProtocolHandler", url]]]
+        : [["xdg-open", [url]], ["gio", ["open", url]], ["gnome-open", [url]]]
+  for (const [bin, args] of candidates) {
+    try {
+      execFileSync(bin, args, { stdio: "ignore", timeout: 10_000 })
+      return true
+    } catch {
+      // Try the next opener. The URL is printed either way, because a
+      // browser that cannot be opened here can be opened anywhere.
+    }
+  }
+  return false
+}
+
+/**
  * Run npm and return its output.
  *
  * @param {string[]} args
@@ -153,19 +184,24 @@ async function npmWithOtp(args, state = {}) {
   // OC_TRUST_NO_BROWSER turns the opening off, which is what a test needs:
   // a test that opens a browser on the machine it runs on is a test that
   // breaks whatever the person at the keyboard was doing.
+  let opened = false
   if (!process.env.OC_TRUST_NO_BROWSER) {
-    try {
-      execFileSync("xdg-open", [authUrl], { stdio: "ignore", timeout: 10_000 })
-    } catch {
-      // No browser here. The URL below is the way out.
-    }
+    opened = openBrowser(authUrl)
   }
   console.error("")
   console.error(bold("  npm needs to confirm it is you."))
   console.error(`  ${authUrl}`)
   console.error(dim("  Answer there however your npm account is set up - an authenticator"))
   console.error(dim("  app, a security key, or a code sent to your email."))
-  console.error(dim("  This page is open in a browser, or copy the URL above."))
+  // Saying the page is open when it is not sends the person looking for a
+  // browser window that was never opened.
+  console.error(
+    dim(
+      opened
+        ? "  This page is open in a browser, or copy the URL above."
+        : "  Open this page in a browser: the URL above is the way in.",
+    ),
+  )
   console.error("")
 
   const token = await waitForToken(doneUrl)
@@ -270,10 +306,15 @@ export async function main(argv = []) {
     console.error("  npm install -g npm@latest")
     return 1
   }
-  try {
-    npm(["whoami"])
-  } catch {
+  // Whether the account is logged in. `npm whoami` is run captured rather
+  // than through `npm()`, because `npm()` ends the process on a failure - so
+  // the guidance below was unreachable and the user saw only npm's raw
+  // error text.
+  const who = npmCaptured(["whoami"])
+  if (who.code !== 0) {
     console.error(red("not logged in to the npm registry."))
+    const said = who.out.trim().split("\n").filter(Boolean).slice(-2).join(" ")
+    if (said) console.error(dim(`  npm said: ${said}`))
     console.error("  npm login")
     return 1
   }
@@ -379,6 +420,11 @@ export async function main(argv = []) {
       console.error("  revoke it on npmjs.com and run this again.")
       return 1
     }
+    // What is being replaced, kept so the failure below can say how to put
+    // it back. npm cannot edit a configuration, and a revoke that is not
+    // followed by a create leaves the package with NO trusted publisher at
+    // all - strictly worse than before this command ran.
+    const previous = describe(config)
     const revoked = await npmWithOtp(["trust", "revoke", name, "--id", id, "-y"], state)
     if (revoked.code !== 0) {
       console.error(red("npm did not revoke the old configuration, so nothing was replaced."))
@@ -401,6 +447,21 @@ export async function main(argv = []) {
     )
     if (created.code !== 0) {
       console.error(red("npm did not create the replacement configuration."))
+      // The old configuration is gone by now. Say so plainly, and say what
+      // the old one was, so the package is not left with nothing and nobody
+      // knowing why.
+      console.error(
+        red("  The old configuration has already been revoked, so this package has no trusted publisher now."),
+      )
+      console.error(
+        dim(`  It was: repository ${previous.repository} · file ${previous.file} · no environment`),
+      )
+      console.error(dim("  Put it back with:"))
+      console.error(
+        dim(
+          `    npm trust github ${name} --file ${previous.file} --repo ${previous.repository} --allow-publish --allow-stage-publish -y`,
+        ),
+      )
       const detail = created.out.trim()
       if (detail) {
         console.error(dim("  npm said:"))
