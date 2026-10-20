@@ -22,8 +22,8 @@ import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
 
 /**
- * Which profile is active. In order: an explicit environment variable, the
- * marker the plugin writes into the project, then a marker inside the package.
+ * Which profile is active. In order: an explicit environment variable, then the
+ * marker the config hook writes into the project.
  * Returns null when nothing is set, and pruning then stays off rather than
  * guessing at thresholds.
  */
@@ -31,7 +31,6 @@ function activeProfileId(worktree: string): string | null {
   const candidates = [
     process.env.OPENCODE_HARNESS_PROFILE,
     join(worktree, ".space", "active"),
-    join(ROOT, "profiles", ".active"),
   ]
   for (const f of candidates) {
     if (!f) continue
@@ -46,6 +45,15 @@ function activeProfileId(worktree: string): string | null {
   }
   return null
 }
+
+/**
+ * What an old reasoning part is replaced with.
+ *
+ * Short, and it says what happened: the model should not go looking for the
+ * reasoning it can no longer see.
+ */
+const REASONING_STUB =
+  "[reasoning] dropped from context - it was from an earlier turn and is stale."
 
 interface StubStats {
   stubbed: number
@@ -76,7 +84,10 @@ function stub(part: any): string {
     const status = state.status ?? "done"
     let tail = ""
     const out = String(state.output ?? "")
-    const m = out.match(/(passed|failed|error|Error|ok|OK|\d+ (?:passed|failed))/g)
+    // Whole words only. The pattern used to match "ok" anywhere, so a command
+    // whose output contained "took 3 seconds" was reported as "ok" - a
+    // passing verdict that was never observed.
+    const m = out.match(/\b(?:\d+\s+(?:passed|failed)|passed|failed|error|ok)\b/gi)
     if (m && m.length) tail = `, ${m[m.length - 1]}`
     return `[${tool}] ${cmd} -> ${status}${tail} | full output was pruned from context; re-run the command if you need it`
   }
@@ -87,28 +98,63 @@ function stub(part: any): string {
   return `[${tool}] result pruned from context (${state.status ?? "done"}); re-run if you need it`
 }
 
-export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
-  let profile = null as ReturnType<typeof loadProfile> | null
-  try {
-    const id = activeProfileId(worktree)
-    if (id) profile = loadProfile(id)
-  } catch {
-    profile = null
+export const PrunePlugin: Plugin = async ({ worktree }) => {
+  // The profile is resolved on the FIRST TRANSFORM, not here.
+  //
+  // OpenCode builds the plugin factories before it runs the config hooks, and
+  // the config hook is what writes the marker file naming the active profile.
+  // Resolving here meant a fresh project had no marker yet, so pruning was
+  // off for that entire first session - and a project switched to another
+  // profile kept pruning with the previous one's thresholds for one more
+  // session.
+  //
+  // The hook is therefore always registered, and the decision to prune is made
+  // per request. Pruning is opt-in per profile: with no active profile, or a
+  // profile that does not enable it, nothing is touched.
+  type Resolved = {
+    profile: any
+    keepCalls: number
+    keepTurns: number
+    keepUsers: boolean
+    threshold: number
   }
-  if (!profile?.prune?.enabled) {
-    // Pruning is opt-in per profile. With no active profile we do nothing
-    // rather than guess at thresholds.
-    return {}
+  const DISABLED: Resolved = {
+    profile: null,
+    keepCalls: 0,
+    keepTurns: 0,
+    keepUsers: true,
+    threshold: 0,
   }
+  // Only a SUCCESSFUL lookup is cached. A lookup that found nothing is
+  // retried on the next request, so a project whose marker appears later
+  // still gets pruning.
+  let cached: Resolved | null = null
 
-  const keepCalls = profile.prune.keepRecentToolCalls ?? 6
-  const keepTurns = profile.prune.keepRecentTurns ?? 3
-  const keepUsers = profile.prune.keepUserMessages ?? true
-  const threshold = pruneThreshold(profile)
+  const resolve = (): Resolved => {
+    if (cached) return cached
+    let profile = null as ReturnType<typeof loadProfile> | null
+    try {
+      const id = activeProfileId(worktree)
+      if (id) profile = loadProfile(id)
+    } catch {
+      profile = null
+    }
+    if (!profile?.prune?.enabled) return DISABLED
+    cached = {
+      profile,
+      keepCalls: profile.prune.keepRecentToolCalls ?? 6,
+      keepTurns: profile.prune.keepRecentTurns ?? 3,
+      keepUsers: profile.prune.keepUserMessages ?? true,
+      threshold: pruneThreshold(profile),
+    }
+    return cached
+  }
 
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve()
+        if (!profile) return
         const messages = output.messages
         if (!Array.isArray(messages) || messages.length === 0) return
 
@@ -165,11 +211,25 @@ export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
                 stats.bytesAfter += size
                 stats.kept++
                 break
-              case "reasoning":
-                // Old reasoning is stale by definition and safe to drop.
-                stats.bytesAfter += Math.min(size, 200)
+              case "reasoning": {
+                // Old reasoning is stale by definition and safe to drop, and
+                // it IS dropped.
+                //
+                // The part used to keep its full text while the stats booked
+                // 200 bytes "after" for it. The reported saving therefore
+                // included bytes that were never removed - and reasoning is
+                // 15.6% of stored bytes, so the number was not a rounding
+                // error.
+                //
+                // The part keeps its shape: a reasoning part in the OpenCode
+                // part schema has no signature, so replacing its text is
+                // safe. A part that grew one would have to be removed rather
+                // than rewritten.
+                part.text = REASONING_STUB
+                stats.bytesAfter += sizeOf(part)
                 stats.stubbed++
                 break
+              }
               case "tool": {
                 // Only completed calls carry an output worth pruning. Pending
                 // and running states are small, and error states are usually
@@ -207,7 +267,7 @@ export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
 
         if (stats.stubbed > 0) {
           const saved = Math.max(0, stats.bytesBefore - stats.bytesAfter)
-          await logPrune(profile.id, {
+          await logPrune(worktree, profile.id, {
             ...stats,
             saved,
             threshold,
@@ -227,13 +287,20 @@ export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
 }
 
 async function logPrune(
+  worktree: string,
   profileId: string,
   stats: StubStats & {
     saved: number
     threshold: number
   },
 ) {
-  const dir = join(process.cwd(), ".space")
+  // The WORKTREE, not `process.cwd()`. Every other writer in this kit uses
+  // the worktree, and the plugin's worktree is the project. The process cwd
+  // is wherever opencode happened to be started from, which is often the
+  // user's home directory - so the log landed outside the project, in a
+  // directory no project-scoped tool looks at, and two projects sharing a cwd
+  // shared one log.
+  const dir = join(worktree, ".space")
   try {
     const { mkdir, appendFile } = await import("node:fs/promises")
     await mkdir(dir, { recursive: true })

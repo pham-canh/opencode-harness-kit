@@ -620,6 +620,32 @@ export function validate(p, path = "<memory>") {
       )
     }
   }
+  // The pruning knobs are limits, and a limit of zero or less is not a limit.
+  // `keepRecentTurns: -1` made the prunable span reach the last message,
+  // which is the one message the file's own invariants say never to touch.
+  if (p.prune) {
+    const prune = p.prune
+    if (prune.keepRecentToolCalls !== undefined) {
+      if (!Number.isInteger(prune.keepRecentToolCalls) || prune.keepRecentToolCalls < 1) {
+        throw new ProfileError(
+          `${where}: prune.keepRecentToolCalls must be an integer of at least 1`,
+        )
+      }
+    }
+    if (prune.keepRecentTurns !== undefined) {
+      if (!Number.isInteger(prune.keepRecentTurns) || prune.keepRecentTurns < 1) {
+        throw new ProfileError(
+          `${where}: prune.keepRecentTurns must be an integer of at least 1`,
+        )
+      }
+    }
+    if (prune.keepUserMessages !== undefined && typeof prune.keepUserMessages !== "boolean") {
+      throw new ProfileError(`${where}: prune.keepUserMessages must be a boolean`)
+    }
+    if (prune.enabled !== undefined && typeof prune.enabled !== "boolean") {
+      throw new ProfileError(`${where}: prune.enabled must be a boolean`)
+    }
+  }
   for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
     if (!LANE_NAMES.includes(role)) {
       throw new ProfileError(
