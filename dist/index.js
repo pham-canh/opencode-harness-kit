@@ -600,7 +600,7 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [join4(ROOT, "profiles")];
+  return [process.env.OPENCODE_HARNESS_PROFILES ?? join4(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {

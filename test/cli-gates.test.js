@@ -8,7 +8,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync, execFileSync } from "node:child_process"
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from "node:fs"
+import { cpSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -361,6 +361,79 @@ test("doctor --check-models fails when a shipped model is gone", () => {
     })
     assert.equal(ok.code, 0, ok.out)
     assert.match(ok.out, /still in the catalogue/)
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("refresh --all re-derives every profile against the live catalogue", () => {
+  // A free model is withdrawn in days, so a profile file goes stale in days
+  // too, and there is no way to notice except by looking at every profile.
+  //
+  // The profiles are COPIED first. The first version of this test refreshed
+  // the kit's own profiles, which rewrote twelve files in the repository the
+  // test was testing - and the suite went red for the next twenty minutes
+  // because the real profiles had a different context window.
+  const box = sandbox()
+  try {
+    const profiles = join(box.dir, "profiles")
+    cpSync(join(REPO, "profiles"), profiles, { recursive: true })
+
+    // A catalogue with a different context window, so every profile drifts.
+    const models = {}
+    for (const id of listProfileIds()) {
+      const p = loadProfile(id)
+      models[p.model] = {
+        limit: { context: 123456, output: 1000, input: 500 },
+        reasoning_options: [{ type: "effort", values: ["low", "high"] }],
+        temperature: true,
+        attachment: false,
+      }
+    }
+    const cat = join(box.dir, "cat.json")
+    writeFileSync(cat, JSON.stringify({ opencode: { models } }))
+    const r = run(box, ["refresh", "--all"], {
+      env: {
+        ...box.env,
+        OPENCODE_HARNESS_CATALOG_URL: `file://${cat}`,
+        OPENCODE_HARNESS_PROFILES: profiles,
+      },
+    })
+    assert.equal(r.code, 0, r.out)
+    assert.match(r.out, /refreshed/)
+
+    // The copy was rewritten...
+    const drifted = JSON.parse(readFileSync(join(profiles, "deepseek-v4.1-flash-free.json"), "utf8"))
+    assert.equal(drifted.limits.context, 123456, "the copy was not refreshed")
+    // ...and the kit's own profiles were not.
+    const original = JSON.parse(readFileSync(join(REPO, "profiles", "deepseek-v4.1-flash-free.json"), "utf8"))
+    assert.notEqual(
+      original.limits.context,
+      123456,
+      "the test rewrote the kit's own profiles",
+    )
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("the doctor records a withdrawal, so the day it broke is known", () => {
+  // A model is withdrawn without a rename and without a notice, so the only
+  // way to know WHEN a lane started failing is to have been looking.
+  const box = sandbox()
+  try {
+    const cat = join(box.dir, "cat.json")
+    writeFileSync(cat, JSON.stringify({ opencode: { models: {} } }))
+    const r = run(box, ["doctor", "--check-models"], {
+      env: { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${cat}` },
+    })
+    assert.notEqual(r.code, 0, "a withdrawn model must fail the check")
+    const log = join(box.dir, "withdrawn.jsonl")
+    assert.ok(existsSync(log), `the withdrawal was not recorded: ${log}`)
+    const entry = JSON.parse(readFileSync(log, "utf8").trim().split("\n")[0])
+    assert.ok(entry.t, "the record says when")
+    assert.ok(entry.model, "the record says which model")
+    assert.ok(Array.isArray(entry.profiles), "the record says which profiles used it")
   } finally {
     box.cleanup()
   }

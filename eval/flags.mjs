@@ -49,18 +49,31 @@ export function countFlag(name, argv = process.argv.slice(2)) {
 /**
  * The raw text of a flag, or undefined when the flag was not given.
  *
+ * The LAST occurrence wins, so an argument appended to an npm script
+ * overrides the one in the script: `npm run measure:prune -- --sessions 1`
+ * has to mean one session, not the sixty the script says.
+ *
  * @param {string} name the flag, including the dashes
  * @param {string[]} argv
  * @returns {string | undefined}
  */
 function rawValue(name, argv) {
-  const i = argv.indexOf(name)
-  if (i >= 0) {
-    if (argv[i + 1] === undefined) throw new Error(`${name} needs a value`)
-    return argv[i + 1]
+  let value
+  let seen = false
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === name) {
+      if (argv[i + 1] === undefined) throw new Error(`${name} needs a value`)
+      value = argv[i + 1]
+      seen = true
+      i++
+      continue
+    }
+    if (argv[i].startsWith(`${name}=`)) {
+      value = argv[i].slice(name.length + 1)
+      seen = true
+    }
   }
-  const inline = argv.find((a) => a.startsWith(`${name}=`))
-  return inline === undefined ? undefined : inline.slice(name.length + 1)
+  return seen ? value : undefined
 }
 
 /**
@@ -71,8 +84,5 @@ function rawValue(name, argv) {
  * @returns {string | undefined}
  */
 export function stringFlag(name, argv = process.argv.slice(2)) {
-  const i = argv.indexOf(name)
-  if (i >= 0) return argv[i + 1]
-  const inline = argv.find((a) => a.startsWith(`${name}=`))
-  return inline === undefined ? undefined : inline.slice(name.length + 1)
+  return rawValue(name, argv)
 }

@@ -1,0 +1,85 @@
+# The measurements, run on a schedule.
+#
+# The numbers in eval/RESULTS.md were a moment in time. The free tier turns
+# over in days, so the honest way to keep them true is to keep measuring.
+#
+# Two jobs, and they need different things:
+#
+#   measure  - reads the install database. Needs a machine that has run
+#              opencode. On CI there is no install, so this is the job that
+#              needs a SELF-HOSTED runner, and it is opt-in.
+#   ab       - runs real agents against a real subject. It costs model quota
+#              and it takes about an hour, so it is a nightly job, not a
+#              per-push one.
+#
+# The offline gate - build, typecheck, tests - is in ci.yml and runs on every
+# push. This workflow is the slow one that checks the claim the kit makes
+# about itself.
+
+name: measure.yml
+
+on:
+  schedule:
+    # 03:17 UTC. Not on the hour: every scheduled workflow in the world
+    # fires at :00, and the free tier is the busiest thing on the internet
+    # at midnight.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      reps:
+        description: "reps per arm for the A/B"
+        required: false
+        default: "4"
+
+jobs:
+  # The offline half: the schemas, the flags, the arithmetic, and the
+  # measurements that need no database and no model.
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.x"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      # The A/B harness itself, with a fake model: the point is that the
+      # harness runs, that the premises hold, and that the grader resolves a
+      # citation against a real tree.
+      - name: the A/B harness runs and its premises hold
+        run: |
+          node eval/prepare.mjs --repo . --ref HEAD --name ci
+          node eval/premises.mjs --target "$RUNNER_TEMP/ci" --suite eval/tasks-self.json
+      - name: the pruner measurement runs (no install here, so it measures nothing)
+        run: node eval/measure-prune.mjs --sessions 1 --min-saved 0
+
+  # The slow half. It needs a provider, so it is opt-in: the repository's
+  # secrets are not available to a workflow that a fork can trigger, and a
+  # scheduled run on a fork would fail on the missing key.
+  ab:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.x"
+      - run: npm ci --no-audit --no-fund
+      - name: the A/B, against this repository at a pinned commit
+        env:
+          # Whatever the provider needs. On a runner with no provider the
+          # step fails, and that is correct: an A/B with no model is not a
+          # measurement.
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          node eval/prepare.mjs --repo . --ref HEAD --name ab
+          node eval/ab.mjs \
+            --target "$RUNNER_TEMP/ab" \
+            --suite eval/tasks-self.json \
+            --reps "${{ github.event.inputs.reps || 4 }}" \
+            --timeout 600
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ab-streams
+          path: "${{ runner.temp }}/ab"
+          if-no-files-found: ignore
