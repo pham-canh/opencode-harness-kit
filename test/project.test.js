@@ -153,3 +153,68 @@ test("the telemetry lands in the project", async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("the guard scopes to the project, not to the filesystem root", async () => {
+  // The worktree is "/" in a project that is not a git repository, and the
+  // scope check was against it - and "/" contains every path, so it was not a
+  // scope check at all. A write outside the project has to be blocked.
+  const dir = mkdtempSync(join(tmpdir(), "ock-nogit-guard-"))
+  try {
+    const { HarnessPlugin } = await import(DIST)
+    const hooks = await HarnessPlugin(ctx("/", dir), { only: ["guard"], profile: "fleet-safe" })
+
+    // A file inside the project is fine.
+    await hooks["tool.execute.before"](
+      { tool: "write", sessionID: "s", callID: "c" },
+      { args: { filePath: join(dir, "src", "a.ts") } },
+    )
+
+    // A file outside it is not, and the message says why.
+    await assert.rejects(
+      () =>
+        hooks["tool.execute.before"](
+          { tool: "write", sessionID: "s", callID: "c" },
+          { args: { filePath: "/etc/hosts" } },
+        ),
+      /outside the project/,
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("the router records a spent route where the effort hook looks for it", async () => {
+  // The router WROTE the health file under the worktree while the effort
+  // hook READ it from the worktree, so in a project that is not a git
+  // repository the router recorded a spent route the effort hook never saw -
+  // and a lane the router had given up on was put back onto it.
+  const dir = mkdtempSync(join(tmpdir(), "ock-nogit-router-"))
+  try {
+    const { HarnessPlugin } = await import(DIST)
+    const hooks = await HarnessPlugin(ctx("/", dir), { only: ["router"], profile: "fleet-safe" })
+
+    await hooks.event({
+      event: {
+        type: "error",
+        properties: {
+          modelID: "deepseek-v4.1-flash-free",
+          error: { name: "FreeUsageLimitError", message: "FreeUsageLimitError: daily limit" },
+        },
+      },
+    })
+
+    const health = join(dir, ".space", "health.json")
+    assert.ok(existsSync(health), `the spent route was not recorded in the project: ${health}`)
+    const written = JSON.parse(readFileSync(health, "utf8"))
+    assert.ok(written.unhealthy["opencode/deepseek-v4.1-flash-free"], "the route was not recorded")
+
+    // And the effort hook, which reads the same file, sees it.
+    const { unhealthyModels } = await import("../src/health.js")
+    assert.ok(
+      unhealthyModels(dir).has("deepseek-v4.1-flash-free"),
+      "the effort hook cannot see the spent route",
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

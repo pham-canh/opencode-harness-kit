@@ -24,6 +24,7 @@ import { join } from "node:path"
 import { safeStringify } from "./safe.js"
 import { projectRoot } from "./project.js"
 import { utilityModel } from "./config.js"
+import { readHealth, writeHealth, unhealthyModels } from "./health.js"
 import {
   loadProfile,
   pruneThreshold,
@@ -34,55 +35,6 @@ import {
   resolveLaneModel,
   resolveRoles,
 } from "./profile.js"
-
-interface Health {
-  unhealthy: Record<string, { at: string; reason: string }>
-  active?: string
-}
-
-function healthPath(worktree: string): string {
-  return join(worktree, ".space", "health.json")
-}
-
-function readHealth(worktree: string): Health {
-  try {
-    return JSON.parse(readFileSync(healthPath(worktree), "utf8"))
-  } catch {
-    return { unhealthy: {} }
-  }
-}
-
-function writeHealth(worktree: string, h: Health) {
-  try {
-    mkdirSync(join(worktree, ".space"), { recursive: true })
-    writeFileSync(healthPath(worktree), JSON.stringify(h, null, 2))
-  } catch {
-    // Best effort.
-  }
-}
-
-/**
- * The models a previous session found spent.
- *
- * Exported so the effort hook resolves a lane's variant against the model the
- * lane actually ended up on. A lane that failed over from a model with a
- * `none` effort level to one without levels has to lose its variant, or the
- * config asks for an effort the new model does not publish.
- *
- * @param {string} worktree
- * @returns {Set<string>}
- */
-export function unhealthyModels(worktree: string): Set<string> {
-  const health = readHealth(worktree)
-  // The health file is keyed by the qualified route, `opencode/<model>`. The
-  // lane chains list bare model ids, so the prefix is dropped here. Comparing
-  // the two directly would never match, and a spent route would look healthy.
-  const out = new Set<string>()
-  for (const key of Object.keys(health.unhealthy ?? {})) {
-    out.add(key.includes("/") ? key.slice(key.indexOf("/") + 1) : key)
-  }
-  return out
-}
 
 /** Patterns that mean "this route is spent", not "this request was bad". */
 const SPENT = [
