@@ -369,6 +369,9 @@ Every command that can fail says so in its exit code, so a script can tell
 "the kit says no" from "the kit broke".
 [`docs/EXIT-CODES.md`](docs/EXIT-CODES.md) lists them.
 
+`doctor`, `show` and `lanes` take `--json` and print nothing else, so a
+script gets the answer without parsing prose.
+
 `oc-harness <anything-else>` now exits non-zero with the list of real commands,
 instead of printing help and reporting success.
 
