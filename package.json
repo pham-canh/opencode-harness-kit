@@ -53,6 +53,7 @@
     "check": "npm run test:all && npm run test:install && node bin/oc-harness.mjs verify",
     "check:online": "npm run check && node bin/oc-harness.mjs doctor",
     "baseline": "node bin/baseline.mjs",
+    "release:trust": "node tools/setup-trusted-publishing.mjs",
     "eval": "node eval/run.mjs",
     "measure": "node eval/measure-install.mjs",
     "measure:check": "node eval/measure-install.mjs --min-narrow 45 --min-ctx-drop 20",

@@ -85,21 +85,6 @@ Two ways, and the job picks whichever is available:
 **Trusted publishing (OIDC)** — the default, and what the repository is set up
 for. There is no npm secret in the repository at all: npm exchanges the
 runner's OIDC identity for a short-lived publish token scoped to the workflow.
-The package names the trusted publisher on npmjs.com:
-
-> npmjs.com → Packages → `opencode-harness-kit` → Settings → Trusted
-> publishing → GitHub Actions
->
-> | field | value |
-> |---|---|
-> | Organization or user | `pham-canh` |
-> | Repository | `space-harness` |
-> | Workflow filename | `ci.yml` (the filename only, not a path) |
-> | Environment name | *(empty)* |
-> | Allowed actions | `npm publish` |
-
-A newly created trusted publisher has to complete its first successful
-publish **within 2 days**, or it expires and has to be created again.
 
 **A token** — the fallback, for when OIDC is not set up. Set the `NPM_TOKEN`
 repository secret to a granular token scoped to `opencode-harness-kit` with
@@ -113,6 +98,60 @@ gh secret set NPM_TOKEN --repo pham-canh/space-harness
 A token needs write access *on the package*, not on the account. npm answers
 **404** for a package the token cannot touch, which reads like a missing
 package rather than a missing permission.
+
+### Configuring the trusted publisher
+
+npm's web form has four fields and **npm does not validate what you type into
+it** — a typo is discovered at publish time, and npm reports it as
+
+```
+OIDC token exchange error - package not found
+```
+
+which reads like a missing package. The package is there; the configuration
+is not matching, and npm does not say which field.
+
+So the configuration is set from the command line instead, where it is
+compared against what the workflow will actually present:
+
+```bash
+npm install -g npm@latest      # npm trust needs 11.15.0 or later
+npm login                       # 2FA has to be enabled on the account
+npm run release:trust           # check, and replace it if it is wrong
+```
+
+`npm run release:trust` reads what npm has stored, compares it against the
+workflow's own identity, and replaces it when it differs. npm allows exactly
+one configuration per package and cannot edit it, so replacing means revoking
+first — the script does that.
+
+The configuration it writes is:
+
+| field | value |
+|---|---|
+| Organization or user | `pham-canh` |
+| Repository | `space-harness` |
+| Workflow filename | `ci.yml` (the filename only, not a path) |
+| Environment name | **empty** |
+| Allowed actions | `npm publish` and `npm stage publish` |
+
+**The environment name is the field that catches people.** GitHub only puts an
+`environment` claim in the OIDC token when the job declares one. This
+workflow declares none, so the claim is absent — and a configuration that
+names an environment can never match a token that does not carry one.
+
+The workflow is the one in `.github/workflows/ci.yml`, and the claims it
+presents are printed by the publish job before it tries:
+
+```
+repository    pham-canh/space-harness
+workflow file ci.yml
+environment   (absent) - the trusted publisher must name NO environment
+owner         pham-canh
+```
+
+A newly created trusted publisher has to complete its first successful
+publish **within 2 days**, or it expires and has to be created again.
 
 The GitHub release is written by hand from the CHANGELOG entry:
 
