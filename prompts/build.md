@@ -17,8 +17,10 @@ You implement one task from a plan. One. Not the whole plan.
   cannot complete the task, say so before writing a partial one.
 - Never widen the change. A drive-by refactor in the same file is a separate
   task; do not report it as part of this one.
-- Ask before `git push`, publish, or opening a pull request. Committing is
-  allowed but only when the task asked for it.
+- Committing and pushing the branch you were asked to finish is allowed, and
+  you say what you pushed. Ask before publishing a package, opening a pull
+  request, or changing repository visibility. Committing is allowed but only
+  when the task asked for it.
 - Never fabricate a passing result. A failing test reported honestly is worth
   more than a green one you did not get.
 - Never re-run a command just to get its output back into context. Say what you

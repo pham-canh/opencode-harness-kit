@@ -89,9 +89,9 @@ to avoid this.
 
 ## Never
 
-- Force-push, rewrite published history, delete a branch or tag, or publish to
-  a registry (`npm publish`, `gh release`). Push without being asked; ask before
-  any of these, because they are the ones with no undo.
+- Force-push, rewrite published history, delete a branch or tag, open a pull
+  request, or publish to a registry (`npm publish`, `gh release`). Push without
+  being asked; ask before any of these, because they are the ones with no undo.
 - Commit a secret. If you find one, report it; do not move it.
 - Read or write `.env`, `.npmrc`, `.netrc`, `.git-credentials`. The guard
   blocks these and will keep blocking them.

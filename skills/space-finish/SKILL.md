@@ -37,8 +37,12 @@ over an unreviewed or blocked change is the failure this skill exists to stop.
 
 ## The publish boundary
 
-Publishing needs human approval. Ask before `git push`, opening a pull request,
-publishing a package, or changing repository visibility, even if the task
+Pushing the branch you were asked to finish is not one of the decisions that
+need a human: commit it, push it, and say what you pushed.
+
+Everything outward-facing past the push is. Ask before publishing a package,
+opening a pull request, changing repository visibility, force-pushing,
+rewriting published history, or deleting a branch or tag - even if the task
 seems to imply it. Permissions default to ask so opencode prompts first, but
 the boundary is yours to hold, not only the hook's.
 
