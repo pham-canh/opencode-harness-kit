@@ -122,6 +122,44 @@ jobs:
             # asking it here would fail a publish that would have worked.
             echo "no NPM_TOKEN: publishing through trusted publishing (OIDC)"
           fi
+      # npm swaps a failed OIDC exchange for a bare ENEEDAUTH, which says
+      # "log in" and nothing else. The registry knows exactly why the exchange
+      # was refused - a workflow filename that does not match, a repository
+      # that does not match, a configuration that has not had its first
+      # publish - so the exchange is made here, once, to read that reason.
+      # The publish below still goes through npm's own exchange, because that
+      # is the path that generates the provenance attestation automatically.
+      - name: diagnose the OIDC exchange
+        if: ${{ env.NODE_AUTH_TOKEN == '' }}
+        run: |
+          set -uo pipefail
+          echo "npm version: $(npm --version)"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::The runner did not provide ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN. The publish job needs the id-token: write permission, and the environment is GitHub Actions."
+            exit 1
+          fi
+          id_token=$(curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
+            -H "Accept: application/json" -H "Content-Type: application/json" -d '{}' \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).value||"")}catch{}})')
+          if [ -z "$id_token" ]; then
+            echo "::error::The runner would not issue an OIDC token for the npm audience."
+            exit 1
+          fi
+          echo "the runner issued an OIDC token; asking npm to exchange it:"
+          body=$(curl -sS -X POST \
+            -H "Authorization: Bearer ${id_token}" \
+            -H "Accept: application/json" -H "Content-Type: application/json" -d '{}' \
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/opencode-harness-kit")
+          echo "$body" | node -e '
+            let s = ""
+            process.stdin.on("data", d => s += d).on("end", () => {
+              let j = {}
+              try { j = JSON.parse(s) } catch {}
+              if (j.token) { console.log("the exchange SUCCEEDED"); return }
+              console.log("::error::the registry refused the OIDC exchange: " + (j.message || s))
+            })'
+          echo "$body" | grep -q '"token"' || exit 1
       # prepublishOnly rebuilds dist, so the install above is what provides
       # the esbuild binary it runs with.
       - name: publish
