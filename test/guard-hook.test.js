@@ -22,6 +22,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { tmpdir } from "node:os"
+import { mkdtemp } from "./helpers.mjs"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -53,7 +54,7 @@ function ctx(worktree) {
 }
 
 function workspace() {
-  const dir = join(tmpdir(), `ock-guard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  const dir = mkdtemp("ock-guard-")
   mkdirSync(dir, { recursive: true })
   return dir
 }

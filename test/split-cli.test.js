@@ -17,12 +17,13 @@ import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseJsonc } from "../src/profile.js"
+import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
 
 function sandbox() {
-  const dir = mkdtempSync(join(tmpdir(), "ock-fleet-"))
+  const dir = mkdtemp("ock-fleet-")
   return {
     dir,
     config: join(dir, "opencode.jsonc"),
@@ -36,7 +37,14 @@ function run(box, args) {
   // always wrong: no GLOBAL.md, no prompts/, no skills. Asserting on its exit
   // code here would be testing the sandbox, not the fleet. What matters is
   // whether it reported config drift, so the exit code is deliberately ignored.
-  const r = spawnSync("node", [CLI, ...args], { env: box.env, encoding: "utf8" })
+  // The hook is not installed: a test that writes an executable git hook
+  // into the repository it is testing is a test that changes the repository.
+  // The command runs in the sandbox, which is not a git repository anyway.
+  const r = spawnSync("node", [CLI, ...args], {
+    env: { ...box.env, OC_HARNESS_NO_HOOK: "1" },
+    encoding: "utf8",
+    cwd: box.dir,
+  })
   return `${r.stdout ?? ""}${r.stderr ?? ""}`
 }
 

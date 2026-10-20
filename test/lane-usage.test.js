@@ -20,12 +20,13 @@ import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { findTelemetryFile, findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
+import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
 
 function project(telemetry) {
-  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-"))
+  const dir = mkdtemp("ock-lanes-")
   mkdirSync(join(dir, ".space"), { recursive: true })
   writeFileSync(join(dir, ".space", "telemetry.jsonl"), telemetry)
   return dir
@@ -109,7 +110,7 @@ test("a rotated telemetry file is still read", () => {
   // so a rotation silently threw the history away and every lane reported
   // "never used" - on the number that decides whether the fleet stays at ten
   // lanes.
-  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-rotate-"))
+  const dir = mkdtemp("ock-lanes-rotate-")
   try {
     const space = join(dir, ".space")
     mkdirSync(space, { recursive: true })
@@ -140,7 +141,7 @@ test("a rotated telemetry file is still read", () => {
 })
 
 test("a project with no telemetry reports no calls rather than failing", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-empty-"))
+  const dir = mkdtemp("ock-lanes-empty-")
   try {
     assert.equal(findTelemetryFile(dir), null)
     const { lanes, records, requests } = readLaneUsage(null)
@@ -156,7 +157,7 @@ test("a record with no lane is reported rather than silently dropped", () => {
   // It cannot be attributed to a lane, so it is not counted - and it is
   // counted as ignored, so a malformed file is visible in the tally rather
   // than quietly shrinking the numbers.
-  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-nolane-"))
+  const dir = mkdtemp("ock-lanes-nolane-")
   try {
     mkdirSync(join(dir, ".space"), { recursive: true })
     writeFileSync(
@@ -176,7 +177,7 @@ test("a record with no lane is reported rather than silently dropped", () => {
 })
 
 test("`oc-harness lanes` counts a call once, from a subdirectory", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-cli-"))
+  const dir = mkdtemp("ock-lanes-cli-")
   const configDir = join(dir, "config")
   try {
     mkdirSync(join(dir, ".space"), { recursive: true })

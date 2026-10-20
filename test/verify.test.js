@@ -10,10 +10,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { extractRefs, resolveInTarget, gradeAnswer, gradeMutation } from "../eval/verify.mjs"
+import { mkdtemp } from "./helpers.mjs"
 
 // A three-file fixture shaped like the snapshots the suite runs against.
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "verify-test-"))
+  const root = mkdtemp("verify-test-")
   mkdirSync(join(root, "agent"), { recursive: true })
   const score = [
     "def band(total):", // 1
@@ -39,7 +40,7 @@ test("extractRefs finds the citation shapes an agent actually writes", () => {
 })
 
 test("gradeMutation requires a repeated edit in every place, not just one", () => {
-  const root = mkdtempSync(join(tmpdir(), "verify-mut-"))
+  const root = mkdtemp("verify-mut-")
   mkdirSync(join(root, "agent"), { recursive: true })
   const write = (body) => writeFileSync(join(root, "agent/rubric.py"), body)
 
@@ -64,7 +65,7 @@ test("gradeMutation requires a repeated edit in every place, not just one", () =
 })
 
 test("gradeMutation fails when the task is only half done", () => {
-  const root = mkdtempSync(join(tmpdir(), "verify-mut2-"))
+  const root = mkdtemp("verify-mut2-")
   mkdirSync(join(root, "agent"), { recursive: true })
   writeFileSync(join(root, "agent/solana.ts"), 'const A = "api.mainnet-beta.solana.com"\n')
   const spec = { file: "agent/solana.ts", mustContain: ["devnet"], mustNotContain: ["mainnet-beta"] }

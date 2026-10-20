@@ -39,16 +39,22 @@ import {
 } from "../src/profile.js"
 import { existsSync, readdirSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import {
   generateConfig,
   BASH_ALLOWLIST,
   BASH_DENYLIST,
   GLOBAL_INSTRUCTIONS,
+  globalInstructionsPath,
 } from "../src/config.js"
 import { planEffort } from "../src/effort.js"
+import { mkdtemp } from "./helpers.mjs"
 
-const ROOT = new URL("..", import.meta.url).pathname
+// fileURLToPath, not `.pathname`: on Windows a URL pathname is
+// "/C:/Users/...", which is not a path any fs call understands. The kit
+// claims Windows support, and the other test files already use this.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 const cfg = (id) => parseGenerated(generateConfig(loadProfile(id)))
 
@@ -884,7 +890,12 @@ test("the primary lanes may delegate, and the read-only ones may not", () => {
 
 test("instructions point at a file the installer creates", () => {
   const c = cfg("fleet-safe")
-  assert.deepEqual(c.instructions, [GLOBAL_INSTRUCTIONS])
+  // The FUNCTION, not the constant. The constant says "~/.config/opencode",
+  // and the function says where the config directory actually is - so a
+  // developer who exports OPENCODE_CONFIG_DIR, which is very common for
+  // opencode users, got a red suite for a reason that had nothing to do with
+  // the code.
+  assert.deepEqual(c.instructions, [globalInstructionsPath()])
   assert.ok(
     existsSync(join(ROOT, "GLOBAL.md")),
     "the compiler points at GLOBAL.md, so the repo must ship one",
@@ -996,7 +1007,7 @@ test("the generated config round-trips through parseJsonc", () => {
 })
 
 test("profileIdFromConfig reads a config carrying comments and trailing commas", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-jsonc-"))
+  const dir = mkdtemp("oc-jsonc-")
   const file = join(dir, "opencode.jsonc")
   writeFileSync(
     file,
