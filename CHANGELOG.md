@@ -14,10 +14,12 @@ is not happening.
 
 ## [Unreleased]
 
-## [0.3.3] — 2026-10-20
+## [0.3.4] — 2026-10-20
 
-> 0.3.2 was never published: it carried the fix below, but the publish it
-> needed had not been set up yet. It is folded into this release.
+> 0.3.2 and 0.3.3 were never published. 0.3.2 carried the fix below but the
+> publish path it needed was not set up yet; 0.3.3 was **staged** by a
+> diagnostic that turned out to have side effects, and a staged version cannot
+> be published over directly. Both are folded into this release.
 
 ### Added
 
@@ -292,8 +294,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.3...HEAD
-[0.3.3]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.3
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.4
 [0.3.1]: https://github.com/pham-canh/space-harness/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/pham-canh/space-harness/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pham-canh/space-harness/compare/v0.2.0...v0.2.1
