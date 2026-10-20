@@ -222,10 +222,37 @@ improvement from a NULL average.
 - **`eval/measure-prune.mjs`.** The attributable measurement of the pruner,
   described above.
 
-- **The A/B suite is reproducible.** The old one ran against
-  `lablab-harness@8a674f5`, which is not public. A result nobody can check is
-  not a result. The new suite runs against the kit's own tree at a pinned
-  commit, so `git clone && git checkout <sha>` reproduces it exactly.
+- **The A/B suite is reproducible, and it has been run.** The old one ran
+  against `lablab-harness@8a674f5`, which is not public. A result nobody can
+  check is not a result. The new suite runs against the kit's own tree at a
+  pinned commit, so `git clone && git checkout <sha>` reproduces it exactly.
+
+  Ten reps per arm, 120 agent runs, and the result is not flattering:
+
+  | metric (median) | kit on | kit off |
+  |---|---|---|
+  | **correct** | **52/60** | **59/59** |
+  | tool calls | 11.5 | 3 |
+  | input tokens | 51,449 | 4,551 |
+  | final context | 39,603 | 10,855 |
+  | wall seconds | 43.6 | 32.5 |
+  | paths written outside the target | 0 | 0 |
+
+  **On a task that fits in one read, the kit is a cost.** Its instructions
+  cost eleven times the input tokens and four times the tool calls, the run
+  takes a third longer, and the answers are worse. The rule that says *locate
+  before you read* is a waste on a one-file question, and the tool counts show
+  it. The two edit tasks are a tie at 10/10, and the guard stopped no writes
+  in either arm.
+
+  The value the kit does have is in long sessions - the pruner removes 80.5%
+  of the context across real ones - and in process, which a grader that
+  counts correct answers cannot see. Whether it is worth it depends on
+  whether the work is long. **A repo of one-file lookups should not install
+  this.**
+
+  The full table, and what it does not establish, is in
+  `eval/RESULTS.md`.
 
 ### Security
 
