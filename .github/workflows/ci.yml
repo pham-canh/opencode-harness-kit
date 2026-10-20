@@ -122,79 +122,28 @@ jobs:
             # asking it here would fail a publish that would have worked.
             echo "no NPM_TOKEN: publishing through trusted publishing (OIDC)"
           fi
-      # npm swaps a failed OIDC exchange for a bare ENEEDAUTH, which says
-      # "log in" and nothing else. The registry knows exactly why the exchange
-      # was refused - a workflow filename that does not match, a repository
-      # that does not match, a configuration that has not had its first
-      # publish - so the exchange is made here, once, to read that reason.
-      # The publish below still goes through npm's own exchange, because that
-      # is the path that generates the provenance attestation automatically.
-      - name: diagnose the OIDC exchange
-        if: ${{ env.NODE_AUTH_TOKEN == '' }}
-        run: |
-          set -uo pipefail
-          echo "npm version: $(npm --version)"
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-            echo "::error::The runner did not provide ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN. The publish job needs the id-token: write permission, and the environment is GitHub Actions."
-            exit 1
-          fi
-          # The URL the runner hands over already carries an audience, and
-          # appending a second one does not replace it - so the audience is
-          # SET, not appended, and the URL is printed so the difference is
-          # visible.
-          echo "runner id-token URL: ${ACTIONS_ID_TOKEN_REQUEST_URL}"
-          id_token=$(node -e '
-            const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL)
-            url.searchParams.set("audience", "npm:registry.npmjs.org")
-            process.stdout.write(url.href)
-          ' | xargs -I{} curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "{}" -H "Accept: application/json" -H "Content-Type: application/json" -d '{}' \
-            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).value||"")}catch{}})')
-          if [ -z "$id_token" ]; then
-            echo "::error::The runner would not issue an OIDC token for the npm audience."
-            exit 1
-          fi
-          # The claims are what the registry compares the trusted publisher
-          # configuration against. Printing them turns "unauthorized" into
-          # "you entered this instead of that".
-          echo "$id_token" | node -e '
-            let s = ""
-            process.stdin.on("data", d => s += d).on("end", () => {
-              try {
-                const claims = JSON.parse(Buffer.from(s.split(".")[1], "base64url").toString())
-                for (const k of ["aud", "repository", "repository_owner", "workflow", "workflow_ref", "environment", "ref", "event_name"]) {
-                  if (claims[k] !== undefined) console.log("  " + k + ": " + claims[k])
-                }
-              } catch (e) { console.log("  could not read the claims: " + e.message) }
-            })'
-          echo "the runner issued an OIDC token; asking npm to exchange it:"
-          body=$(curl -sS -X POST \
-            -H "Authorization: Bearer ${id_token}" \
-            -H "Accept: application/json" -H "Content-Type: application/json" -d '{}' \
-            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/opencode-harness-kit")
-          echo "$body" | node -e '
-            let s = ""
-            process.stdin.on("data", d => s += d).on("end", () => {
-              let j = {}
-              try { j = JSON.parse(s) } catch {}
-              if (j.token) { console.log("the exchange SUCCEEDED"); return }
-              console.log("::error::the registry refused the OIDC exchange: " + (j.message || s))
-            })'
-          echo "$body" | grep -q '"token"' || exit 1
       # prepublishOnly rebuilds dist, so the install above is what provides
       # the esbuild binary it runs with.
       - name: publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # npm swallows the reason a failed OIDC exchange was refused and
+          # reports a bare ENEEDAUTH. The reason is logged at verbose level, so
+          # the publish is run at verbose level and its own oidc lines are
+          # pulled out of the log afterwards.
+          npm_config_loglevel: verbose
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # Provenance is generated automatically under trusted publishing, so
           # the flag is only needed on the token path.
           args=(--access public)
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
             args+=(--provenance)
           fi
-          if ! npm publish "${args[@]}"; then
-            echo "::error::npm publish failed. With no NPM_TOKEN this is trusted publishing: check that npmjs.com lists this repository and workflow (ci.yml) as a trusted publisher, that the workflow name matches exactly, and that the config has had its first successful publish within 2 days. With a token it is usually a token without WRITE access to the opencode-harness-kit package - npm answers 404 for a package the token cannot touch, which reads like a missing package."
-            exit 1
+          npm publish "${args[@]}" > /tmp/publish.log 2>&1
+          code=$?
+          grep -E "oidc|oidc/token|trust|ENOENT|E401|E403|E404|ENEEDAUTH|not authorized" /tmp/publish.log || true
+          if [ $code -ne 0 ]; then
+            echo "::error::npm publish failed (exit $code). With no NPM_TOKEN this is trusted publishing: check that npmjs.com lists this repository and workflow (ci.yml) as a trusted publisher, that the workflow name matches exactly, that the repository matches, and that the configuration has had its first successful publish within 2 days. With a token it is usually a token without WRITE access to the opencode-harness-kit package - npm answers 404 for a package the token cannot touch, which reads like a missing package."
+            exit $code
           fi
