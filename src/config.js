@@ -315,12 +315,12 @@ export function generateConfig(p, opts = {}) {
 
     agent,
 
-    // The router plugin reads this at startup to know which fallback queue to
-    // walk, and it is also how a profile stays identifiable after the config
-    // has been hand-edited.
+    // How a profile stays identifiable after the config has been hand-edited.
+    // The fallback queue is NOT written here: the router reads it straight
+    // from the profile file, and a copy of the first id in a key nothing
+    // reads is a second source of truth that can only drift.
     harness: {
       profile: p.id,
-      ...(p.fallback?.length ? { fallback: p.fallback[0] } : {}),
       threshold: pruneThreshold(p, { unhealthy }),
     },
   }

@@ -139,13 +139,15 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
         if (health.unhealthy?.[baseKey]) {
           const queue = [id, ...(profile.fallback ?? [])]
           for (const candidate of queue) {
-            if (health.unhealthy?.[`opencode/${candidate}`]) continue
             let fallback
             try {
               fallback = loadProfile(candidate)
             } catch {
               continue
             }
+            // The health file is keyed by MODEL, and a fleet's profile id is
+            // not its model - so the check has to be against the model's own
+            // key. Checking the id was a check that could never fire.
             const key = `opencode/${fallback.model}`
             if (health.unhealthy?.[key]) continue
             const fleet = isFleet(profile)

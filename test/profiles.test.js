@@ -28,6 +28,7 @@ import {
   validate,
   modelsInPlay,
   effectiveRetention,
+  retentionSeverity,
   roleSplitModels,
   inputCap,
   parseJsonc,
@@ -530,10 +531,22 @@ test("modelsInPlay and effectiveRetention see past the base model", () => {
   assert.equal(plain.retention, "retained")
 })
 
+test("an unknown retention is the worst of the known levels", () => {
+  // `retentionAllowed` refuses `unknown` outright - a lane that would run on
+  // a model nobody has stated the terms of is worse than a lane that runs on
+  // a worse model with known terms. The severity table used to rank it as
+  // MILDER than `may-train`, so a profile with an unknown-retention model in
+  // it was reported as safer than one with a training provider.
+  assert.ok(
+    retentionSeverity("unknown") > retentionSeverity("may-train"),
+    "unknown has to be worse than may-train",
+  )
+  assert.ok(retentionSeverity("may-train") > retentionSeverity("retained"))
+  assert.ok(retentionSeverity("retained") > retentionSeverity("zero-retention"))
+  assert.equal(retentionSeverity("not-a-level"), -1)
+})
+
 test("effectiveRetention names the MODEL responsible for the level", () => {
-  // `worst` used to be a retention class on one path and a model id on the
-  // other, and the header prints it as a model name. A fleet that resolved to
-  // a `retained` lane said "but retained makes the whole file retained".
   const all = effectiveRetention(loadProfile("fleet-all"))
   assert.equal(all.retention, "may-train")
   assert.ok(

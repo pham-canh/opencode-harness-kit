@@ -101,7 +101,7 @@ export function planEffort(profileId, opts = {}) {
  *
  * @param {Config} config
  * @param {EffortResult} result
- * @param {{ fallbackProfileId?: string, sessionModel?: string }} [opts]
+ * @param {{ sessionModel?: string }} [opts]
  * @returns {Config}
  */
 export function applyEffort(config, result, opts = {}) {
@@ -139,7 +139,6 @@ export function applyEffort(config, result, opts = {}) {
   cfg.harness = {
     ...(cfg.harness ?? {}),
     profile: result.profileId,
-    ...(opts.fallbackProfileId ? { fallback: opts.fallbackProfileId } : {}),
   }
 
   return config

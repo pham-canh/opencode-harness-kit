@@ -36,7 +36,7 @@ import { dirname, join, resolve } from "node:path"
  */
 export function findTelemetryFile(startDir) {
   let dir = resolve(startDir)
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 12; i++) {
     const file = join(dir, ".space", "telemetry.jsonl")
     if (existsSync(file)) return file
     const parent = dirname(dir)
@@ -64,7 +64,7 @@ export function findTelemetryFile(startDir) {
  * one.
  *
  * @param {string | null} file
- * @returns {{ lanes: Record<string, LaneUsage>, records: number, ignored: number }}
+ * @returns {{ lanes: Record<string, LaneUsage>, records: number, requests: number, ignored: number }}
  */
 export function readLaneUsage(file) {
   /** @type {Record<string, LaneUsage>} */
@@ -74,13 +74,13 @@ export function readLaneUsage(file) {
   let records = 0
   let ignored = 0
 
-  if (!file || !existsSync(file)) return { lanes, records, ignored }
+  if (!file || !existsSync(file)) return { lanes, records, requests: 0, ignored }
 
   let text = ""
   try {
     text = readFileSync(file, "utf8")
   } catch {
-    return { lanes, records, ignored }
+    return { lanes, records, requests: 0, ignored }
   }
 
   for (const line of text.split("\n")) {
@@ -102,7 +102,13 @@ export function readLaneUsage(file) {
     if (rec?.kind !== "lane") continue
     const lane = rec.agent
     const id = rec.id
-    if (typeof lane !== "string" || !lane) continue
+    if (typeof lane !== "string" || !lane) {
+      // A record with no lane cannot be attributed to one, so it is not
+      // counted - and it is counted as ignored, so a malformed file is
+      // visible in the tally rather than silently shrinking the numbers.
+      ignored++
+      continue
+    }
     if (typeof id !== "string" || !id) {
       ignored++
       continue
@@ -128,7 +134,10 @@ export function readLaneUsage(file) {
     if (rec.model) usage.models.add(rec.model)
   }
 
-  return { lanes, records, ignored }
+  // `records` is the raw count and `requests` is the count that means
+  // something: one record is written when a message opens and again
+  // when it closes, so the raw count is twice the number of requests.
+  return { lanes, records, requests: byId.size, ignored }
 }
 
 /**
