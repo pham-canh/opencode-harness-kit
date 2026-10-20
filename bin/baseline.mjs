@@ -19,9 +19,19 @@ const wantJson = args.includes("--json")
 const dbArg = args.indexOf("--db")
 const DB = dbArg >= 0 ? args[dbArg + 1] : join(homedir(), ".local/share/opencode/opencode.db")
 
+const { hasSqlite, sqliteMissingMessage } = await import("../src/sqlite.js")
+
 if (!existsSync(DB)) {
   console.error(`opencode database not found: ${DB}`)
   console.error("pass --db <path> or run opencode at least once first")
+  process.exit(1)
+}
+
+// The sqlite3 CLI, not the library. A missing tool is a thing a person can
+// fix, and the failure used to be a raw `spawnSync sqlite3 ENOENT` stack
+// trace.
+if (!hasSqlite()) {
+  console.error(sqliteMissingMessage())
   process.exit(1)
 }
 

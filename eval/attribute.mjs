@@ -45,6 +45,11 @@ const split = flag("--split")
     ? statSync(installDir).mtimeMs
     : Date.now() - 7 * 864e5
 
+if (!hasSqlite()) {
+  console.error(sqliteMissingMessage())
+  process.exit(1)
+}
+
 if (!existsSync(DB)) {
   console.error(`opencode database not found: ${DB}`)
   process.exit(1)

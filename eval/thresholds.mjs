@@ -18,6 +18,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 import { median } from "./metrics.js"
+import { hasSqlite, sqliteMissingMessage } from "../src/sqlite.js"
 
 const args = process.argv.slice(2)
 const flag = (...n) => {
@@ -38,9 +39,21 @@ if (!existsSync(DB)) {
 // Per day, since the install: how many reads, and how many were bounded. A day
 // with very few reads says nothing, so it is excluded rather than allowed to
 // drag the distribution.
-const minReads = Number(flag("--min-reads") ?? 10)
+// A malformed number used to become NaN and land in the SQL as
+// `having reads >= NaN`, which sqlite rejects with a raw error.
+let minReads
+try {
+  minReads = countFlag("--min-reads") ?? 10
+} catch (err) {
+  console.error(String(err.message))
+  process.exit(1)
+}
 const sql = `
-select date(time_created/1000,'unixepoch','+7 hours') as day,
+-- The day boundary is LOCAL, like every other day bucket in this repo. It
+-- was hard-coded to UTC+7, so the threshold this script proposes was
+-- bucketed on a different calendar than the window measure-install.mjs
+-- compares it against.
+select date(time_created/1000,'unixepoch','localtime') as day,
   sum(json_extract(data,'$.tool')='read') as reads,
   sum(case when json_extract(data,'$.tool')='read'
             and (json_extract(data,'$.state.input.offset') is not null
