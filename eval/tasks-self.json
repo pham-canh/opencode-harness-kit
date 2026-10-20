@@ -1,0 +1,81 @@
+{
+  "$comment": [
+    "Verification tasks for eval/ab.mjs --suite, written against THIS repository.",
+    "",
+    "The earlier suite was written against `lablab-harness@8a674f5`, which is",
+    "not public. A subject nobody else can fetch is a result nobody else can",
+    "check, and the A/B is the one number in this repository that decides",
+    "whether the kit is worth its cost. This suite runs against the kit's own",
+    "tree at a pinned commit, so `git clone && git checkout <sha>` reproduces",
+    "it exactly.",
+    "",
+    "Grading is by citation, not by prose: each read task names `want`, a",
+    "substring of one real source line, and eval/verify.mjs resolves the path:line",
+    "the agent cited and reads that line out of the snapshot. An answer can only",
+    "pass by pointing at the code.",
+    "",
+    "The control comes first and is kept, because it is the control: one file,",
+    "one constant. The rest need enumeration, discrimination between two similar",
+    "things, or two files - which is what the multi-step tasks are for.",
+    "",
+    "Every `want` below was read out of the tree with grep before it was written",
+    "here. Re-check with: git archive | tar -x && grep -n"
+  ],
+  "snapshot": "this repository, at the commit the suite is committed with",
+  "tasks": [
+    {
+      "id": "read-control",
+      "$comment": "Control. One file, one constant.",
+      "task": "In this repository, one exported constant names the five lanes that are part of the plan -> build -> review -> finish loop. Report the exact file path and line number where that constant is defined, and quote the line. Do not modify any files.",
+      "want": "export const WORKFLOW_LANES = [\"build\", \"plan\", \"reviewer\", \"locate\", \"verify\"]"
+    },
+    {
+      "id": "read-multi-denylist",
+      "$comment": "One file, eleven candidates, and two of them are the same command written with and without a space - so the agent cannot stop at the first `chmod 777`.",
+      "task": "In this repository, one source file lists the bash commands the kit denies outright. The list has eleven entries, and two of them are the same command written with and without a space. Report the file and the line number of the entry that denies `gh repo delete`, and quote it. Do not modify any files.",
+      "want": "\"gh repo delete*\""
+    },
+    {
+      "id": "read-multi-gate",
+      "$comment": "Three similar checks in one file, and the task names which one. The earlier suite had the same shape and the same reason: a check that reads as a match to the wrong line is a correct answer scored wrong.",
+      "task": "One source file in this repository has a rule that decides whether a git command rewrites history. It checks three git subcommands, and each one matches a different flag. Report the file and the line number of the check that rejects `git clean -fd`, and quote the comparison. Do not modify any files.",
+      "want": "return /(^|\\s)-[a-zA-Z]*f/.test(text)"
+    },
+    {
+      "id": "read-two-files",
+      "$comment": "Needs two files: the lane table is a JSON file and the list of names is a constant in the code, so the agent has to know the same ten names live in both.",
+      "task": "The ten job lanes in this repository are named in two files: a JSON table, and a source file that holds them as a constant. Report the file and the line number of the constant, and quote the line that declares it. Do not modify any files.",
+      "want": "export const LANE_NAMES = ["
+    },
+    {
+      "id": "edit-rename",
+      "$comment": "A rename, in a file with four uses of the name. mustContainMin counts the occurrences, because a plain substring check passes a partial rename. mustNotContain is as important as mustContain: leaving the old name in one place is not the change that was asked for.",
+      "task": "In src/guard.ts the constant that marks the kit's own denial message is used in four places. Rename it to `DENIAL_MARKER` everywhere in that file, without changing what it holds. Make no other changes and do not reformat anything.",
+      "mutate": {
+        "file": "src/guard.ts",
+        "mustContainMin": {
+          "DENIAL_MARKER": 4
+        },
+        "mustNotContain": [
+          "const MARKER"
+        ]
+      }
+    },
+    {
+      "id": "edit-multi",
+      "$comment": "Two separate edits in one file, both of which have to land. An agent that does one and stops is the obvious failure, and the grader catches it because both strings are required.",
+      "task": "In src/config.js the BASH_DENYLIST has eleven entries. Change the entry `gh pr close*` to `gh pr close *`, and change the entry `gh release*` to `gh release *`. Make no other changes and do not reformat anything.",
+      "mutate": {
+        "file": "src/config.js",
+        "mustContain": [
+          "gh pr close *",
+          "gh release *"
+        ],
+        "mustNotContain": [
+          "gh pr close*",
+          "gh release*"
+        ]
+      }
+    }
+  ]
+}
