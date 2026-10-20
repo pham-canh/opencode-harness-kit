@@ -766,9 +766,16 @@ function cmdVerify() {
       resolved = realpathSync(pluginLink)
     } catch {}
     const dataRoot = join(dirname(resolved), "..")
-    if (!existsSync(join(dataRoot, "profiles"))) {
+    // The bundle needs three things beside it: the profiles, the lane table
+    // and the retention table. It used to check only the profiles, so a
+    // bundle with a missing retention.yml passed verification and then
+    // resolved every lane to an unknown retention.
+    const missing = ["profiles", "lanes.json", "retention.yml"].filter(
+      (name) => !existsSync(join(dataRoot, name)),
+    )
+    if (missing.length) {
       problems.push(
-        `the plugin at ${resolved} cannot find its profiles (looked in ${dataRoot}). The guard, the pruning and the lane failover would all be silently absent. Run: oc-harness install`,
+        `the plugin at ${resolved} cannot find ${missing.join(", ")} (looked in ${dataRoot}). The guard, the pruning and the lane failover would all be silently absent. Run: oc-harness install`,
       )
     }
   } else {

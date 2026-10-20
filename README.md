@@ -68,6 +68,13 @@ test suite asserts that rather than taking it on faith.
 
 The default profile is a **fleet**: ten jobs, ten free models, one session.
 
+The table below is the **unrestricted** fleet (`fleet-all`), where every lane
+gets the model built for it. The default is the **safe** fleet
+(`fleet-safe`), where every lane resolves to a provider with a zero-retention
+policy and six of the ten run on a second-choice model to stay there. Both
+cover the same ten jobs; they differ in what they are willing to promise
+about your prompts.
+
 | lane | job | model | measured |
 |---|---|---|---|
 | `build` | write and verify the change | MiniMax M3.1 Flash | 3.1 s |
@@ -99,11 +106,6 @@ Super VL is the only model on the tier that publishes a `none` effort level,
 which makes "reasoning off" a job of its own. Putting each on the job it is
 good at is worth more than any single "best" model.
 
-The default is the **safe** fleet, and it is safe by construction rather than
-by label: every lane resolves to a provider with a zero-retention policy, and
-six of the ten lanes run on a second-choice model to stay there. The
-unrestricted fleet gives every lane the model built for it.
-
 The full table, with the measurements behind every choice and the three
 capabilities the tier turns out not to have, is in
 [`docs/ROUTING.md`](docs/ROUTING.md).
@@ -128,7 +130,7 @@ $ oc-harness use fleet-safe --print
 // Derived numbers, do not hand-edit:
 //   compaction.reserved  24,000  (12% of the narrowest input cap in play)
 //   prune threshold      176,000  (narrowest input cap minus reserve)
-//   role effort          plan=max  build=max  reviewer=max  locate=unset  ...
+//   role effort          plan=max  build=max  reviewer=max  locate=low  ...
 //   lane models          build=minimax-m3.1-flash-free (out 512,000)  plan=...
 ```
 
@@ -218,10 +220,10 @@ when you want one route and want to know exactly which one.
 |---|---|
 | Node | **22 or newer** — `engines` in package.json, and the CLI uses `node:` prefixed builtins. Node 20 fails at import time, not with a friendly message. |
 | npm | 10 or newer, for `npm ci` when installing from a checkout |
-| OS | macOS, Linux and Windows. No platform checks in the code; the tests run on `ubuntu-latest`. |
-| Shell | none. The CLI never shells out, so no `bash`, `zsh` or `fish` setup is needed. |
-| Network | `list` and `doctor` read models.dev, which is the point of both. Everything else, including `install`, `use` and `verify`, works offline. |
-| Disk | it writes into `~/.config/opencode/` and nothing else. |
+| OS | macOS, Linux and Windows. The tests run on `ubuntu-latest`. |
+| Shell | none needed to *use* the kit — no `bash`, `zsh` or `fish` setup. Two commands shell out to external binaries: `doctor` and `refresh` call `curl` to read models.dev, and `baseline` and the measurement scripts call `sqlite3`. Everything else, including `install`, `use` and `verify`, works offline. |
+| Network | only `doctor` and `refresh` need it, and only to read the live model catalogue. `list` is offline: it reads the shipped profiles. Everything else works offline. |
+| Disk | `use` and `install` write into `~/.config/opencode/` and nothing else. `doctor` and `refresh` write nothing; `refresh` rewrites a profile in the repository. |
 
 `~/.config/opencode/` is your live agent config. `use` and `install` write there,
 `verify` only reads, and `use --dryrun` writes nothing at all. Every write keeps
@@ -231,19 +233,24 @@ a `.bak` next to the file, including under `--yes`.
 
 ```
 oc-harness list       profiles with retention and caveats
-oc-harness show <id>  resolved lanes, derived numbers, fallback chains
+oc-harness show <id>  resolved lanes, derived numbers, fallback chains, guard rules
 oc-harness init       pick a free profile, then install + use + verify
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness use <id> --dryrun   print what would be written, write nothing
 oc-harness refresh <id> re-derive a profile against the live model list
 oc-harness install    symlink the plugin, prompts, skills and GLOBAL.md
-oc-harness link       just the plugin and instruction file, no prompts or skills
+oc-harness link       just the plugin, no prompts or skills
 oc-harness verify     check the install against the profile; non-zero on drift
 oc-harness agents     report agents the effort tiering does not reach
 oc-harness lanes      report which lanes the fleet actually used
+oc-harness trust      set up npm trusted publishing for this package
 oc-harness doctor     re-check profiles against models.dev and the live config
 oc-harness baseline   measure the current install
+oc-harness run        drive .space/tasks.md to done with the build agent
 ```
+
+Every flag accepts both spellings: `--profile fleet-safe` and
+`--profile=fleet-safe` are the same flag.
 
 `oc-harness <anything-else>` now exits non-zero with the list of real commands,
 instead of printing help and reporting success.
@@ -339,12 +346,12 @@ From one real install:
 
 ```
 CONTEXT PER REQUEST
-  p50   100,942   p90  256,940    p99  481,687    max  547,986
-  fresh input p50  528
+  p50    99,648   p90  246,536    p99  482,779    max  547,986
+  fresh input p50  534
 STORED MESSAGE BYTES
-  tool        116.58 MB   77.9%
-  reasoning    23.10 MB   15.4%
-  text          3.12 MB    2.1%
+  tool        114.78 MB   77.9%
+  reasoning    22.94 MB   15.6%
+  text          3.04 MB    2.1%
 READ PRESSURE
   read calls                 2,966
   grep/glob/list               249
@@ -360,8 +367,8 @@ compaction events  0  (never fired)
 Four numbers in that report changed how this kit is configured, and two of them
 reversed an earlier decision:
 
-**Tool output is 78% of stored context**, and sessions re-read ~101k tokens per
-request to add ~528 new ones. That is why pruning here is deterministic and
+**Tool output is 78% of stored context**, and sessions re-read ~100k tokens per
+request to add ~534 new ones. That is why pruning here is deterministic and
 unconditional.
 
 **Read pressure is 11.9 whole-file reads per search.** Every production harness
@@ -384,7 +391,7 @@ Your numbers stay on your machine; only the script is in the repo.
 | `guard.ts` | `tool.execute.before` | Blocks destructive commands in code. Fail-closed. |
 | `prune.ts` | `experimental.chat.messages.transform` | Replaces old tool output with a one-line stub. |
 | `router.ts` | `config`, `event`, `chat.message` | Moves a lane to the next rung of its chain when a route is spent. |
-| `telemetry.ts` | `event`, `chat.message`, `tool.execute.after` | Local JSONL, gitignored, never a network call. |
+| `telemetry.ts` | `event`, `tool.execute.after` | Local JSONL, gitignored, never a network call. |
 
 `guard.ts` matches against the command a shell would actually run, not the text
 it was handed. It splits on shell separators, honours quotes so that a `;`
@@ -509,16 +516,23 @@ Writes outside the project still ask, via `external_directory`.
 
 | lane | mode | job | effort |
 |---|---|---|---|
-| `build` | primary | writes and verifies code | middle |
-| `plan` | primary | turns a request into an executable plan | highest |
-| `reviewer` | subagent | two passes, never edits | highest |
-| `locate` | subagent | finds code, reports `file:line`, never designs | lowest |
-| `verify` | subagent | runs checks, never fixes them | lowest |
+| `build` | primary | writes and verifies code | `max` |
+| `plan` | primary | turns a request into an executable plan | `max` |
+| `reviewer` | subagent | two passes, never edits | `max` |
+| `locate` | subagent | finds code, reports `file:line`, never designs | `low` |
+| `verify` | subagent | runs checks, never fixes them | `low` |
 | `vision` | subagent | reads an image or a screenshot | model's |
 | `doc` | subagent | reads a long document or a spec | model's |
-| `schema` | subagent | produces JSON a program can parse | highest |
-| `sweep` | subagent | bulk mechanical sweep, no judgement | lowest |
+| `schema` | subagent | produces JSON a program can parse | `max` |
+| `sweep` | subagent | bulk mechanical sweep, no judgement | `none` (reasoning off) |
 | `longform` | subagent | very long context, or several answers | model's |
+
+The effort column is the request in the profile, resolved against the levels
+of the model the lane actually runs on — so `max` is `max` where the model
+publishes it and the nearest level that does exist where it does not, and
+`none` is no variant at all on a model that cannot turn reasoning off. Run
+`oc-harness show <profile>` for the resolved values and the note explaining
+any difference.
 
 `locate` is deliberately *not* called `scout`: OpenCode ships a built-in `scout`
 subagent for dependency and external-docs research, and shipping our own file
@@ -528,6 +542,11 @@ the built-in exists for.
 Each lane carries a `steps` cap. It is a loop breaker, not a quality knob: on
 exhaustion OpenCode forces a text-only response, so an agent that has stopped
 making progress reports rather than looping until the context is gone.
+
+Each lane also gets its own `permission.task` rule — `deny` for everything
+except the lanes it may hand work to. That is the mechanism behind "hand the
+job to the lane that has it": a lane that is not allowed to spawn anything
+cannot quietly become a general-purpose agent on the most expensive tier.
 
 ## The skill loop
 
@@ -562,7 +581,7 @@ session starts.
 
 ```bash
 npm install
-npm run check        # everything: build, typecheck, tests, live install, verify
+npm run check        # everything offline: build, typecheck, tests
 ```
 
 Or one layer at a time:
@@ -570,6 +589,7 @@ Or one layer at a time:
 ```bash
 npm test             # model-agnostic assertions, no network, no model calls
 npm run typecheck
+npm run check:install  # the above, plus the live install measurement and verify
 npm run eval         # synthetic: pruning, prompt pressure, effort projection
 npm run measure      # is this install behaving? narrow reads, context
 npm run attribute    # where the context went: fixed overhead vs history
@@ -578,8 +598,8 @@ npm run baseline     # your own install, from scratch
 ```
 
 `eval/ab.mjs` runs the same tasks with and without the kit, to separate the kit
-from the work. It spawns real agents, so it is not part of `npm run check`, and
-it wants a subject it can hand each run a private copy of:
+from the work. It spawns real agents, so it is not part of any check, and it
+wants a subject it can hand each run a private copy of:
 
 ```bash
 node eval/prepare.mjs --repo ~/work/lablab-harness --ref 8a674f5
@@ -589,7 +609,7 @@ node eval/ab.mjs --rescore <saved stream dir>   # re-grade without spawning agen
 
 `npm test` and `npm run typecheck` need nothing but the repo, so CI runs those.
 The rest read `~/.local/share/opencode/opencode.db` and `~/.config/opencode`,
-which only exist on a machine that has run OpenCode with the kit installed -
+which only exist on a machine that has run OpenCode with the kit installed —
 `npm run check:online` additionally hits the model catalog over the network.
 
 Measured results, and the limits they do not cross, are in

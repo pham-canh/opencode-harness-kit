@@ -14,6 +14,159 @@ is not happening.
 
 ## [Unreleased]
 
+### Fixed
+
+Twelve defects, each of them a case where the kit reported success while the
+thing it promised was not happening. They are grouped by what they broke.
+
+**The guard did not guard.**
+
+- A single `&` was not a command boundary, so `sleep 1 & rm -rf /tmp/x` was
+  allowed while `rm -rf /tmp/x & sleep 1` was blocked. The hole was
+  order-dependent.
+- The history-rewrite rule read the git subcommand off the front of the text,
+  so `git -C /repo reset --hard` was allowed. The file already had a
+  `gitSubcommand` helper that knows which git options take a value; it was
+  never called.
+
+**A failover could hand a lane a dead route.**
+
+- `resolveLaneModel` said it would fall back to the profile's base model when
+  no rung of a lane's chain qualified, and returned the first rung instead —
+  a rung the router had already recorded as spent. The docstring and the code
+  disagreed, and the code was the one that ran.
+- `resolveEffort` treated `none` as the lowest rung on the reasoning scale,
+  so a lane asking for reasoning off on a model that cannot do it was given
+  `low`: the opposite of the request, applied silently, to the one lane that
+  exists to stop reasoning. The effort plan also stopped reporting a request
+  that was dropped entirely — four of `fleet-all`'s ten lanes lose theirs.
+
+**The loop ran the verify output as a command.**
+
+- `markTask` wrote the observed output as continuation lines under the
+  `verify:` line, and the parser folded a continuation back into the field
+  above it. The command and its output became one string, and the driver
+  handed that string to a shell: `npm test exit 0 in 2s`. The output now
+  lives in its own `output:` field, which is not a command and cannot be
+  executed. The template and the build skill say the same thing.
+- A task that was ticked and also marked blocked was counted in both buckets,
+  so the three counters could add up to more than the file holds.
+
+**The gates did not gate.**
+
+- `doctor` counted its problems and then exited 0. It ran as the last step of
+  the install job in CI, so that step could not fail, and a hand-edited config
+  was reported as healthy. It exits non-zero on a broken install now; a
+  profile that has drifted from models.dev is perishable metadata and only
+  fails under `--strict`.
+- `verify` looked for a project agent file in the working directory rather
+  than in the project, so a shadowing file was found from the project root and
+  missed from a subdirectory — which is where a shadow is most likely to hide.
+- The generated config carried `base.instructions ?? [GLOBAL.md]`, so a config
+  that already had an `instructions` array never referenced the kit's file at
+  all: the lane table, the rules and the read-pressure guidance were silently
+  unloaded. Every path the config did name resolved, so `verify` passed over a
+  harness that was doing nothing.
+- A missing plugin or skills directory was a note, and notes do not affect the
+  exit code. Both are problems now.
+- A flag given as `--flag=value` was read as a flag with a missing value. Both
+  spellings work now. A non-numeric `--max-rounds` became NaN, and every
+  comparison against NaN is false, so a typo silently turned off the round
+  cap AND the time budget.
+- `curl` was called without `--fail`, so a 4xx body parsed as a catalogue with
+  no models in it and every profile was reported as withdrawn.
+- A dangling symlink in the agents directory aborted `verify` with a raw
+  ENOENT and lost the whole report.
+
+**A trusted publisher could be lost.**
+
+- `xdg-open` is the Linux opener. On macOS and Windows the browser never
+  opened, the failure was swallowed, and the message afterwards still said
+  the page was open.
+- npm allows one trusted publisher configuration per package and cannot edit
+  it, so replacing one means revoking it first. A revoke that succeeded and a
+  create that then failed left the package with NO trusted publisher —
+  strictly worse than before the command ran — and the error text did not say
+  so. The old configuration is now captured before the revoke, and a failed
+  create prints what was there and the exact command to put it back.
+- `npm whoami` ran through a helper that ends the process on failure, so the
+  "not logged in, run npm login" guidance was unreachable code.
+
+**The shipped profiles violated the shipped schema, and nothing checked.**
+
+- Every one of the twelve profiles carried a `$comment` the schema did not
+  allow, and five set `effort.default` to null where the schema asked for a
+  string — which is the only sensible value for a model with no tunable
+  effort. The schema's `$id` pointed at a different organisation than the
+  repository it lives in. `oc-harness refresh` reproduced both violations.
+- The schemas are now checked as schemas, with `ajv` as a devDependency. The
+  suite still runs offline.
+- `validate()` checks two things it used to leave to a test: a chain rung has
+  to be a profile the kit has, and a fallback id has to resolve.
+
+**Three files said three different things about a push.**
+
+- GLOBAL.md said a push is the last step of the job — push, then say what you
+  pushed. The build prompt said to ask before a push. The finish skill said
+  to ask before a push. The build agent receives GLOBAL.md AND the build
+  prompt at the same time, so it was being told two opposite things about the
+  same action. The policy is now one statement in all three, and a test pins
+  them to each other.
+
+### Changed
+
+- `npm run check` is the offline gate — build, typecheck, tests — and is green
+  on a checkout that has never seen an OpenCode login. The live half moved to
+  `npm run check:install`, which needs a machine that has run OpenCode. The
+  old claim that `npm run check` had to pass on an untouched checkout was
+  false, and it was the reason the whole gate was skipped.
+- `profiles/schema.json` no longer accepts `roleModels.<lane>.levels`. The
+  field was in the schema, validated as an array, and then read by nothing, so
+  a profile author could fill it with a lie and get no error.
+- `oc-harness show` now prints what the guard blocks and why. It was the one
+  part of the kit a user could not inspect at all.
+- The config directory path uses `homedir()` in all three places that build
+  it. One of them used `process.env.HOME`, which with HOME unset produced a
+  RELATIVE path, so `use` wrote to one place and the reader read another.
+- `retention.yml` is cached like the lane table next to it. It was re-read and
+  re-parsed for every candidate of every lane.
+- The severity table ranked `unknown` as milder than `may-train`, while
+  `retentionAllowed` refuses `unknown` outright. The two contradicted each
+  other, and the table is the one that decides what a profile is labelled.
+- The `lanes` header printed the raw record count and called it "lane
+  request(s)". A request is one assistant message, and a message is written
+  twice, so the headline said twice what the table under it said.
+- The router checked the health file for a profile ID where the file is keyed
+  by MODEL. For the ten single-model profiles the two are the same string and
+  the check worked by accident; for the two fleets it could never fire.
+- `harness.fallback` in the generated config was a copy of the first id of a
+  queue the router reads straight from the profile file, in a key nothing
+  reads. `fallbackProfileId` was a parameter no caller ever supplied.
+- The README quoted two different sets of numbers for the same measurement.
+  There is one set now, and it is the one in `docs/RESEARCH.md` and
+  `eval/RESULTS.md`.
+
+### Added
+
+- `OPENCODE_HARNESS_CATALOG_URL` overrides where the live model catalogue
+  comes from. A mirror is one use; a local fixture is another, and a test
+  that reached models.dev would fail on a machine with no network.
+
+## [0.4.3] — 2026-10-20
+
+### Removed
+
+- **The video pipeline and the published demo.** The `video/` directory held
+  the take script, the voiceover, the recording driver and the superseded
+  dubbing pipeline; `docs/demo/pitch.mp4` and `docs/demo-loop.gif` held the
+  published film. This repository is a harness kit, and it is code.
+
+  The film was also stale: it said "seven profiles" and "one hundred and
+  sixty five tests", and the kit now ships twelve profiles and two hundred
+  and ten tests. A front page that misstates the project's own numbers is
+  worse than no front page, so it goes rather than gets quietly outdated
+  again.
+
 ## [0.4.2] — 2026-10-20
 
 ### Changed
@@ -42,20 +195,11 @@ is not happening.
   that can be opened in the JSON body. The list asked for JSON and worked; the
   create did not, and failed with a message that said nothing about why. Every
   npm trust call asks for JSON now.
-- **Each npm command gets its own two-factor challenge.** The code a browser
-  flow returns is valid for the challenge that asked for it and for nothing
-  else, so carrying one from one command to the next made the second command
-  send a code that was already spent - and the registry answered that with a
-  different challenge, one that wants an authenticator code rather than a
-  browser. The failure looked like "npm wants something else now" and nothing
-  like the cause.
-- **The URLs come from the response body, not from a guess.** The done URL
-  was rebuilt from the id, which sent a real request to the registry with a
-  made-up id; the registry answered "forbidden", which is not a token, so the
-  wait ran its full length and then reported that nobody had answered.
-- **`OC_TRUST_NO_BROWSER` turns the browser off.** A test that opens a
-  browser on the machine it runs on is a test that breaks whatever the
-  person at the keyboard was doing.
+- The per-command two-factor challenge, the done-URL guess and
+  `OC_TRUST_NO_BROWSER` were all fixed in 0.3.9 and are listed there. They
+  appear here once more because this release was cut from a branch that
+  predated 0.3.9's changelog entry, and a reader of the two releases was
+  left with the impression that the same three fixes happened twice.
 
 ### The release path, end to end
 
@@ -167,8 +311,9 @@ The publish is now automatic and holds no secret:
   short-lived publish token, scoped to the workflow that asked for it. There
   is no long-lived token in the repository to leak, rotate or expire - and npm
   is revoking the legacy automation tokens anyway.
-  - The job installs npm 11.5.1 or later, which is what OIDC needs and what
-    node 22 does not ship.
+  - The job runs on node 24, whose bundled npm already speaks trusted
+    publishing. An `npm install -g npm@latest` self-upgrade also works, and is
+    documented elsewhere as intermittently corrupting the install.
   - The registry is configured by hand instead of through `setup-node`'s
     `registry-url`, because that helper always writes an auth line, and an
     empty auth line makes npm believe it is authenticated and skip the OIDC
@@ -381,7 +526,7 @@ the tool-output caps, and the `scout` → `locate` agent rename.
   `git log --grep push` and `echo push` are not. A heredoc body is data, not
   commands.
 - **`tool_output` was pinned at 200 lines / 8 KB**, about 6× tighter than
-  OpenCode's default. It truncated 415 of 2,966 `read` calls and 418 calls
+  OpenCode's default. It truncated 415 of 2,966 `read` calls and 423 calls
   were issued with an `offset` to fetch the rest: the truncation *causes* the
   re-read, one for one, at a measured 17.3 s median per request. The cap is
   now the default, and pruning rather than truncation bounds the context.
@@ -433,7 +578,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/pham-canh/space-harness/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/pham-canh/space-harness/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/pham-canh/space-harness/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/pham-canh/space-harness/compare/v0.3.9...v0.4.0

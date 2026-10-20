@@ -8,6 +8,17 @@ is either verifiable or it does not land.
 `npm run check` must pass on an untouched checkout. If it does not, that is a
 bug worth its own issue — do not build on top of a red baseline.
 
+`npm run check` is the **offline** gate: build, typecheck, tests. It needs
+nothing but the repository, so it is green on a machine that has never seen an
+OpenCode login.
+
+`npm run check:install` is the other half, and it needs a machine that HAS run
+OpenCode: it measures the install database (`sqlite3` and
+`~/.local/share/opencode/opencode.db`), reads the installed config, and
+verifies it. It cannot run on a fresh checkout, and it is not part of
+`npm run check` for that reason. CI runs the offline half; the live half is
+yours to run before a release.
+
 ## What a change has to come with
 
 The test suite is the contract, so a change without a test is a change nobody
@@ -30,17 +41,20 @@ can trust:
 ## Running the checks
 
 ```bash
-npm run check        # build + typecheck + tests + live install + verify
+npm run check        # build + typecheck + tests, offline
+npm run check:install  # the above, plus the live install measurement and verify
 npm test             # the offline assertions, fast
 npm run typecheck
 ```
 
-`npm run check` performs a real install into `~/.config/opencode/` and then
-verifies it. If you are not comfortable with that over your own config, run the
-layers individually and say so in the PR.
+`npm run check:install` measures an existing OpenCode install and verifies
+the config in `~/.config/opencode/`. It does not install anything itself, and
+it reads your live config. If you are not comfortable with that over your own
+config, run the layers individually and say so in the PR.
 
-`eval/ab.mjs` and `npm run measure` spawn real agents and cost real tokens.
-They are deliberately not part of `npm run check`, and a PR does not need them.
+`eval/ab.mjs` spawns real agents and costs real tokens. It is deliberately
+not part of any check, and a PR does not need it. `npm run measure` does not
+spawn an agent either — it queries the install database read-only.
 
 ## House rules
 
@@ -136,9 +150,12 @@ oc-harness trust                # check, and replace it if it is wrong
 ```
 
 npm completes a two-factor challenge in a **browser**, and the command opens
-the browser for it: answer there however the account is set up — an
-authenticator app, a security key, or a code sent to the email. The URL is
-printed as well, for a machine with no browser to open.
+the browser for it on the platform it is running on — `open` on macOS,
+`xdg-open` on Linux, `rundll32` on Windows. Answer there however the account
+is set up — an authenticator app, a security key, or a code sent to the
+email. The URL is printed as well, for a machine with no browser to open, and
+the command says which of the two happened rather than claiming the page is
+open when it is not.
 
 A code can also be given on the command line, which skips the browser:
 

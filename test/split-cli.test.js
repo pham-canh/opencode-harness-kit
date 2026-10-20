@@ -241,7 +241,7 @@ test("verify fails when the plugin was copied out of the kit's tree", () => {
     renameSync(`${plugin}.copy`, plugin)
 
     const out = run(box, ["verify"])
-    assert.match(out, /cannot find its profiles/)
+    assert.match(out, /cannot find profiles/)
   } finally {
     box.cleanup()
   }

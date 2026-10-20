@@ -111,7 +111,7 @@ is what actually bounds context.
 `bin/baseline.mjs` now prints all five numbers so this is re-measurable instead
 of being re-argued.
 
-**"Compaction never ran, therefore nothing is wrong."** Zero events across 156
+**"Compaction never ran, therefore nothing is wrong."** Zero events across 153
 sessions was read as "the setting is fine" rather than "nothing is being
 bounded". Both readings were half right and the compound conclusion was wrong:
 the configured `tail_turns` was inert *and* there was no bound on growth.
