@@ -38,15 +38,38 @@ test("`oc-harness trust` works from any directory", () => {
   // A release tool that only runs from one directory is a release tool that
   // people run from the wrong one - and the failure is "Cannot read
   // package.json", which says nothing about what the command was for.
-  const r = spawnSync("node", [CLI, "trust", "--check"], {
-    cwd: "/",
-    encoding: "utf8",
-  })
-  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
-  assert.match(out, /npm trusted publishing/, out)
-  assert.match(out, /opencode-harness-kit/, out)
-  // It must not be the "no package.json" failure.
-  assert.doesNotMatch(out, /ENOENT/, out)
+  //
+  // A fake npm stands in for the registry, so the test never waits on a
+  // two-factor challenge and never touches the network.
+  const dir = mkdtempSync(join(tmpdir(), "ock-trust-anywhere-"))
+  const bin = join(dir, "bin")
+  mkdirSync(bin, { recursive: true })
+  writeFileSync(
+    join(bin, "npm"),
+    `#!/bin/sh
+case "$1" in
+  --version) echo "11.21.1" ;;
+  whoami) echo "someone" ;;
+  trust) echo "[]"; exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+    { mode: 0o755 },
+  )
+  try {
+    const r = spawnSync("node", [CLI, "trust", "--check"], {
+      cwd: "/",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      encoding: "utf8",
+    })
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
+    assert.match(out, /npm trusted publishing/, out)
+    assert.match(out, /opencode-harness-kit/, out)
+    // It must not be the "no package.json" failure.
+    assert.doesNotMatch(out, /ENOENT/, out)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("the tool is listed in the help", () => {

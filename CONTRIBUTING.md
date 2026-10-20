@@ -135,13 +135,18 @@ npm login                       # 2FA has to be enabled on the account
 oc-harness trust                # check, and replace it if it is wrong
 ```
 
-npm asks for a one-time password, and `oc-harness trust` asks for it too —
-in a terminal, with the code typed straight in. Under `npx` there is no
-terminal to ask on, so the code can be given on the command line instead:
+npm completes a two-factor challenge in a **browser**, and the command opens
+the browser for it: answer there however the account is set up — an
+authenticator app, a security key, or a code sent to the email. The URL is
+printed as well, for a machine with no browser to open.
+
+A code can also be given on the command line, which skips the browser:
 
 ```bash
 npx -y opencode-harness-kit@latest trust --otp=123456
 ```
+
+The wait for a human is `OC_TRUST_WAIT_SECONDS` (600 by default).
 
 `oc-harness trust` reads what npm has stored, compares it against the
 workflow's own identity, and replaces it when it differs. npm allows exactly
