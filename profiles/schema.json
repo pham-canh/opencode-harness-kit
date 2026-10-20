@@ -18,7 +18,7 @@
     },
     "model": {
       "type": "string",
-      "description": "Model id without the provider prefix, e.g. space-bunny-free."
+      "description": "Model id without the provider prefix, e.g. beam-free."
     },
     "family": {
       "type": ["string", "null"],
@@ -29,15 +29,19 @@
       "description": "ISO date a human checked this profile against live metadata."
     },
     "retention": {
-      "enum": ["zero-retention", "may-train", "unknown"],
+      "enum": ["zero-retention", "retained", "may-train", "unknown"],
       "description": "Must match an entry in retention.yml. A profile whose model is unknown there cannot become the default."
+    },
+    "maxRetention": {
+      "enum": ["zero-retention", "retained", "may-train"],
+      "description": "The worst retention a lane in this profile is allowed to resolve to. A lane walks its model chain and takes the first rung at or below this ceiling, so one profile can serve a fleet without sending a prompt to a provider that trains on it. Defaults to the profile's own retention."
     },
     "notes": { "type": "string" },
     "limits": {
       "type": "object",
       "required": ["context", "output"],
       "additionalProperties": false,
-      "description": "Token ceilings from the provider catalog. `input` is absent for several Zen models, in which case the loader derives it from `context`.",
+      "description": "Token ceilings from the provider catalog. `input` is absent for several free models, in which case the loader derives it from `context`.",
       "properties": {
         "context": { "type": "integer", "minimum": 1 },
         "input": { "type": "integer", "minimum": 1 },
@@ -74,32 +78,42 @@
           "minimum": 0,
           "maximum": 0.5,
           "default": 0.12,
-          "description": "Share of the input ceiling held back for reasoning and tool output growth."
+          "description": "Share of the narrowest input ceiling in play held back for reasoning and tool output growth."
         }
       }
     },
     "roles": {
       "type": "object",
-      "description": "Requested effort per agent role. Resolved against effort.levels, never emitted raw.",
+      "description": "Requested effort per lane. Resolved against effort.levels, never emitted raw. A lane listed here is enabled; a lane absent from here is not installed.",
       "additionalProperties": false,
       "properties": {
-        "plan": { "$ref": "#/definitions/effortRequest" },
         "build": { "$ref": "#/definitions/effortRequest" },
+        "plan": { "$ref": "#/definitions/effortRequest" },
         "reviewer": { "$ref": "#/definitions/effortRequest" },
         "locate": { "$ref": "#/definitions/effortRequest" },
-        "verify": { "$ref": "#/definitions/effortRequest" }
+        "verify": { "$ref": "#/definitions/effortRequest" },
+        "vision": { "$ref": "#/definitions/effortRequest" },
+        "doc": { "$ref": "#/definitions/effortRequest" },
+        "schema": { "$ref": "#/definitions/effortRequest" },
+        "audit": { "$ref": "#/definitions/effortRequest" },
+        "sweep": { "$ref": "#/definitions/effortRequest" }
       }
     },
     "roleModels": {
       "type": "object",
-      "description": "Model per agent role, for a profile that splits the heavy reasoning roles onto a stronger model while the bulk-output roles stay on a high-output one. `model` remains the base: roles not named here, the top-level `model`, and `small_model` all resolve to it.",
+      "description": "Model per lane. A lane absent from `roles` is not enabled. A lane absent from `roleModels` runs on the profile's base model.",
       "additionalProperties": false,
       "properties": {
-        "plan": { "$ref": "#/definitions/roleModel" },
         "build": { "$ref": "#/definitions/roleModel" },
+        "plan": { "$ref": "#/definitions/roleModel" },
         "reviewer": { "$ref": "#/definitions/roleModel" },
         "locate": { "$ref": "#/definitions/roleModel" },
-        "verify": { "$ref": "#/definitions/roleModel" }
+        "verify": { "$ref": "#/definitions/roleModel" },
+        "vision": { "$ref": "#/definitions/roleModel" },
+        "doc": { "$ref": "#/definitions/roleModel" },
+        "schema": { "$ref": "#/definitions/roleModel" },
+        "audit": { "$ref": "#/definitions/roleModel" },
+        "sweep": { "$ref": "#/definitions/roleModel" }
       }
     },
     "prune": {
@@ -136,7 +150,7 @@
   "definitions": {
     "roleModel": {
       "type": "object",
-      "description": "A model for one role, plus the effort levels that model actually offers. Required when the model differs from the base, because a level the model does not have must never be written onto the agent.",
+      "description": "A model for one lane, plus the effort levels that model actually offers, plus the ordered list of models that may serve the lane when the first one is spent or too private.",
       "additionalProperties": false,
       "required": ["model"],
       "properties": {
@@ -148,6 +162,11 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Effort levels this role's model offers. Omitted means the role emits no variant at all, which is the right reading for a model with no tunable effort."
+        },
+        "chain": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ordered models that may serve this lane, best first. The first rung the profile's maxRetention ceiling allows is the one that runs it, and the router walks the same chain when a route is spent."
         }
       }
     },

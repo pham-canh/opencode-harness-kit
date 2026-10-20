@@ -1,46 +1,72 @@
 {
-  "$comment": "Profiles verified against live provider metadata. `retention` must come from retention.yml; a model missing there cannot enter this list.",
-  "default": "space-bunny-free",
+  "$comment": "Profiles verified against live provider metadata. `retention` must come from retention.yml; a model missing there cannot enter this list. The default is a fleet, because a fleet is the point: ten jobs, ten models, one session.",
+  "default": "fleet-safe",
   "profiles": [
     {
-      "id": "muse-split-free",
-      "file": "profiles/muse-split-free.json",
-      "title": "Muse Spark 1.3 (heavy) + Space Bunny Free (bulk output)",
-      "retention": "may-train",
-      "free": true,
-      "topEffort": "max",
-      "context": 1048576,
-      "default": false,
-      "split": {
-        "plan": "muse-spark-1.3-contributor-free",
-        "build": "muse-spark-1.3-contributor-free",
-        "reviewer": "muse-spark-1.3-contributor-free",
-        "locate": "space-bunny-free",
-        "verify": "space-bunny-free"
-      },
-      "note": "Retention here is the effective one: three roles run on Muse Spark, so the file is may-train even though the base model is zero-retention."
-    },
-    {
-      "id": "space-bunny-free",
-      "file": "profiles/space-bunny-free.json",
-      "title": "Space Bunny Free",
+      "id": "fleet-safe",
+      "file": "profiles/fleet-safe.json",
+      "title": "Ten jobs, zero-retention models only",
       "retention": "zero-retention",
       "free": true,
       "topEffort": "max",
-      "context": 1048576,
+      "context": 200000,
       "default": true,
-      "note": "Only free Zen model with a max effort and zero-retention terms."
+      "note": "The default. Every lane resolves to a provider with a zero-retention policy, at the cost of four jobs not getting the model built for them."
     },
     {
-      "id": "x-preview-f-free",
-      "file": "profiles/x-preview-f-free.json",
-      "title": "x-preview-f Free",
+      "id": "fleet-all",
+      "file": "profiles/fleet-all.json",
+      "title": "Ten jobs, every free model, one of them may train",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "Every lane gets the model built for it. Five of the ten providers may use the data to improve the model, so the whole profile is may-train."
+    },
+    {
+      "id": "minimax-m3.1-flash-free",
+      "file": "profiles/minimax-m3.1-flash-free.json",
+      "title": "MiniMax M3.1 Flash Free",
       "retention": "zero-retention",
       "free": true,
       "topEffort": "max",
       "context": 1000000,
       "default": false,
-      "note": "Three effort levels only; no medium or xhigh."
+      "note": "512k output tokens, the widest of any free route. The only one that takes video."
+    },
+    {
+      "id": "beam-free",
+      "file": "profiles/beam-free.json",
+      "title": "Beam Free",
+      "retention": "retained",
+      "free": true,
+      "topEffort": "max",
+      "context": 1048576,
+      "default": false,
+      "note": "Text only, freshest knowledge on the tier, fastest measured route. Keeps prompts for 30 days, so it is not zero-retention."
+    },
+    {
+      "id": "deepseek-v4.1-flash-free",
+      "file": "profiles/deepseek-v4.1-flash-free.json",
+      "title": "DeepSeek V4.1 Flash Free",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "Reasoning plus agentic coding plus structured output, on a zero-retention provider."
+    },
+    {
+      "id": "glm-5.3-flash-free",
+      "file": "profiles/glm-5.3-flash-free.json",
+      "title": "GLM 5.3 Flash Free",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "The only free model with structured output and a zero-retention policy. Slowest route on the tier at 16-27s."
     },
     {
       "id": "longcat-2.5-preview-free",
@@ -51,28 +77,63 @@
       "topEffort": null,
       "context": 1000000,
       "default": false,
-      "note": "No tunable reasoning effort."
+      "note": "1M context with image input and a zero-retention provider. A preview endpoint: it can be withdrawn without a rename."
     },
     {
-      "id": "deepseek-v4-flash-free",
-      "file": "profiles/deepseek-v4-flash-free.json",
-      "title": "DeepSeek V4 Flash Free",
-      "retention": "zero-retention",
+      "id": "nemotron-3.5-super-vl-free",
+      "file": "profiles/nemotron-3.5-super-vl-free.json",
+      "title": "Nemotron 3.5 Super VL Free",
+      "retention": "may-train",
       "free": true,
-      "topEffort": "max",
+      "topEffort": "xhigh",
+      "context": 1048576,
+      "default": false,
+      "note": "The only free model publishing a `none` effort level, so it is the reasoning-off sweep lane. Hangs on an image attachment."
+    },
+    {
+      "id": "nemotron-3-ultra-free",
+      "file": "profiles/nemotron-3-ultra-free.json",
+      "title": "Nemotron 3 Ultra Free",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": null,
+      "context": 1000000,
+      "default": false,
+      "note": "The largest open MoE on the tier at 550B-A55B. No selectable effort. NVIDIA trial terms: sessions are logged."
+    },
+    {
+      "id": "nemotron-3.5-lightning-free",
+      "file": "profiles/nemotron-3.5-lightning-free.json",
+      "title": "Nemotron 3.5 Lightning Free",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": null,
+      "context": 262144,
+      "default": false,
+      "note": "Its output cap equals its whole context, so it emits files larger than 128k tokens. One measured call took 114s."
+    },
+    {
+      "id": "mimo-v2.6-flash-free",
+      "file": "profiles/mimo-v2.6-flash-free.json",
+      "title": "MiMo V2.6 Flash Free",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": null,
       "context": 200000,
       "default": false,
-      "note": "200k context, text only."
+      "note": "Reads images in 8s. Publishes audio input too, but OpenCode will not read a binary file, so that path is unreachable today."
+    },
+    {
+      "id": "big-pickle",
+      "file": "profiles/big-pickle.json",
+      "title": "Big Pickle",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": null,
+      "context": 200000,
+      "default": false,
+      "note": "Stealth model, no public identity, no effort levels, no image input. The provider may train on it during its free period."
     }
   ],
-  "excluded": [
-    {
-      "id": "muse-spark-1.3-contributor-free",
-      "file": "examples/muse-spark-1.3-contributor-free.json",
-      "title": "Muse Spark 1.3 Contributor Free",
-      "retention": "may-train",
-      "reason": "Provider may train on your prompts and completions (Meta contributor tier). Top effort is xhigh, not max.",
-      "installable": true
-    }
-  ]
+  "excluded": []
 }

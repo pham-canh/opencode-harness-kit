@@ -15,7 +15,7 @@ import { join } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
 import { GuardPlugin } from "./guard.js"
 import { PrunePlugin } from "./prune.js"
-import { RouterPlugin } from "./router.js"
+import { RouterPlugin, unhealthyModels } from "./router.js"
 import { TelemetryPlugin } from "./telemetry.js"
 import { applyEffort, planEffort } from "./effort.js"
 import { profileIdFromConfig } from "./profile.js"
@@ -63,7 +63,10 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
     const id = opts.profile ?? config?.harness?.profile ?? profileIdFromConfig()
     if (!id) return
     try {
-      applyEffort(config, planEffort(id))
+      // The same set of spent routes the router used. A lane that failed over
+      // to a model with fewer effort levels must not keep the variant the
+      // previous model had.
+      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }))
       // Record it where the prune hook looks, so pruning picks up this
       // profile's thresholds without access to the resolved config.
       const dir = join(ctx.worktree, ".space")

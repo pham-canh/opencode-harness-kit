@@ -24,17 +24,19 @@ jobs:
       - name: CLI smoke test
         run: |
           node bin/oc-harness.mjs list
-          node bin/oc-harness.mjs show space-bunny-free
-          node bin/oc-harness.mjs use space-bunny-free --print | tail -20
-          # longcat has no reasoning API: the loader omits `variant` for every
-          # role of that profile. Assert the count is zero, not merely that the
+          node bin/oc-harness.mjs show fleet-safe
+          node bin/oc-harness.mjs use fleet-safe --print | tail -20
+          # longcat publishes no effort levels: the loader omits `variant` for
+          # every lane it serves. Assert the count is zero, not merely that the
           # word appears somewhere — an unmanaged key inherited from a dirty
           # local config once faked this check green.
           test "$(node bin/oc-harness.mjs use longcat-2.5-preview-free --print | grep -c '"variant"')" = "0"
+          # A fleet puts ten different models behind ten lanes.
+          test "$(node bin/oc-harness.mjs use fleet-all --print | grep -c '"model": "opencode/')" -ge "10"
       - name: install and verify into a scratch config dir
         run: |
           export OPENCODE_CONFIG_DIR="$RUNNER_TEMP/opencode-config"
-          node bin/oc-harness.mjs use space-bunny-free --yes
+          node bin/oc-harness.mjs use fleet-safe --yes
           node bin/oc-harness.mjs install
           node bin/oc-harness.mjs verify
           node bin/oc-harness.mjs agents

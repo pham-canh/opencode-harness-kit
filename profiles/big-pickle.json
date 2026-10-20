@@ -1,0 +1,45 @@
+{
+  "$comment": "Metadata verified against models.dev on 2026-10-19 and confirmed by a live call the same day. Regenerate the capability fields with `oc-harness refresh big-pickle`.",
+  "id": "big-pickle",
+  "title": "Big Pickle",
+  "provider": "opencode",
+  "model": "big-pickle",
+  "family": "big-pickle",
+  "verified": "2026-10-19",
+  "retention": "may-train",
+  "notes": "A stealth model with no public identity, no selectable effort and no image input. Cheap, stable, and the one the provider's own terms say may be trained on during its free period, so it stays out of the default fleet.",
+  "limits": {
+    "context": 200000,
+    "input": 160000,
+    "output": 32000
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": true,
+    "attachment": false
+  },
+  "effort": {
+    "levels": [],
+    "default": null,
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low"
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": [
+    "nemotron-3.5-lightning-free",
+    "deepseek-v4.1-flash-free"
+  ]
+}

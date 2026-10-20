@@ -1,0 +1,49 @@
+{
+  "$comment": "Metadata verified against models.dev on 2026-10-19 and confirmed by a live call the same day. Regenerate the capability fields with `oc-harness refresh glm-5.3-flash-free`.",
+  "id": "glm-5.3-flash-free",
+  "title": "GLM 5.3 Flash Free",
+  "provider": "opencode",
+  "model": "glm-5.3-flash-free",
+  "family": "glm-flash",
+  "verified": "2026-10-19",
+  "retention": "zero-retention",
+  "notes": "Zhipu. The only free model that publishes pdf input, and the only one with structured output and a zero-retention policy at the same time. The pdf does not work: the provider's endpoint rejects a `file` content part, and OpenCode will not read a binary file, so documents are extracted locally first. It is the slowest route on the tier at 16-27s, which is why it sits on the thorough lane rather than a fast one.",
+  "limits": {
+    "context": 200000,
+    "output": 32000
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": true,
+    "attachment": true
+  },
+  "effort": {
+    "levels": [
+      "low",
+      "high",
+      "max"
+    ],
+    "default": "max",
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low"
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": [
+    "deepseek-v4.1-flash-free",
+    "longcat-2.5-preview-free",
+    "beam-free"
+  ]
+}

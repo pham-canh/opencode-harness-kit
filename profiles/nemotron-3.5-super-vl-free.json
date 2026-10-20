@@ -1,0 +1,52 @@
+{
+  "$comment": "Metadata verified against models.dev on 2026-10-19 and confirmed by a live call the same day. Regenerate the capability fields with `oc-harness refresh nemotron-3.5-super-vl-free`.",
+  "id": "nemotron-3.5-super-vl-free",
+  "title": "Nemotron 3.5 Super VL Free",
+  "provider": "opencode",
+  "model": "nemotron-3.5-super-vl-free",
+  "family": "nemotron-free",
+  "verified": "2026-10-19",
+  "retention": "may-train",
+  "notes": "NVIDIA 120B-A12B. The only free model that publishes a `none` effort level, which is what makes it the cheap no-reasoning sweep lane. The catalog says it takes images, but a live call with an image attachment hangs and never returns: it is used here for text and for reasoning off, never for pictures.",
+  "limits": {
+    "context": 1048576,
+    "input": 1048576,
+    "output": 131072
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": false,
+    "attachment": true
+  },
+  "effort": {
+    "levels": [
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "default": "xhigh",
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low"
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": [
+    "longcat-2.5-preview-free",
+    "beam-free"
+  ]
+}

@@ -31,6 +31,13 @@ import {
   roleSplitModels,
   resolveDefaultVariant,
   resolveRoles,
+  resolveRoleModel,
+  resolveLaneChain,
+  resolveLaneModel,
+  modelsInPlay,
+  modelRetention,
+  loadLanes,
+  laneNames,
   ProfileError,
   parseJsonc,
 } from "../src/profile.js"
@@ -87,24 +94,42 @@ async function cmdList() {
     "  " + "profile".padEnd(30),
     "ctx".padStart(9),
     "top".padStart(7),
+    "lanes".padStart(6),
     "retention".padEnd(15),
   ].join("  ")
   console.log(head)
-  console.log("  " + "-".repeat(72))
+  console.log("  " + "-".repeat(79))
 
   for (const entry of idx.profiles ?? []) {
     if (only && entry.retention !== only) continue
     if (freeOnly && entry.free === false) continue
-    const r = retention[`opencode/${entry.id}`]
+    // The retention lookup is keyed on the model, not the profile id: a fleet
+    // profile's id is not a model, and looking it up by id silently found
+    // nothing, which is why the disagreement below never fired for one.
+    let model = entry.id
+    let lanes = 0
+    let effective = entry.retention
+    try {
+      const loaded = loadProfile(entry.id)
+      model = loaded.model
+      lanes = Object.keys(loaded.roles ?? {}).length
+      // A fleet's retention is the worst of the models it resolves to, not the
+      // base model's. Comparing the base would report every fleet as
+      // disagreeing with retention.yml, which records the base model's terms.
+      effective = effectiveRetention(loaded).retention
+    } catch {
+      model = entry.id
+    }
+    const r = retention[`opencode/${model}`]
     const isDefault = entry.default
     const name = (isDefault ? green("▸ ") : "  ") + entry.id
     const top = entry.topEffort ?? stamp("—")
     const ret =
-      entry.retention === "zero-retention"
-        ? green(entry.retention)
-        : yellow(entry.retention)
+      effective === "zero-retention"
+        ? green(effective)
+        : yellow(effective)
     const mismatch =
-      r && r.retention && r.retention !== entry.retention
+      r && r.retention && r.retention !== effective && lanes === 0
         ? ` ${red(`(retention.yml says ${r.retention})`)}`
         : ""
     console.log(
@@ -112,6 +137,7 @@ async function cmdList() {
         "  " + name.padEnd(32),
         (entry.context ?? 0).toLocaleString("en-US").padStart(9),
         String(top).padStart(7),
+        String(lanes).padStart(6),
         ret.padEnd(15),
       ].join("  ") + mismatch,
     )
@@ -157,14 +183,31 @@ function cmdShow(id) {
     console.log(`  ${"".padEnd(20)} ${stamp(`base ${p.model} is ${p.retention}, but ${eff.worst} makes the whole profile ${eff.retention}`)}`)
   }
   if (roleSplitModels(p).length) {
-    console.log(`\n  ${bold("role models")}`)
+    console.log(`\n  ${bold("lanes")}`)
     for (const s of roleSplitModels(p)) {
       const cap = s.limits ? `  out ${s.limits.output.toLocaleString("en-US")}` : ""
+      const chain = resolveLaneChain(p, s.role)
+      const via = chain.length > 1 ? `  via ${chain.join(" → ")}` : ""
       console.log(`  ${s.role.padEnd(20)} ${s.model}${cap}`)
+      if (via) console.log(`  ${"".padEnd(20)} ${stamp(via.trim())}`)
+    }
+  } else {
+    console.log(`\n  ${bold("lanes")}`)
+    for (const role of Object.keys(p.roles ?? {})) {
+      console.log(`  ${role.padEnd(20)} ${p.model}`)
     }
   }
 
-  console.log(`\n  ${bold("role effort")}`)
+  if (p.maxRetention && p.maxRetention !== p.retention) {
+    console.log(
+      `\n  ${bold("retention ceiling")} ${p.maxRetention}`,
+    )
+    console.log(
+      `  ${stamp("a lane may only resolve to a model at or below this")}`,
+    )
+  }
+
+  console.log(`\n  ${bold("lane effort")}`)
   for (const [role, level] of Object.entries(plan.roles)) {
     const want = p.roles?.[role]
     const arrow = want && want !== level ? ` ${stamp(`(requested ${want})`)}` : ""
@@ -217,10 +260,42 @@ function cmdLink() {
 /** Where the behavioural layer has to land for the config to mean anything. */
 function installTargets() {
   return [
-    { src: join(ROOT, "agents"), dest: join(CONFIG_DIR, "agents"), kind: "dir" },
+    { src: join(ROOT, "prompts"), dest: join(CONFIG_DIR, "prompts"), kind: "dir" },
     { src: join(ROOT, "skills"), dest: join(CONFIG_DIR, "skills"), kind: "dir" },
     { src: join(ROOT, "GLOBAL.md"), dest: join(CONFIG_DIR, "GLOBAL.md"), kind: "file" },
   ]
+}
+
+/**
+ * Remove the agent files an earlier version of this kit installed.
+ *
+ * They used to carry the model in their frontmatter, and an agent file of the
+ * same name replaces the config entry wholesale. A leftover `plan.md` from
+ * the old layout would therefore pin `plan` to whatever model it named -
+ * a model that may since have been withdrawn - and the config would look
+ * correct while the lane ran somewhere else. The prompts moved to prompts/,
+ * where a file cannot shadow a config entry.
+ */
+function removeLegacyAgentFiles() {
+  const dir = join(CONFIG_DIR, "agents")
+  if (!existsSync(dir)) return []
+  const removed = []
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".md")) continue
+    const full = join(dir, name)
+    let ours = false
+    try {
+      ours = readlinkSync(full).includes(join("space-harness", "agents"))
+    } catch {
+      ours = false
+    }
+    if (!ours) continue
+    try {
+      rmSync(full, { force: true })
+      removed.push(name)
+    } catch {}
+  }
+  return removed
 }
 
 /**
@@ -238,6 +313,13 @@ async function cmdInstall() {
 
   // The plugin link first: without it the guard is not enforcing anything.
   cmdLink()
+
+  const legacy = removeLegacyAgentFiles()
+  if (legacy.length) {
+    console.log(
+      `  ${green("✓")} ${stamp(`removed ${legacy.length} legacy agent file(s) that would have shadowed the config`)}`,
+    )
+  }
 
   for (const { src, dest, kind } of installTargets()) {
     if (!existsSync(src)) {
@@ -462,53 +544,83 @@ function cmdVerify() {
     }
   }
 
-  // 3. Every role the profile tiers must have an installed agent file, or the
-  //    config entry configures a model and a permission but no behaviour.
-  const agentsDir = join(CONFIG_DIR, "agents")
+  // 3. Every lane the profile enables must have its prompt installed, and the
+  //    config's reference to it must resolve. A lane with a model and a
+  //    permission but no prompt is a lane that runs on opencode's default
+  //    instructions and nobody can tell.
+  const promptsDir = join(CONFIG_DIR, "prompts")
   const roles = resolveRoles(p)
   for (const [role, level] of Object.entries(roles)) {
     if (level === undefined) continue
-    const file = join(agentsDir, `${role}.md`)
+    const file = join(promptsDir, `${role}.md`)
     if (!existsSync(file)) {
-      // build and plan are built-in agents: opencode reads their config entry
-      // even with no markdown file, but they then carry no custom prompt.
-      const builtin = role === "build" || role === "plan"
-      const msg = builtin
-        ? `no agents/${role}.md - ${role} is a built-in agent, so it runs with opencode's default prompt, not this kit's`
-        : `no agents/${role}.md - ${role} is declared in the config but does not exist as an agent. Run: oc-harness install`
-      problems.push(msg)
+      problems.push(
+        `no prompts/${role}.md - the ${role} lane is declared in the config but has no instructions. Run: oc-harness install`,
+      )
       continue
     }
-    const front = stripFrontmatter(readFileSync(file, "utf8"))
-    const wantModel = `${p.provider}/${p.model}`
-    const gotModel = front.model
-    if (gotModel && gotModel !== wantModel) {
-      problems.push(`agents/${role}.md names model ${gotModel}, profile says ${wantModel}`)
-    } else if (!gotModel) {
-      notes.push(`agents/${role}.md has no model: inherits the session model, so effort tiering may not apply`)
-    }
-    if (!gotModel && front.variant) {
-      problems.push(`agents/${role}.md sets variant "${front.variant}" without a model; variant only applies to the agent's own model`)
+    ok.push(`prompt ${role}.md installed`)
+    const ref = actual?.agent?.[role]?.prompt
+    if (ref) {
+      const target = ref.replace(/^\{file:/, "").replace(/\}$/, "")
+      const resolved = target.startsWith("~")
+        ? join(homedir(), target.slice(1))
+        : target
+      if (!existsSync(resolved)) {
+        problems.push(
+          `agent.${role}.prompt points at ${target}, which does not exist. Run: oc-harness install`,
+        )
+      }
     }
   }
 
-  // 4. No installed agent may name a model that is not the active one. A
-  //    stale name in a prompt is the documentation rot `space-finish` warns
-  //    about, and it also means the agent silently runs on another model.
+  // 4. No installed agent file may shadow a lane. An agent file of the same
+  //    name replaces the config entry wholesale, and a file without a `model:`
+  //    line makes the agent inherit the caller's model. Either way the lane
+  //    stops running on the model the profile resolved for it, and the config
+  //    keeps looking correct. Verified against OpenCode 1.19.
+  const agentsDir = join(CONFIG_DIR, "agents")
   if (existsSync(agentsDir)) {
     for (const name of readdirSync(agentsDir).filter((f) => f.endsWith(".md"))) {
+      const lane = name.replace(/\.md$/, "")
+      if (lane in (actual?.agent ?? {})) {
+        problems.push(
+          `agents/${name} shadows the ${lane} lane: an agent file replaces the config entry, so the lane would not run on its own model. Run: oc-harness install`,
+        )
+        continue
+      }
       const text = readFileSync(join(agentsDir, name), "utf8")
       const named = text.match(/opencode\/([a-z0-9.\-]+)/i)
-      if (named && named[1] !== p.model) {
-        problems.push(`agents/${name} mentions opencode/${named[1]}, active profile is ${p.model}`)
+      if (named && !modelsInPlay(p).includes(named[1])) {
+        problems.push(
+          `agents/${name} mentions opencode/${named[1]}, which is not in the active profile`,
+        )
       }
     }
   }
 
   // 5. The plugin link has to exist or none of the guard is running.
   const pluginLink = join(CONFIG_DIR, "plugins", "opencode-harness-kit.js")
-  if (existsSync(pluginLink)) ok.push("plugin linked")
-  else notes.push("no plugin link: the guard is not enforcing anything. Run: oc-harness link")
+  if (existsSync(pluginLink)) {
+    ok.push("plugin linked")
+    // The bundle finds its profiles by walking up from itself, so a bundle
+    // that was copied out of the kit's tree loads and does nothing: no guard,
+    // no pruning, no lane failover, no telemetry, and no error anywhere. The
+    // symlink is what keeps this honest, and this check is what notices when
+    // somebody replaced it with a copy.
+    let resolved = pluginLink
+    try {
+      resolved = realpathSync(pluginLink)
+    } catch {}
+    const dataRoot = join(dirname(resolved), "..")
+    if (!existsSync(join(dataRoot, "profiles"))) {
+      problems.push(
+        `the plugin at ${resolved} cannot find its profiles (looked in ${dataRoot}). The guard, the pruning and the lane failover would all be silently absent. Run: oc-harness install`,
+      )
+    }
+  } else {
+    notes.push("no plugin link: the guard is not enforcing anything. Run: oc-harness link")
+  }
 
   // 6. Schema check. `variant` at the top level is silently stripped by
   //    OpenCode, so emitting it looks like tiering and does nothing.
@@ -580,6 +692,7 @@ function configDrift(p, actual) {
   const roles = resolveRoles(p)
 
   if (actual.model !== want) out.push(`model ${actual.model} -> ${want}`)
+  if (actual.small_model !== want) out.push(`small_model ${actual.small_model} -> ${want}`)
 
   for (const [role, level] of Object.entries(roles)) {
     if (level === undefined) continue
@@ -588,16 +701,21 @@ function configDrift(p, actual) {
       out.push(`agent.${role} missing`)
       continue
     }
-    // A role's expected model is the one roleModels declares for it, falling
-    // back to the base. Comparing every agent against `want` would report
-    // drift on every split role forever, which trains the user to ignore the
-    // one command that exists to catch a moved `build`.
-    const wantRole = `${p.provider}/${p.roleModels?.[role]?.model ?? p.model}`
+    // A lane's expected model is the one its chain resolved to, not the
+    // profile's base. A fleet puts ten different models behind ten agents, so
+    // comparing every lane against the base would report drift forever and
+    // train the user to ignore the one command that exists to catch a moved
+    // lane.
+    const resolved = resolveRoleModel(p, role)
+    const wantRole = `${p.provider}/${resolved ? resolved.model : p.model}`
     if (agent.model !== wantRole) {
       out.push(`agent.${role}.model ${agent.model} -> ${wantRole}`)
     }
     if (agent.variant !== (level ?? undefined)) {
       out.push(`agent.${role}.variant ${agent.variant ?? "(none)"} -> ${level ?? "(none)"}`)
+    }
+    if (!agent.prompt) {
+      out.push(`agent.${role}.prompt missing - the lane would run without instructions`)
     }
   }
 
@@ -682,11 +800,12 @@ function summary(p) {
   const splits = roleSplitModels(p)
   console.log(`  ${stamp(`model      ${p.provider}/${p.model}`)}`)
   console.log(`  ${stamp(`effort     ${resolveDefaultVariant(p) ?? "(not tunable)"}`)}`)
-  console.log(`  ${stamp(`roles      ${Object.entries(resolveRoles(p)).map(([k, v]) => `${k}=${v ?? "-"}`).join(" ")}`)}`)
+  console.log(`  ${stamp(`lanes      ${Object.entries(resolveRoles(p)).map(([k, v]) => `${k}=${v ?? "-"}`).join(" ")}`)}`)
   if (splits.length) {
-    // Without this the split is invisible until someone opens the file, which
-    // is too late to be told which roles send prompts to a provider that trains.
-    console.log(`  ${stamp(`split      ${splits.map((s) => `${s.role}=${s.model}`).join(" ")}`)}`)
+    // Without this the fleet is invisible until someone opens the file, which
+    // is too late to be told which lane sends prompts to a provider that
+    // trains on them.
+    console.log(`  ${stamp(`lane model ${splits.map((s) => `${s.role}=${s.model}`).join(" ")}`)}`)
     console.log(`  ${stamp(`           ${splits.map((s) => s.limits ? `${s.role} out ${s.limits.output.toLocaleString("en-US")}` : null).filter(Boolean).join("  ")}`)}`)
   }
   console.log(`  ${stamp(`retention  ${eff.retention}${eff.retention === "may-train" ? "  <-- prompts may train a model" : ""}`)}`)
@@ -818,6 +937,20 @@ async function cmdRefresh(id) {
   )
 }
 
+/**
+ * The model chain of every lane a profile enables, keyed by lane.
+ * @param {ReturnType<typeof loadProfile>} p
+ * @returns {Record<string, string[]>}
+ */
+function chainOf(p) {
+  /** @type {Record<string, string[]>} */
+  const out = {}
+  for (const lane of Object.keys(p.roles ?? {})) {
+    out[lane] = resolveLaneChain(p, lane)
+  }
+  return out
+}
+
 /** Re-check every profile against the live provider catalog. */
 async function cmdDoctor() {
   const catalog = await fetchCatalog()
@@ -847,6 +980,22 @@ async function cmdDoctor() {
     const ret = retention[`${p.provider}/${p.model}`]
     if (p.retention === "zero-retention" && ret?.retention === "may-train") {
       issues.push(red("retention.yml now says may-train"))
+    }
+
+    // A fleet's lanes point at other models, and those are the routes that
+    // get withdrawn. A lane whose whole chain has left the catalog is a lane
+    // with no model at all, which no amount of `refresh` on the base profile
+    // would reveal.
+    for (const [lane, chain] of Object.entries(chainOf(p))) {
+      const alive = chain.filter((rung) => catalog?.[p.provider]?.models?.[rung])
+      if (!alive.length) {
+        issues.push(red(`lane ${lane}: every model in its chain has left the catalog`))
+      } else if (alive.length < chain.length) {
+        const gone = chain.filter((rung) => !alive.includes(rung))
+        issues.push(
+          yellow(`lane ${lane}: ${gone.join(", ")} withdrawn, falls back to ${alive[0]}`),
+        )
+      }
     }
 
     if (issues.length === 0) {
@@ -892,6 +1041,105 @@ async function cmdDoctor() {
 }
 
 /**
+ * Which lanes the fleet actually used.
+ *
+ * A fleet is a hypothesis, not a fact: ten lanes is a guess about which jobs
+ * need a different model. The only way to know which of them earn their place
+ * is to count the calls. A lane that was never called is a description the
+ * model reads on every turn and a free model doing nothing, so it is the first
+ * thing to cut.
+ */
+function cmdLanes() {
+  const activeId = profileIdFromConfig() ?? index().default
+  let profile = null
+  try {
+    profile = loadProfile(activeId)
+  } catch (err) {
+    fail(`active profile "${activeId}" cannot be loaded: ${err.message}`)
+  }
+
+  const file = join(process.cwd(), ".space", "telemetry.jsonl")
+  /** @type {Record<string, {calls: number, ms: number[], models: Set<string>}>} */
+  const stats = {}
+  let records = 0
+  if (existsSync(file)) {
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      if (!line.trim()) continue
+      let rec
+      try {
+        rec = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (rec.kind !== "lane-call" && rec.kind !== "lane") continue
+      const lane = rec.agent
+      if (typeof lane !== "string" || !lane) continue
+      records++
+      const s = stats[lane] ?? (stats[lane] = { calls: 0, ms: [], models: new Set() })
+      s.calls++
+      if (typeof rec.ms === "number") s.ms.push(rec.ms)
+      if (rec.model) s.models.add(rec.model)
+    }
+  }
+
+  console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${records} lane record(s)`)}\n`)
+  const lanes = Object.keys(profile.roles ?? {})
+  if (!lanes.length) {
+    console.log(`  ${stamp("this profile enables no lanes")}\n`)
+    return
+  }
+  const head = [
+    "  " + "lane".padEnd(12),
+    "calls".padStart(7),
+    "avg ms".padStart(9),
+    "model".padEnd(32),
+  ].join("  ")
+  console.log(head)
+  console.log("  " + "-".repeat(64))
+
+  let unused = 0
+  for (const lane of lanes) {
+    const s = stats[lane]
+    const model = resolveLaneModel(profile, lane).model
+    if (!s) {
+      unused++
+      console.log(
+        [
+          "  " + lane.padEnd(12),
+          String(0).padStart(7),
+          "-".padStart(9),
+          (model ?? "-").padEnd(32),
+        ].join("  ") + yellow("  never called"),
+      )
+      continue
+    }
+    const avg = s.ms.length
+      ? Math.round(s.ms.reduce((a, b) => a + b, 0) / s.ms.length)
+      : null
+    console.log(
+      [
+        "  " + lane.padEnd(12),
+        String(s.calls).padStart(7),
+        String(avg ?? "-").padStart(9),
+        ([...s.models].join(", ") || model || "-").padEnd(32),
+      ].join("  "),
+    )
+  }
+
+  console.log("")
+  if (unused) {
+    console.log(
+      `  ${yellow(`${unused} lane(s) were never called`)} ${stamp("cut candidates, not defects")}`,
+    )
+  } else {
+    console.log(`  ${green("every lane was called at least once")}`)
+  }
+  console.log(
+    `  ${stamp("telemetry is read from .space/telemetry.jsonl in this project")}\n`,
+  )
+}
+
+/**
  * Report agents in a project that the kit's effort tiering does not cover.
  *
  * Tiering only reaches agents named in a profile. A project agent declared in
@@ -926,48 +1174,74 @@ function cmdAgents() {
   }
 
   const config = readConfigJson()
-  const configured = config.model ?? "(none)"
   const wantModel = `${current.provider}/${current.model}`
 
   console.log(`\n${bold("agents")}  ${stamp(`tiering against ${current.id}`)}\n`)
-  if (!files.length) {
-    console.log(`  ${red("✗")} ${yellow("no agent markdown found")}`)
-    console.log(`      ${stamp(`looked in ${dirs.join("\n      ")}`)}`)
-    console.log(`      ${stamp("run: oc-harness install")}\n`)
+
+  // The kit's own lanes live in the config, not in markdown: an agent file of
+  // the same name replaces the config entry, and a file without a `model:`
+  // line makes the agent inherit the caller's model.
+  const roles = resolveRoles(current)
+  const lanes = Object.keys(config.agent ?? {})
+  if (!lanes.length) {
+    console.log(`  ${red("✗")} ${yellow("the config declares no agents")}`)
+    console.log(`      ${stamp("run: oc-harness use <profile>")}\n`)
     return
   }
-
-  const roles = resolveRoles(current)
   let untiered = 0
-  let stale = 0
+  for (const lane of lanes) {
+    const a = config.agent[lane] ?? {}
+    const notes = []
+    if (!a.model) notes.push("no model of its own, inherits the session model")
+    else if (a.model !== wantModel && !modelsInPlay(current).some((m) => `${current.provider}/${m}` === a.model)) {
+      notes.push(`model ${a.model} is not in the active profile`)
+    }
+    if (a.model && !a.variant) {
+      notes.push("no variant, runs at the model default")
+    }
+    if (!a.prompt) notes.push("no prompt, runs on opencode's default instructions")
+    else {
+      const target = String(a.prompt).replace(/^\{file:/, "").replace(/\}$/, "")
+      const resolved = target.startsWith("~") ? join(homedir(), target.slice(1)) : target
+      if (!existsSync(resolved)) notes.push(`prompt ${target} is not installed`)
+    }
+    if (lane in roles && roles[lane] === undefined) notes.push("not tiered by the profile")
+
+    if (!notes.length) {
+      console.log(
+        `  ${green("✓")} ${lane.padEnd(14)} ${stamp(`${a.model ?? "-"}${a.variant ? ` ${a.variant}` : ""}`)}`,
+      )
+      continue
+    }
+    untiered++
+    console.log(`  ${yellow("!")} ${lane.padEnd(14)} ${yellow("not tiered")}`)
+    for (const nn of notes) console.log(`      ${nn}`)
+  }
+
+  // A project agent declared in .opencode/agents/ with no model of its own
+  // inherits the global model and runs at the global effort, which is usually
+  // the most expensive tier. That is exactly the waste this kit exists to
+  // remove, and it is invisible otherwise.
   for (const file of files) {
     const text = readFileSync(file, "utf8")
     const name = file.split("/").pop().replace(/\.md$/, "")
     const front = stripFrontmatter(text)
-    const hasModel = Boolean(front.model)
-    const hasVariant = Boolean(front.variant)
-    const isKitRole = name in roles
-
-    const notes = []
-    if (!hasModel) notes.push("no model of its own, inherits the session model")
-    if (front.model && front.model !== wantModel) {
-      notes.push(`model ${front.model} is not the active ${wantModel}`)
-    }
-    if (hasModel && !hasVariant) notes.push("no variant, runs at the model default")
-
-    if (!notes.length) {
-      console.log(`  ${green("✓")} ${name.padEnd(14)} ${stamp(`tiered${isKitRole ? ` ${roles[name]}` : ""}`)}`)
+    if (name in config.agent) {
+      console.log(
+        `  ${yellow("!")} ${name.padEnd(14)} ${yellow("shadows a lane in the config")}`,
+      )
+      console.log(`      ${stamp("an agent file replaces the config entry, so the lane loses its model")}`)
       continue
     }
-    untiered += !hasVariant || !hasModel ? 1 : 0
-    stale += front.model && front.model !== wantModel ? 1 : 0
-    console.log(`  ${yellow("!")} ${name.padEnd(14)} ${yellow("not tiered")}`)
-    for (const nn of notes) console.log(`      ${nn}`)
+    if (!front.model) {
+      untiered++
+      console.log(`  ${yellow("!")} ${name.padEnd(14)} ${yellow("not tiered")}`)
+      console.log(`      ${stamp("no model of its own, inherits the session model")}`)
+    }
   }
 
   console.log(
-    `\n  ${untiered ? yellow(`${untiered} agent(s) run at the session effort`) : green("all agents tiered")}` +
-      `${stale ? `, ${stale} pinned to a model that is not active` : ""}`,
+    `\n  ${untiered ? yellow(`${untiered} agent(s) run at the session effort`) : green("all agents tiered")}`,
   )
   console.log(`  ${stamp("add `model:` and `variant:` to the agent frontmatter, or map them in the profile")}\n`)
 }
@@ -1032,6 +1306,9 @@ try {
     case "agents":
       cmdAgents()
       break
+    case "lanes":
+      cmdLanes()
+      break
     case "doctor":
       await cmdDoctor()
       break
@@ -1049,12 +1326,13 @@ try {
     list      show profiles with retention and caveats
     init      pick a free profile, then install + use + verify in one go
     use <id>  compile a profile into ${CONFIG_FILE}
-    show <id> print the resolved effort plan and derived numbers
+    show <id> print the resolved lane plan and derived numbers
     refresh <id>  update capability fields from models.dev
-    install   symlink the plugin, agents, skills and GLOBAL.md into the config dir
+    install   symlink the plugin, prompts, skills and GLOBAL.md into the config dir
     verify    check the install still matches the profile and its rules are loaded
     link          symlink the built plugin into ~/.config/opencode/plugins
     agents        report agents the effort tiering does not reach
+    lanes         report which lanes the fleet actually used
     doctor    re-check profiles against models.dev and the installed config
     baseline  measure the current opencode install
     run       drive .space/tasks.md to done with the build agent

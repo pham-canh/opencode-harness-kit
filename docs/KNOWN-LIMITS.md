@@ -84,13 +84,116 @@ session's:
 | `config` | Yes, but it runs once at startup. |
 | `provider` | Can add or override models in the catalog, not the active session. |
 
-So `router.ts` does two things instead of the obvious third: at startup it
-moves to the next healthy profile, and when a request fails it tells the agent
-plainly that a new session is the fix. It does not pretend to retry.
+So `router.ts` does three things instead of the obvious fourth: at startup it
+moves a lane to the next rung of its own chain, when the session's own model
+is spent it moves to the next profile in the fallback queue, and when a
+request fails it tells the agent plainly that a new session is the fix. It
+does not pretend to retry.
 
 The gap is real and tracked upstream. Provider issue #42977 asks Zen for a
 `scope` field and a remaining-quota figure on 429 responses, precisely because
 a client cannot currently tell a short quota window from a permanent block.
+
+## A copied plugin loads and does nothing
+
+The bundle finds `profiles/`, `prompts/`, `retention.yml` and `lanes.json` by
+walking up from its own file. A symlink resolves to the real path, so a
+symlinked plugin finds the kit's data. A **copy** does not: it looks beside
+itself, finds nothing, and every profile lookup fails.
+
+The failure is silent in the worst way. The plugin loads, its hooks are
+registered, and nothing complains - but there is no guard, no pruning, no
+lane failover and no telemetry. The session looks entirely normal and is
+entirely unguarded. It was found by instrumenting the config hook, which
+reported `no profile named "fleet-safe"` and nothing else.
+
+`oc-harness install` symlinks the plugin rather than copying it, and
+`oc-harness verify` now checks that the link still resolves to a bundle whose
+data root is intact.
+
+## An agent markdown file replaces the config entry, not the other way round
+
+This is the one that decides where a model can live, and it was measured
+against OpenCode 1.19 rather than read off the docs.
+
+Two behaviours, both silent:
+
+- An agent file whose name matches a config entry **replaces that entry
+  wholesale**. A file saying `model: opencode/beam-free` beat a config entry
+  saying `model: opencode/minimax-m3.1-flash-free`.
+- An agent file **with no `model:` line** makes the agent inherit the model of
+  the agent that called it, not the model the config declares for it. A lane
+  configured for one model and defined by a file without a model ran on the
+  parent's model, and the config still looked correct.
+
+So this kit keeps the model in the generated config and the prompt body in
+`prompts/`, referenced with `{file:...}`. `oc-harness verify` fails when an
+installed agent file shadows a lane, and `oc-harness install` removes the agent
+files an earlier version of this kit left behind.
+
+The reference also has to be absolute or start with `~`: a relative
+`{file:./prompts/x.md}` is silently ignored, and a lane with no instructions
+still runs.
+
+## The free tier cannot read a PDF, an audio file or a video
+
+Three capabilities the catalogue advertises are not reachable, and no lane
+claims them:
+
+- **PDF.** The provider's endpoint rejects the request before the model sees
+  it: `content part type "file" is not supported; only text and image_url
+  are`. A model asked about the PDF instead suggests running `pdftotext`.
+- **Audio and video.** OpenCode 1.19 refuses to read a binary file at all:
+  `Cannot read binary file: ...m4a`. The attachment never reaches the model,
+  which then answers as if it had heard nothing.
+
+So a document is extracted locally and the **text** reaches the `doc` lane.
+MiMo publishes audio input and is in the fleet for its image reading, not its
+audio.
+
+## One model hangs on every file attachment
+
+`nemotron-3.5-super-vl-free` is the catalogue's vision-language model, and a
+live call with an image never returned: three attempts, 350 seconds, no
+answer. It also hung on a plain `.txt`. The same call on MiniMax answered in
+7 seconds and read the text out of the image correctly.
+
+It is in the fleet for the one thing it does that no other model on the tier
+does — publishing a `none` effort level, which makes "reasoning off" a job of
+its own — and never for pictures.
+
+## One shared reserve, sized by the narrowest lane
+
+`compaction.reserved` is a single number for the whole config, and a fleet
+mixes a 1M model with 200k models. Sizing it by the widest model reserves
+125,829 tokens and leaves every 200k lane with 74,000 usable, which is where
+the lane stops working. It is therefore sized by the **narrowest** lane: 24,000
+tokens for `fleet-safe`.
+
+The cost is that a lane with a wide window gets a thinner buffer than it would
+like. That is the right direction to be wrong in: a buffer that is too small
+means compaction happens a little earlier, and a buffer that is too large
+means a lane cannot work at all.
+
+## Ten lanes is at the edge of what a selector can carry
+
+The catalogue of eleven production harnesses in the source study
+(arXiv:2609.00006) tops out at seven agent entries — OpenCode's own four
+named agents plus three hidden utility ones. Claude Code ships three, Codex
+two, OpenHands four, Mistral Vibe one delegable profile.
+
+The guidance that decides the number is explicit: a flat catalogue forces the
+planner to select one-of-N at every turn, and selection accuracy degrades as N
+grows. The measured figures are for tool catalogues — 7-85% accuracy drops as
+a catalogue expands, and Anthropic's own deferred tool search lifting Opus 4.5
+from 79.5% to 88.1% selection accuracy by narrowing the choice to 3-5 options
+— and no corpus system measures agent count the same way.
+
+Ten lanes sits at the boundary rather than past it, and the reason it is
+tolerable is that the descriptions do not overlap: each lane names a different
+job, and the failure mode of a large catalogue is similar descriptions, not
+many descriptions. `oc-harness lanes` counts the calls so the fleet can be
+cut to what earns its place, rather than defended on principle.
 
 ## Retry on 429 is deliberately not attempted
 
@@ -113,9 +216,15 @@ From one install's 20-day history, free model slots turned over in days:
 | `nemotron-3-ultra-free` | 3 days |
 | `muse-spark-1.3-contributor-free` | still running at 20 days |
 
+The tier turned over again since: four of this kit's five original profiles
+(`space-bunny-free`, `x-preview-f-free`, `deepseek-v4-flash-free`,
+`muse-spark-1.3-contributor-free`) were all withdrawn within a month of
+shipping, and the default profile pointed at a model that no longer existed.
+
 Zen states free models are available "for a limited time" with no date. Treat
 profiles as perishable: run `oc-harness doctor`, which re-checks each profile
-against live metadata and reports drift.
+against live metadata and reports drift, and which also reports a lane whose
+whole chain has left the catalogue.
 
 ## A model-driven compressor is not assumed to work
 

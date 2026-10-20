@@ -19,7 +19,7 @@ const SANDBOX_CONFIG = join(tmpdir(), `ock-config-${process.pid}`)
 mkdirSync(SANDBOX_CONFIG, { recursive: true })
 writeFileSync(
   join(SANDBOX_CONFIG, "opencode.jsonc"),
-  '{\n  "model": "opencode/space-bunny-free",\n  "harness": { "profile": "space-bunny-free" }\n}\n',
+  '{\n  "model": "opencode/minimax-m3.1-flash-free",\n  "harness": { "profile": "fleet-safe" }\n}\n',
 )
 process.env.OPENCODE_CONFIG_DIR = SANDBOX_CONFIG
 process.on("exit", () => rmSync(SANDBOX_CONFIG, { recursive: true, force: true }))
@@ -148,18 +148,21 @@ test("config hook applies the profile's effort to the real config shape", async 
   const dir = workspace()
   const hooks = await harness(dir)
   const config = {
-    model: "opencode/space-bunny-free",
-    agent: { build: { model: "opencode/space-bunny-free" } },
-    harness: { profile: "space-bunny-free" },
+    model: "opencode/minimax-m3.1-flash-free",
+    agent: { build: { model: "opencode/minimax-m3.1-flash-free" } },
+    harness: { profile: "fleet-safe" },
   }
   await hooks.config(config)
 
   assert.equal(config.agent.plan.variant, "max")
   assert.equal(config.agent.reviewer.variant, "max")
   assert.equal(config.agent.build.variant, "max")
-  assert.equal(config.agent.locate.variant, "low")
+  // The locate lane fell back to a model with no effort levels, so it has no
+  // variant at all rather than a level that model does not publish.
+  assert.equal(config.agent.locate.variant, undefined)
+  // Every lane carries its own model.
   for (const agent of Object.values(config.agent)) {
-    assert.equal(agent.model, "opencode/space-bunny-free")
+    assert.ok(agent.model, "every lane must name a model")
   }
   // The active profile is recorded where the prune hook looks for it.
   assert.equal(existsSync(join(dir, ".space", "active")), true)
@@ -207,13 +210,13 @@ test("guard blocks a credential write", async () => {
 
 test("prune is inert until a profile is active, then it stubs old tool output", async () => {
   const dir = workspace()
-  const opts = { profile: "space-bunny-free" }
+  const opts = { profile: "fleet-safe" }
 
   // No marker yet: prune declines rather than guessing thresholds.
   const cold = await harness(dir)
   assert.equal(cold["experimental.chat.messages.transform"], undefined)
 
-  writeFileSync(join(dir, ".space", "active"), "space-bunny-free\n")
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
   const hooks = await harness(dir)
   const transform = hooks["experimental.chat.messages.transform"]
   assert.equal(typeof transform, "function", "prune should activate with a profile set")
@@ -262,7 +265,7 @@ test("prune is inert until a profile is active, then it stubs old tool output", 
 
 test("prune keeps the most recent tool calls verbatim", async () => {
   const dir = workspace()
-  writeFileSync(join(dir, ".space", "active"), "space-bunny-free\n")
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
   const hooks = await harness(dir)
   const messages = []
   for (let i = 0; i < 10; i++) {
@@ -280,7 +283,7 @@ test("prune keeps the most recent tool calls verbatim", async () => {
 
 test("prune survives a malformed message without throwing", async () => {
   const dir = workspace()
-  writeFileSync(join(dir, ".space", "active"), "space-bunny-free\n")
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
   const hooks = await harness(dir)
   const output = {
     messages: [
@@ -314,30 +317,58 @@ test("telemetry records a denial and never throws on odd input", async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("router walks the fallback queue when the active route is marked down", async () => {
+test("router walks the fallback queue when the session route is marked down", async () => {
   const dir = workspace()
   writeFileSync(
     join(dir, ".space", "health.json"),
     JSON.stringify({
       unhealthy: {
-        "opencode/space-bunny-free": { at: "2026-10-07T00:00:00Z", reason: "429" },
+        "opencode/minimax-m3.1-flash-free": { at: "2026-10-07T00:00:00Z", reason: "429" },
       },
     }),
   )
   const hooks = await harness(dir)
-  const config = { harness: { profile: "space-bunny-free" } }
+  const config = { harness: { profile: "fleet-safe" } }
   await hooks.config(config)
-  assert.equal(config.model, "opencode/x-preview-f-free", "should move to the next profile")
-  assert.equal(config.harness.profile, "x-preview-f-free")
+  assert.equal(config.model, "opencode/deepseek-v4.1-flash-free", "should move to the next profile")
+  assert.equal(config.harness.profile, "deepseek-v4.1-flash-free")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("router moves one lane down its chain and leaves the rest alone", async () => {
+  // A fleet has ten models, so one spent route must not take the other nine
+  // down with it. The lane that used the dead model moves to the next rung of
+  // its own chain; every other lane keeps the model it had.
+  const dir = workspace()
+  writeFileSync(
+    join(dir, ".space", "health.json"),
+    JSON.stringify({
+      unhealthy: {
+        "opencode/beam-free": { at: "2026-10-07T00:00:00Z", reason: "429" },
+      },
+    }),
+  )
+  const hooks = await harness(dir, { profile: "fleet-all" })
+  const config = {
+    harness: { profile: "fleet-all" },
+    agent: {
+      plan: { model: "opencode/beam-free", variant: "max" },
+      build: { model: "opencode/minimax-m3.1-flash-free", variant: "max" },
+    },
+  }
+  await hooks.config(config)
+
+  assert.equal(config.agent.plan.model, "opencode/deepseek-v4.1-flash-free")
+  assert.equal(config.agent.build.model, "opencode/minimax-m3.1-flash-free")
   rmSync(dir, { recursive: true, force: true })
 })
 
 test("router leaves the config alone when the preferred route is healthy", async () => {
   const dir = workspace()
   const hooks = await harness(dir)
-  const config = { model: "opencode/space-bunny-free", harness: { profile: "space-bunny-free" } }
+  const config = { model: "opencode/minimax-m3.1-flash-free", harness: { profile: "fleet-safe" } }
   await hooks.config(config)
-  assert.equal(config.harness.profile, "space-bunny-free")
+  assert.equal(config.harness.profile, "fleet-safe")
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -368,24 +399,24 @@ test("the plugin finds its profile even though the config hook cannot", async ()
   // from the config file on disk.
   const dir = workspace()
   const hooks = await harness(dir)
-  const config = { model: "opencode/space-bunny-free" }
+  const config = { model: "opencode/minimax-m3.1-flash-free" }
   assert.equal(config.harness, undefined, "the hook really does lose the key")
 
   await hooks.config(config)
 
   // It resolved a profile anyway, which is only possible via the file, and it
   // recorded it for the prune hook.
-  assert.equal(readFileSync(join(dir, ".space", "active"), "utf8").trim(), "space-bunny-free")
+  assert.equal(readFileSync(join(dir, ".space", "active"), "utf8").trim(), "fleet-safe")
   assert.equal(config.agent.plan.variant, "max")
   rmSync(dir, { recursive: true, force: true })
 })
 
 test("an explicit profile option overrides every other source", async () => {
   const dir = workspace()
-  const hooks = await harness(dir, { profile: "deepseek-v4-flash-free" })
-  const config = { harness: { profile: "space-bunny-free" } }
+  const hooks = await harness(dir, { profile: "deepseek-v4.1-flash-free" })
+  const config = { harness: { profile: "fleet-safe" } }
   await hooks.config(config)
-  assert.equal(readFileSync(join(dir, ".space", "active"), "utf8").trim(), "deepseek-v4-flash-free")
+  assert.equal(readFileSync(join(dir, ".space", "active"), "utf8").trim(), "deepseek-v4.1-flash-free")
   rmSync(dir, { recursive: true, force: true })
 })
 

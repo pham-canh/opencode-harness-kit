@@ -1,0 +1,44 @@
+{
+  "$comment": "Metadata verified against models.dev on 2026-10-19 and confirmed by a live call the same day. Regenerate the capability fields with `oc-harness refresh nemotron-3-ultra-free`.",
+  "id": "nemotron-3-ultra-free",
+  "title": "Nemotron 3 Ultra Free",
+  "provider": "opencode",
+  "model": "nemotron-3-ultra-free",
+  "family": "nemotron-free",
+  "verified": "2026-10-19",
+  "retention": "may-train",
+  "notes": "The largest open MoE on the free tier at 550B-A55B. It reasons but publishes no selectable effort level, so no variant is ever written for it. Text only. NVIDIA trial terms: sessions are logged, so it is not the lane for private code.",
+  "limits": {
+    "context": 1000000,
+    "output": 128000
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": false,
+    "attachment": false
+  },
+  "effort": {
+    "levels": [],
+    "default": null,
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low"
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": [
+    "glm-5.3-flash-free",
+    "deepseek-v4.1-flash-free"
+  ]
+}

@@ -44,9 +44,9 @@ test("init without a terminal and without --profile says so", () => {
 
 test("init runs install + use + verify into a fresh config dir", () => {
   const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
-  const r = run(["init", "--profile", "space-bunny-free", "--yes"], { OPENCODE_CONFIG_DIR: dir })
+  const r = run(["init", "--profile", "fleet-safe", "--yes"], { OPENCODE_CONFIG_DIR: dir })
   assert.equal(r.exit, 0, `init must succeed end to end:\n${r.out}`)
-  for (const expected of ["opencode.jsonc", "agents", "skills", "GLOBAL.md"]) {
+  for (const expected of ["opencode.jsonc", "prompts", "skills", "GLOBAL.md"]) {
     assert.ok(
       readdirSync(dir).includes(expected),
       `a working install leaves ${expected} behind`,

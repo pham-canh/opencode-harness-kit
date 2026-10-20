@@ -332,11 +332,34 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 var HERE = dirname(fileURLToPath(import.meta.url));
-var ROOT = resolve(HERE, "..");
+function findRoot(start) {
+  let dir = start;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, "profiles"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return resolve(start, "..");
+}
+var ROOT = findRoot(resolve(HERE, ".."));
 var ProfileError = class extends Error {
 };
+var LANE_NAMES = [
+  "build",
+  "plan",
+  "reviewer",
+  "locate",
+  "verify",
+  "vision",
+  "doc",
+  "schema",
+  "sweep",
+  "longform"
+];
+var RETENTION_SEVERITY = ["zero-retention", "retained", "unknown", "may-train"];
 function profileDirs() {
-  return [join(ROOT, "profiles"), join(ROOT, "examples")];
+  return [join(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
@@ -369,6 +392,7 @@ function normalize(p) {
       default: p.effort?.default ?? null,
       reserveShare: p.effort?.reserveShare ?? 0.12
     },
+    maxRetention: p.maxRetention ?? p.retention,
     prune: {
       enabled: p.prune?.enabled ?? false,
       keepRecentToolCalls: p.prune?.keepRecentToolCalls ?? 6,
@@ -378,115 +402,28 @@ function normalize(p) {
     fallback: p.fallback ?? []
   };
 }
-var VALID_RETENTION = ["zero-retention", "may-train", "unknown"];
-function validate(p, path = "<memory>") {
-  const where = p?.id ?? path;
-  if (!p?.id) throw new ProfileError(`${path}: missing "id"`);
-  if (!p.provider) throw new ProfileError(`${where}: missing "provider"`);
-  if (!p.model) throw new ProfileError(`${where}: missing "model"`);
-  if (!VALID_RETENTION.includes(p.retention)) {
-    throw new ProfileError(
-      `${where}: retention must be one of ${VALID_RETENTION.join(", ")}`
-    );
+var laneCache = null;
+function loadLanes() {
+  if (laneCache) return laneCache;
+  const file = join(ROOT, "lanes.json");
+  if (!existsSync(file)) {
+    throw new ProfileError(`lane table missing: ${file}`);
   }
-  if (!p.limits?.context || p.limits.context <= 0) {
-    throw new ProfileError(`${where}: limits.context must be a positive integer`);
-  }
-  if (!p.limits?.output || p.limits.output <= 0) {
-    throw new ProfileError(`${where}: limits.output must be a positive integer`);
-  }
-  const share = p.effort?.reserveShare;
-  if (share !== void 0 && (share < 0 || share > 0.5)) {
-    throw new ProfileError(
-      `${where}: effort.reserveShare must be between 0 and 0.5`
-    );
-  }
-  for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
-    if (!SPLITTABLE_ROLES.includes(role)) {
-      throw new ProfileError(
-        `${where}: roleModels.${role} is not one of ${SPLITTABLE_ROLES.join(", ")}`
-      );
+  const parsed = JSON.parse(readFileSync(file, "utf8"));
+  const lanes = parsed.lanes ?? {};
+  for (const [name, lane] of Object.entries(lanes)) {
+    if (!lane.description) {
+      throw new ProfileError(`lanes.json: lane "${name}" has no description`);
     }
-    if (!(role in (p.roles ?? {}))) {
-      throw new ProfileError(
-        `${where}: roleModels.${role} has no matching entry in roles, so it would never apply`
-      );
-    }
-    if (!rm?.model || typeof rm.model !== "string") {
-      throw new ProfileError(`${where}: roleModels.${role} needs a model`);
-    }
-    if (rm.levels !== void 0 && !Array.isArray(rm.levels)) {
-      throw new ProfileError(
-        `${where}: roleModels.${role}.levels must be an array`
-      );
-    }
-    if (!retentionFor(rm.model)) {
-      throw new ProfileError(
-        `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`
-      );
+    if (!lane.prompt) {
+      throw new ProfileError(`lanes.json: lane "${name}" has no prompt file`);
     }
   }
+  laneCache = lanes;
+  return lanes;
 }
-var CANON = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
-function resolveEffort(levels, requested) {
-  if (!requested) return null;
-  if (!levels || levels.length === 0) return null;
-  if (levels.includes(requested)) return requested;
-  const want = CANON.indexOf(requested);
-  if (want < 0) {
-    return levels[levels.length - 1] ?? null;
-  }
-  let best = null;
-  let bestDist = Infinity;
-  for (const level of levels) {
-    const have = CANON.indexOf(level);
-    if (have < 0) continue;
-    const d = Math.abs(have - want);
-    if (d < bestDist) {
-      bestDist = d;
-      best = level;
-    }
-  }
-  return best ?? levels[levels.length - 1] ?? null;
-}
-function resolveRoleModel(p, role) {
-  const rm = p.roleModels?.[role];
-  if (!rm) return null;
-  return { model: rm.model, levels: rm.levels ?? [] };
-}
-function levelsForRole(p, role) {
-  const rm = resolveRoleModel(p, role);
-  if (rm) return rm.levels;
-  return p.effort?.levels ?? [];
-}
-function resolveRoles(p) {
-  const out = (
-    /** @type {Record<string, string | null>} */
-    {}
-  );
-  for (const [role, want] of Object.entries(p.roles ?? {})) {
-    out[role] = resolveEffort(levelsForRole(p, role), want);
-  }
-  return out;
-}
-function resolveDefaultVariant(p) {
-  return resolveEffort(p.effort?.levels ?? [], p.effort?.default ?? null);
-}
-var SPLITTABLE_ROLES = ["plan", "build", "reviewer", "locate", "verify"];
-function inputCap(p) {
-  let cap = p.limits.input ?? p.limits.context;
-  for (const s of roleSplitModels(p)) {
-    const other = s.limits?.input ?? s.limits?.context;
-    if (typeof other === "number" && other > cap) cap = other;
-  }
-  return cap;
-}
-function reservedTokens(p) {
-  const share = p.effort?.reserveShare ?? 0.12;
-  return Math.max(8e3, Math.round(inputCap(p) * share));
-}
-function pruneThreshold(p) {
-  return inputCap(p) - reservedTokens(p);
+function laneMeta(name) {
+  return loadLanes()[name] ?? null;
 }
 function loadRetention() {
   const file = join(ROOT, "retention.yml");
@@ -549,20 +486,208 @@ function retentionFor(id) {
   const table = loadRetention();
   return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`];
 }
-function roleSplitModels(p) {
-  return Object.entries(p.roleModels ?? {}).map(([role, rm]) => {
+function modelRetention(model) {
+  const declared = retentionFor(model)?.retention ?? "unknown";
+  return (
+    /** @type {Retention} */
+    ["zero-retention", "retained", "may-train", "unknown"].includes(declared) ? declared : "unknown"
+  );
+}
+function retentionAllowed(model, ceiling) {
+  const level = modelRetention(model);
+  if (level === "unknown") return false;
+  const max = RETENTION_SEVERITY.indexOf(ceiling);
+  const have = RETENTION_SEVERITY.indexOf(level);
+  if (max < 0) return false;
+  return have <= max;
+}
+function resolveLaneChain(p, role) {
+  const rm = p.roleModels?.[role];
+  if (!rm) return [p.model];
+  const chain = rm.chain?.length ? rm.chain : [rm.model];
+  return chain;
+}
+function resolveLaneModel(p, role, opts = {}) {
+  const unhealthy = opts.unhealthy ?? /* @__PURE__ */ new Set();
+  const ceiling = (
+    /** @type {Retention} */
+    p.maxRetention ?? p.retention
+  );
+  for (const candidate of resolveLaneChain(p, role)) {
+    if (unhealthy.has(candidate)) continue;
+    if (!retentionAllowed(candidate, ceiling)) continue;
+    return { model: candidate, levels: levelsOfModel(candidate) };
+  }
+  const fallback = resolveLaneChain(p, role)[0] ?? p.model;
+  return { model: fallback, levels: levelsOfModel(fallback) };
+}
+function levelsOfModel(model) {
+  try {
+    return loadProfile(model).effort?.levels ?? [];
+  } catch {
+    return [];
+  }
+}
+function levelsForRole(p, role, opts) {
+  const rm = p.roleModels?.[role];
+  if (rm) return resolveLaneModel(p, role, opts).levels;
+  return p.effort?.levels ?? [];
+}
+function resolveRoles(p, opts = {}) {
+  const out = (
+    /** @type {Record<string, string | null>} */
+    {}
+  );
+  for (const [role, want] of Object.entries(p.roles ?? {})) {
+    out[role] = resolveEffort(levelsForRole(p, role, opts), want);
+  }
+  return out;
+}
+function resolveDefaultVariant(p) {
+  return resolveEffort(p.effort?.levels ?? [], p.effort?.default ?? null);
+}
+var CANON = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+function resolveEffort(levels, requested) {
+  if (!requested) return null;
+  if (!levels || levels.length === 0) return null;
+  if (levels.includes(requested)) return requested;
+  const want = CANON.indexOf(requested);
+  if (want < 0) {
+    return levels[levels.length - 1] ?? null;
+  }
+  let best = null;
+  let bestDist = Infinity;
+  for (const level of levels) {
+    const have = CANON.indexOf(level);
+    if (have < 0) continue;
+    const d = Math.abs(have - want);
+    if (d < bestDist) {
+      bestDist = d;
+      best = level;
+    }
+  }
+  return best ?? levels[levels.length - 1] ?? null;
+}
+var VALID_RETENTION = ["zero-retention", "retained", "may-train", "unknown"];
+function validate(p, path = "<memory>") {
+  const where = p?.id ?? path;
+  if (!p?.id) throw new ProfileError(`${path}: missing "id"`);
+  if (!p.provider) throw new ProfileError(`${where}: missing "provider"`);
+  if (!p.model) throw new ProfileError(`${where}: missing "model"`);
+  if (!VALID_RETENTION.includes(p.retention)) {
+    throw new ProfileError(
+      `${where}: retention must be one of ${VALID_RETENTION.join(", ")}`
+    );
+  }
+  if (p.maxRetention && !VALID_RETENTION.includes(p.maxRetention)) {
+    throw new ProfileError(
+      `${where}: maxRetention must be one of ${VALID_RETENTION.join(", ")}`
+    );
+  }
+  if (p.maxRetention === "unknown") {
+    throw new ProfileError(`${where}: maxRetention cannot be unknown`);
+  }
+  if (!p.limits?.context || p.limits.context <= 0) {
+    throw new ProfileError(`${where}: limits.context must be a positive integer`);
+  }
+  if (!p.limits?.output || p.limits.output <= 0) {
+    throw new ProfileError(`${where}: limits.output must be a positive integer`);
+  }
+  const share = p.effort?.reserveShare;
+  if (share !== void 0 && (share < 0 || share > 0.5)) {
+    throw new ProfileError(
+      `${where}: effort.reserveShare must be between 0 and 0.5`
+    );
+  }
+  for (const role of Object.keys(p.roles ?? {})) {
+    if (!LANE_NAMES.includes(role)) {
+      throw new ProfileError(
+        `${where}: roles.${role} is not one of ${LANE_NAMES.join(", ")}`
+      );
+    }
+    if (!laneMeta(role)) {
+      throw new ProfileError(
+        `${where}: roles.${role} has no lane definition in lanes.json`
+      );
+    }
+  }
+  for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
+    if (!LANE_NAMES.includes(role)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} is not one of ${LANE_NAMES.join(", ")}`
+      );
+    }
+    if (!(role in (p.roles ?? {}))) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} has no matching entry in roles, so it would never apply`
+      );
+    }
+    if (!rm?.model || typeof rm.model !== "string") {
+      throw new ProfileError(`${where}: roleModels.${role} needs a model`);
+    }
+    if (rm.levels !== void 0 && !Array.isArray(rm.levels)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role}.levels must be an array`
+      );
+    }
+    if (rm.chain !== void 0) {
+      if (!Array.isArray(rm.chain) || rm.chain.length === 0) {
+        throw new ProfileError(
+          `${where}: roleModels.${role}.chain must be a non-empty array`
+        );
+      }
+      if (rm.chain[0] !== rm.model) {
+        throw new ProfileError(
+          `${where}: roleModels.${role}.chain must start with its model (${rm.chain[0]} vs ${rm.model})`
+        );
+      }
+      for (const rung of rm.chain) {
+        if (!retentionFor(rung)) {
+          throw new ProfileError(
+            `${where}: roleModels.${role}.chain names ${rung}, which has no retention.yml entry`
+          );
+        }
+      }
+    }
+    if (!retentionFor(rm.model)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`
+      );
+    }
+  }
+}
+function inputCap(p, opts = {}) {
+  let cap = p.limits.input ?? p.limits.context;
+  for (const s of roleSplitModels(p, opts)) {
+    const other = s.limits?.input ?? s.limits?.context;
+    if (typeof other === "number" && other < cap) cap = other;
+  }
+  return cap;
+}
+function reservedTokens(p, opts = {}) {
+  const share = p.effort?.reserveShare ?? 0.12;
+  return Math.max(8e3, Math.round(inputCap(p, opts) * share));
+}
+function pruneThreshold(p, opts = {}) {
+  return inputCap(p, opts) - reservedTokens(p, opts);
+}
+function roleSplitModels(p, opts = {}) {
+  return Object.entries(p.roleModels ?? {}).map(([role]) => {
+    const resolved = resolveLaneModel(p, role, opts);
     let limits = null;
     try {
-      limits = loadProfile(rm.model)?.limits ?? null;
+      limits = loadProfile(resolved.model)?.limits ?? null;
     } catch {
       limits = null;
     }
-    return { role, model: rm.model, levels: rm.levels ?? [], limits };
+    return { role, model: resolved.model, levels: resolved.levels, limits };
   });
 }
+function configDir() {
+  return process.env.OPENCODE_CONFIG_DIR ?? join(process.env.HOME ?? "", ".config", "opencode");
+}
 function configFilePath() {
-  const dir = process.env.OPENCODE_CONFIG_DIR ?? join(process.env.HOME ?? "", ".config", "opencode");
-  return join(dir, "opencode.jsonc");
+  return join(configDir(), "opencode.jsonc");
 }
 function parseJsonc(text) {
   let out = "";
@@ -847,6 +972,14 @@ function writeHealth(worktree, h) {
   } catch {
   }
 }
+function unhealthyModels(worktree) {
+  const health = readHealth(worktree);
+  const out = /* @__PURE__ */ new Set();
+  for (const key of Object.keys(health.unhealthy ?? {})) {
+    out.add(key.includes("/") ? key.slice(key.indexOf("/") + 1) : key);
+  }
+  return out;
+}
 var SPENT = [
   /FreeUsageLimitError/i,
   /rate[_ -]?limit/i,
@@ -860,7 +993,7 @@ function classify(text) {
   for (const p of SPENT) if (p.test(text)) return p.source;
   return null;
 }
-var WARN_TEXT = "[opencode-harness-kit] This session's model route is rate limited or withdrawn. No plugin can swap a live session's model, so stop retrying and ask the human to start a new session. Run `oc-harness list` to see the fallback queue, or `oc-harness doctor` to check whether the profile still matches live metadata.";
+var WARN_TEXT = "[opencode-harness-kit] This session's model route is rate limited or withdrawn. No plugin can swap a live session's model, so stop retrying and ask the human to start a new session. Run `oc-harness list` to see the lanes and their chains, or `oc-harness doctor` to check whether the profile still matches live metadata.";
 var RouterPlugin = async ({ worktree }) => {
   let failedSessions = 0;
   let warned = false;
@@ -870,27 +1003,49 @@ var RouterPlugin = async ({ worktree }) => {
       try {
         const cfg = config;
         const health = readHealth(worktree);
+        const unhealthy = unhealthyModels(worktree);
         const activeId = cfg.harness?.profile ?? profileIdFromConfig();
-        if (activeId) {
-          const id = activeId;
-          const mark = health.unhealthy[`opencode/${id}`];
-          if (mark) {
-            let chosen = id;
+        if (!activeId) return;
+        const id = activeId;
+        let profile;
+        try {
+          profile = loadProfile(id);
+        } catch {
+          return;
+        }
+        const baseKey = `opencode/${profile.model}`;
+        if (health.unhealthy?.[baseKey]) {
+          const queue = [id, ...profile.fallback ?? []];
+          for (const candidate of queue) {
+            if (health.unhealthy?.[`opencode/${candidate}`]) continue;
+            let fallback;
             try {
-              const queue = [id, ...loadProfile(id).fallback ?? []];
-              for (const candidate of queue) {
-                if (!health.unhealthy[`opencode/${candidate}`]) {
-                  chosen = candidate;
-                  break;
-                }
-              }
+              fallback = loadProfile(candidate);
             } catch {
+              continue;
             }
-            if (chosen !== id) {
-              applyProfileToConfig(cfg, chosen);
-              health.active = chosen;
-              writeHealth(worktree, health);
-            }
+            const key = `opencode/${fallback.model}`;
+            if (health.unhealthy?.[key]) continue;
+            applyProfileToConfig(cfg, fallback);
+            health.active = candidate;
+            writeHealth(worktree, health);
+            break;
+          }
+        }
+        const roles = resolveRoles(profile, { unhealthy });
+        for (const [lane, level] of Object.entries(roles)) {
+          if (level === void 0) continue;
+          const agent = cfg.agent?.[lane];
+          if (!agent) continue;
+          const resolved = resolveLaneModel(profile, lane, { unhealthy });
+          if (resolved.model === profile.model && !profile.roleModels?.[lane]) continue;
+          const wantModel = `opencode/${resolved.model}`;
+          if (agent.model !== wantModel) {
+            agent.model = wantModel;
+            const requested = profile.roles?.[lane] ?? null;
+            const next = resolveEffort(resolved.levels, requested);
+            if (next === null) delete agent.variant;
+            else agent.variant = next;
           }
         }
       } catch {
@@ -928,28 +1083,27 @@ ${WARN_TEXT}`;
     }
   };
 };
-function applyProfileToConfig(cfg, profileId) {
+function applyProfileToConfig(cfg, profile) {
   try {
-    const p = loadProfile(profileId);
-    const model = `${p.provider}/${p.model}`;
+    const model = `${profile.provider}/${profile.model}`;
     cfg.model = model;
     cfg.small_model = model;
-    const variant = p.effort?.default;
-    if (p.effort?.levels?.length && variant) cfg.variant = variant;
+    const variant = profile.effort?.default;
+    if (profile.effort?.levels?.length && variant) cfg.variant = variant;
     else delete cfg.variant;
-    for (const [role, want] of Object.entries(p.roles ?? {})) {
+    for (const [lane, want] of Object.entries(profile.roles ?? {})) {
       const agent = cfg.agent ?? (cfg.agent = {});
-      const existing = agent[role] ?? (agent[role] = {});
+      const existing = agent[lane] ?? (agent[lane] = {});
       existing.model = model;
-      const level = resolveEffort(p.effort?.levels ?? [], want);
+      const level = resolveEffort(profile.effort?.levels ?? [], want);
       if (level) existing.variant = level;
       else delete existing.variant;
     }
     if (cfg.compaction) {
       cfg.compaction.prune = true;
-      cfg.compaction.reserved = reservedTokens(p);
+      cfg.compaction.reserved = reservedTokens(profile);
     }
-    cfg.harness = { ...cfg.harness ?? {}, profile: profileId, threshold: pruneThreshold(p) };
+    cfg.harness = { ...cfg.harness ?? {}, profile: profile.id, threshold: pruneThreshold(profile) };
   } catch {
   }
 }
@@ -987,7 +1141,25 @@ var TelemetryPlugin = async ({ worktree }) => {
       if (typeof type !== "string") return;
       if (/error|rate|limit|quota/i.test(type)) {
         write(dir, { kind: "provider-event", type, detail: truncate2(safeStringify(event)) });
+        return;
       }
+      if (type === "message.updated") {
+        const lane = laneOf(event);
+        if (lane) write(dir, { kind: "lane", ...lane });
+      }
+    },
+    "chat.message": async (input) => {
+      const agent = input?.agent;
+      if (typeof agent !== "string" || !agent) return;
+      const model = input?.model;
+      const variant = input?.variant;
+      write(dir, {
+        kind: "lane-call",
+        agent,
+        model: model?.modelID,
+        provider: model?.providerID,
+        variant: typeof variant === "string" ? variant : void 0
+      });
     },
     "tool.execute.after": async (input, output) => {
       const text = typeof output?.output === "string" ? output.output : "";
@@ -1005,6 +1177,26 @@ var TelemetryPlugin = async ({ worktree }) => {
     }
   };
 };
+function laneOf(event) {
+  const e = event;
+  const info = e?.properties?.info ?? e?.properties;
+  if (!info || typeof info !== "object") return null;
+  if (info.role && info.role !== "assistant") return null;
+  const agent = typeof info.agent === "string" ? info.agent : void 0;
+  const modelId = info.model?.modelID ?? info.modelID;
+  const providerId = info.model?.providerID ?? info.providerID;
+  const time = info.time ?? {};
+  const created = typeof time.created === "number" ? time.created : void 0;
+  const completed = typeof time.completed === "number" ? time.completed : void 0;
+  const ms = created !== void 0 && completed !== void 0 ? completed - created : void 0;
+  if (!agent && !modelId) return null;
+  return {
+    agent,
+    model: typeof modelId === "string" ? modelId : void 0,
+    provider: typeof providerId === "string" ? providerId : void 0,
+    ms: typeof ms === "number" && ms >= 0 ? ms : void 0
+  };
+}
 function extractRule(output) {
   const m = output.match(/blocked:\s*([^\n]+)/);
   return m ? m[1].trim() : "unknown";
@@ -1021,28 +1213,32 @@ function safeStringify(value) {
 }
 
 // src/effort.js
-var MANAGED_ROLES = ["plan", "build", "reviewer", "locate", "verify"];
-function planEffort(profileId) {
+function planEffort(profileId, opts = {}) {
   const p = loadProfile(profileId);
   const levels = p.effort?.levels ?? [];
-  const roles = resolveRoles(p);
+  const roles = resolveRoles(p, opts);
   const notes = [];
   if (levels.length === 0) {
     notes.push(
-      `${p.model} publishes no tunable reasoning effort; variant will be omitted for every role.`
+      `${p.model} publishes no tunable reasoning effort; variant will be omitted for every lane.`
     );
   }
   for (const [role, want] of Object.entries(p.roles ?? {})) {
     const got = roles[role];
     if (want && got && want !== got) {
-      notes.push(`role ${role} asked for ${want}; ${p.model} tops out at ${got}.`);
+      notes.push(`lane ${role} asked for ${want}; its model tops out at ${got}.`);
     }
+  }
+  const laneModels = {};
+  for (const role of Object.keys(p.roles ?? {})) {
+    laneModels[role] = resolveLaneModel(p, role, opts).model;
   }
   return {
     profileId,
     model: `${p.provider}/${p.model}`,
     defaultVariant: resolveDefaultVariant(p),
     roles,
+    laneModels,
     notes
   };
 }
@@ -1053,11 +1249,12 @@ function applyEffort(config, result, opts = {}) {
   );
   cfg.model = result.model;
   cfg.agent = cfg.agent ?? {};
-  for (const role of MANAGED_ROLES) {
-    const level = result.roles[role];
+  for (const [role, level] of Object.entries(result.roles)) {
     if (level === void 0) continue;
     const existing = cfg.agent[role] ?? {};
-    if (!existing.model) existing.model = result.model;
+    if (!existing.model) {
+      existing.model = result.laneModels?.[role] ? `${result.model.split("/")[0]}/${result.laneModels[role]}` : result.model;
+    }
     if (level === null) delete existing.variant;
     else existing.variant = level;
     cfg.agent[role] = existing;
@@ -1092,7 +1289,7 @@ var HarnessPlugin = async (ctx, options) => {
     const id = opts.profile ?? config?.harness?.profile ?? profileIdFromConfig();
     if (!id) return;
     try {
-      applyEffort(config, planEffort(id));
+      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }));
       const dir = join5(ctx.worktree, ".space");
       mkdirSync3(dir, { recursive: true });
       writeFileSync2(join5(dir, "active"), `${id}

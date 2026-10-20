@@ -4,107 +4,125 @@
 # provider does with your prompts. That gap is why this file exists: the most
 # consequential choice in a coding agent is often invisible in the metadata.
 #
-# Values:
+# Values, ordered safest-first:
 #   zero-retention  provider keeps nothing, no training
+#   retained        no training, but a stated retention window
 #   may-train       prompts and/or completions may be used to improve the model
 #   unknown         not verified here; `oc-harness use` refuses to make it a
 #                   default until a human fills this in
 #
-# Sources: https://opencode.ai/docs/zen (Privacy section). Re-verify on their
-# release notes; terms change without a model rename.
+# A profile is only as private as its least private model, so a fleet that
+# mixes these values is labelled with the worst one. A fleet may also declare
+# `maxRetention`, which is the ceiling its lanes are allowed to resolve to:
+# every lane then takes the first rung of its model chain at or below that
+# ceiling.
+#
+# Sources: https://opencode.ai/docs/zen (Free models + Privacy sections).
+# Re-verify on their release notes; terms change without a model rename.
 
 defaults:
   unknown: unknown
 
 models:
-  opencode/space-bunny-free:
+  # --- Zero-retention: the provider states a zero-retention policy and does
+  # not train on your data. ---
+
+  opencode/minimax-m3.1-flash-free:
     retention: zero-retention
     note: >-
       "Its provider follows a zero-retention policy and does not use your data
-      for model training." Free for a limited time; stealth model with no public
-      identity.
-    verified: 2026-10-07
+      for model training." Free for a limited time.
+    verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
-  opencode/space-bunny:
+  opencode/glm-5.3-flash-free:
     retention: zero-retention
-    note: Same provider as space-bunny-free, paid route on the Go plan.
-    verified: 2026-10-07
+    note: >-
+      "Its provider follows a zero-retention policy and does not use your data
+      for model training." Free for a limited time.
+    verified: 2026-10-19
+    source: https://opencode.ai/docs/zen
+
+  opencode/deepseek-v4.1-flash-free:
+    retention: zero-retention
+    note: >-
+      "Its provider follows a zero-retention policy and does not use your data
+      for model training." Free for a limited time.
+    verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
   opencode/longcat-2.5-preview-free:
     retention: zero-retention
-    note: "free on OpenCode for a limited time. Its provider follows a zero-retention policy."
-    verified: 2026-10-07
-    source: https://opencode.ai/docs/zen
-
-  # The two entries below are not named individually in the Privacy section.
-  # They fall under the general policy - providers follow zero-retention and do
-  # not train on your data, with a named exception list - so this is inferred
-  # from that list rather than quoted. Re-check before relying on it for
-  # anything sensitive.
-
-  opencode/x-preview-f-free:
-    retention: zero-retention
     note: >-
-      Not named in the Privacy exception list, so the general zero-retention
-      policy applies. Inferred, not quoted.
-    verified: 2026-10-07
+      "Its provider follows a zero-retention policy and does not use your data
+      for model training." Free for a limited time. A preview model: the
+      endpoint can be withdrawn without a rename.
+    verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
-  opencode/deepseek-v4-flash-free:
-    retention: zero-retention
+  # --- Retained: no training, but the provider keeps the data for a stated
+  # window. Not the same promise as zero-retention, so it gets its own value. ---
+
+  opencode/beam-free:
+    retention: retained
     note: >-
-      Not named in the Privacy exception list, so the general zero-retention
-      policy applies. Inferred, not quoted. This route is also documented as
-      returning 429 for extended periods, so see docs/KNOWN-LIMITS.md.
-    verified: 2026-10-07
+      "Prompts and other inputs are not used for training. Data is retained
+      for 30 days for safety reasons." Also unavailable in a list of sanctioned
+      regions. Free for a limited time.
+    verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
-  opencode/muse-spark-1.3-contributor-free:
-    retention: may-train
-    note: >-
-      "Heavily discounted token pricing in exchange for permission to use your
-      prompts and completions to train future Meta models." 1M context, but its
-      top reasoning effort is xhigh, not max. Kept as an example of a
-      capability/privacy tradeoff, never as a default for private code.
-    verified: 2026-10-07
-    source: https://opencode.ai/docs/zen
-
-  opencode/muse-spark-1.3:
-    retention: may-train
-    note: Same Meta contributor terms as the free variant.
-    verified: 2026-10-07
-    source: https://opencode.ai/docs/zen
+  # --- May-train: the provider may use the data to improve the model, or logs
+  # the session. ---
 
   opencode/big-pickle:
     retention: may-train
-    note: "collected data may be used to improve the model" during its free period.
-    verified: 2026-10-07
+    note: >-
+      "During its free period, collected data may be used to improve the
+      model." A stealth model with no public identity.
+    verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
-  opencode/exo-free:
+  opencode/mimo-v2.6-flash-free:
     retention: may-train
-    note: "collected data may be used to improve the model" during its free period.
-    verified: 2026-10-07
-    source: https://opencode.ai/docs/zen
-
-  opencode/fledge-alpha-free:
-    retention: may-train
-    note: "collected data may be used to improve the model" during its free period.
-    verified: 2026-10-07
-    source: https://opencode.ai/docs/zen
-
-  opencode/mimo-v2.5-free:
-    retention: may-train
-    note: "collected data may be used to improve the model" during its free period.
-    verified: 2026-10-07
+    note: >-
+      "During its free period, collected data may be used to improve the
+      model."
+    verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
   opencode/nemotron-3-ultra-free:
     retention: may-train
     note: >-
-      NVIDIA free trial endpoints. Trial use only, do not submit personal or
-      confidential data; sessions are logged.
-    verified: 2026-10-07
+      NVIDIA free trial endpoints. "Trial use only - do not submit personal or
+      confidential data. Your use is logged for security purposes and to
+      improve NVIDIA products and services."
+    verified: 2026-10-19
+    source: https://opencode.ai/docs/zen
+
+  opencode/nemotron-3.5-lightning-free:
+    retention: may-train
+    note: >-
+      NVIDIA free trial endpoints. "Trial use only - do not submit personal or
+      confidential data. Your use is logged for security purposes and to
+      improve NVIDIA products and services."
+    verified: 2026-10-19
+    source: https://opencode.ai/docs/zen
+
+  opencode/nemotron-3.5-super-vl-free:
+    retention: may-train
+    note: >-
+      NVIDIA free trial endpoints. "Trial use only - do not submit personal or
+      confidential data. Your use is logged for security purposes and to
+      improve NVIDIA products and services."
+    verified: 2026-10-19
+    source: https://opencode.ai/docs/zen
+
+  # --- Paid routes, kept because the catalog still serves them and a profile
+  # may be pointed at one. ---
+
+  opencode/muse-spark-1.3:
+    retention: may-train
+    note: Same Meta contributor terms as the free variant.
+    verified: 2026-10-19
     source: https://opencode.ai/docs/zen

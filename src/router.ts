@@ -1,12 +1,14 @@
-// Model fallback across a profile's queue.
+// Model fallback across a profile's lanes.
 //
 // The honest version of this feature: opencode has no hook that can change a
 // live session's model. `chat.params` only sees temperature and sampling, the
 // model on `chat.message` is read-only, and `config` runs once at startup. So
 // failover here means two things, and only two:
 //
-//   1. At startup, if a health file marks the preferred model unhealthy, pick
-//      the next healthy profile before the session begins.
+//   1. At startup, if a health file marks a route unhealthy, the lane that
+//      used it moves to the next rung of its own chain. A fleet has ten lanes
+//      and ten different models, so one spent route must not take the other
+//      nine down with it.
 //   2. When a request fails, tell the agent plainly that the route is spent and
 //      a new session is needed, instead of letting it retry into a wall.
 //
@@ -25,6 +27,9 @@ import {
   profileIdFromConfig,
   reservedTokens,
   resolveEffort,
+  resolveLaneChain,
+  resolveLaneModel,
+  resolveRoles,
 } from "./profile.js"
 
 interface Health {
@@ -53,6 +58,29 @@ function writeHealth(worktree: string, h: Health) {
   }
 }
 
+/**
+ * The models a previous session found spent.
+ *
+ * Exported so the effort hook resolves a lane's variant against the model the
+ * lane actually ended up on. A lane that failed over from a model with a
+ * `none` effort level to one without levels has to lose its variant, or the
+ * config asks for an effort the new model does not publish.
+ *
+ * @param {string} worktree
+ * @returns {Set<string>}
+ */
+export function unhealthyModels(worktree: string): Set<string> {
+  const health = readHealth(worktree)
+  // The health file is keyed by the qualified route, `opencode/<model>`. The
+  // lane chains list bare model ids, so the prefix is dropped here. Comparing
+  // the two directly would never match, and a spent route would look healthy.
+  const out = new Set<string>()
+  for (const key of Object.keys(health.unhealthy ?? {})) {
+    out.add(key.includes("/") ? key.slice(key.indexOf("/") + 1) : key)
+  }
+  return out
+}
+
 /** Patterns that mean "this route is spent", not "this request was bad". */
 const SPENT = [
   /FreeUsageLimitError/i,
@@ -72,8 +100,8 @@ function classify(text: string): string | null {
 const WARN_TEXT =
   "[opencode-harness-kit] This session's model route is rate limited or withdrawn. " +
   "No plugin can swap a live session's model, so stop retrying and ask the human to start a " +
-  "new session. Run `oc-harness list` to see the fallback queue, or `oc-harness doctor` to " +
-  "check whether the profile still matches live metadata."
+  "new session. Run `oc-harness list` to see the lanes and their chains, or `oc-harness doctor` " +
+  "to check whether the profile still matches live metadata."
 
 export const RouterPlugin: Plugin = async ({ worktree }) => {
   let failedSessions = 0
@@ -85,32 +113,61 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
       try {
         const cfg = config as Record<string, any>
         const health = readHealth(worktree)
+        const unhealthy = unhealthyModels(worktree)
 
         // config.harness is stripped by schema validation, so the active
         // profile comes from the config file on disk.
         const activeId = cfg.harness?.profile ?? profileIdFromConfig()
-        if (activeId) {
-          const id: string = activeId
-          const mark = health.unhealthy[`opencode/${id}`]
-          if (mark) {
-            // Walk the queue for the first profile that is not marked down.
-            let chosen: string | null = id
+        if (!activeId) return
+        const id: string = activeId
+        let profile
+        try {
+          profile = loadProfile(id)
+        } catch {
+          return
+        }
+
+        // 1. The session's own model. When it is spent, the profile's
+        //    fallback queue names the profiles that can take over.
+        const baseKey = `opencode/${profile.model}`
+        if (health.unhealthy?.[baseKey]) {
+          const queue = [id, ...(profile.fallback ?? [])]
+          for (const candidate of queue) {
+            if (health.unhealthy?.[`opencode/${candidate}`]) continue
+            let fallback
             try {
-              const queue = [id, ...(loadProfile(id).fallback ?? [])]
-              for (const candidate of queue) {
-                if (!health.unhealthy[`opencode/${candidate}`]) {
-                  chosen = candidate
-                  break
-                }
-              }
+              fallback = loadProfile(candidate)
             } catch {
-              // A broken profile must not stop opencode from starting.
+              continue
             }
-            if (chosen !== id) {
-              applyProfileToConfig(cfg, chosen)
-              health.active = chosen
-              writeHealth(worktree, health)
-            }
+            const key = `opencode/${fallback.model}`
+            if (health.unhealthy?.[key]) continue
+            applyProfileToConfig(cfg, fallback)
+            health.active = candidate
+            writeHealth(worktree, health)
+            break
+          }
+        }
+
+        // 2. Every lane. A lane whose model is spent moves to the next rung of
+        //    its own chain, so one dead route costs one lane, not the fleet.
+        const roles = resolveRoles(profile, { unhealthy })
+        for (const [lane, level] of Object.entries(roles)) {
+          if (level === undefined) continue
+          const agent = cfg.agent?.[lane]
+          if (!agent) continue
+          const resolved = resolveLaneModel(profile, lane, { unhealthy })
+          if (resolved.model === profile.model && !profile.roleModels?.[lane]) continue
+          const wantModel = `opencode/${resolved.model}`
+          if (agent.model !== wantModel) {
+            agent.model = wantModel
+            // The variant has to be resolved against the model the lane ended
+            // up on. A lane that failed over to a model with fewer effort
+            // levels has to lose the variant the old model had.
+            const requested = (profile.roles?.[lane] ?? null) as any
+            const next = resolveEffort(resolved.levels, requested)
+            if (next === null) delete agent.variant
+            else agent.variant = next
           }
         }
       } catch {
@@ -160,30 +217,36 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
   }
 }
 
-/** Point the config at another profile, including its derived numbers. */
-function applyProfileToConfig(cfg: Record<string, any>, profileId: string) {
+/**
+ * Point the config at another profile, including its derived numbers.
+ *
+ * This is the whole-profile move, used when the session's own model is spent.
+ * A fleet profile keeps its lanes: the fallback profile is applied as the
+ * session model and its own lanes, and the lanes of the profile being
+ * replaced are not silently collapsed onto one model.
+ */
+function applyProfileToConfig(cfg: Record<string, any>, profile: any) {
   try {
-    const p = loadProfile(profileId)
-    const model = `${p.provider}/${p.model}`
+    const model = `${profile.provider}/${profile.model}`
     cfg.model = model
     cfg.small_model = model
-    const variant = p.effort?.default
-    if (p.effort?.levels?.length && variant) cfg.variant = variant
+    const variant = profile.effort?.default
+    if (profile.effort?.levels?.length && variant) cfg.variant = variant
     else delete cfg.variant
 
-    for (const [role, want] of Object.entries(p.roles ?? {})) {
+    for (const [lane, want] of Object.entries(profile.roles ?? {})) {
       const agent = cfg.agent ?? (cfg.agent = {})
-      const existing = agent[role] ?? (agent[role] = {})
+      const existing = agent[lane] ?? (agent[lane] = {})
       existing.model = model
-      const level = resolveEffort(p.effort?.levels ?? [], want)
+      const level = resolveEffort(profile.effort?.levels ?? [], want as any)
       if (level) existing.variant = level
       else delete existing.variant
     }
     if (cfg.compaction) {
       cfg.compaction.prune = true
-      cfg.compaction.reserved = reservedTokens(p)
+      cfg.compaction.reserved = reservedTokens(profile)
     }
-    cfg.harness = { ...(cfg.harness ?? {}), profile: profileId, threshold: pruneThreshold(p) }
+    cfg.harness = { ...(cfg.harness ?? {}), profile: profile.id, threshold: pruneThreshold(profile) }
   } catch {
     // Leave the config alone if the fallback profile cannot be read.
   }

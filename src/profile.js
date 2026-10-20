@@ -1,4 +1,4 @@
-// Profile loading, effort resolution, and retention lookup.
+// Profile loading, lane resolution, effort resolution, and retention lookup.
 //
 // The rule this file exists to enforce: no plugin in src/ names a model. Every
 // model-specific decision comes from a profile JSON, so switching models means
@@ -6,18 +6,58 @@
 //
 // Plain JS with JSDoc types on purpose: the opencode plugin loads .ts, but the
 // CLI has to run under plain node, so the shared core stays dependency-free.
+//
+// Three ideas the fleet profiles are built on:
+//
+//   1. A LANE is a job. `lanes.json` says what each of the ten jobs is for and
+//      nothing about models. A profile says which lanes it enables and which
+//      model serves each one.
+//
+//   2. A lane's model is a CHAIN, not a pin. Free routes get withdrawn in
+//      days, so every lane lists the models that could serve it, best first.
+//      The first rung the profile's retention ceiling allows is the one that
+//      runs it.
+//
+//   3. Context management is sized by the NARROWEST model in play. A reserve
+//      sized by the widest one would leave a 200k lane with 74k usable
+//      tokens, which is worse than a thin buffer on a 1M model.
 
 import { readFileSync, existsSync, readdirSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
+import { homedir } from "node:os"
 import { fileURLToPath } from "node:url"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-export const ROOT = resolve(HERE, "..")
 
 /**
- * @typedef {"zero-retention" | "may-train" | "unknown"} Retention
+ * Where the kit's data lives.
+ *
+ * The bundle is one directory under the package root, so the root is normally
+ * its parent. But the plugin is also shipped as a file that somebody copied
+ * into a config directory, and a copied bundle has no `profiles/` beside it -
+ * every profile lookup then fails with "no profile named ...", which reads as
+ * a broken install rather than a moved file. Walking up until the data is
+ * found covers a bundle that was copied into a subdirectory.
+ */
+/** @param {string} start @returns {string} */
+function findRoot(start) {
+  let dir = start
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, "profiles"))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return resolve(start, "..")
+}
+
+export const ROOT = findRoot(resolve(HERE, ".."))
+
+/**
+ * @typedef {"zero-retention" | "retained" | "may-train" | "unknown"} Retention
  * @typedef {string | null} EffortRequest
- * @typedef {{ model: string, levels?: string[] }} RoleModel
+ * @typedef {{ model: string, levels?: string[], chain?: string[] }} RoleModel
+ * @typedef {{ description: string, mode?: string, steps?: number, permission?: Record<string, any>, prompt: string }} Lane
  * @typedef {object} Profile
  * @property {string} id
  * @property {string} [title]
@@ -26,6 +66,7 @@ export const ROOT = resolve(HERE, "..")
  * @property {string | null} [family]
  * @property {string} [verified]
  * @property {Retention} retention
+ * @property {Retention} [maxRetention]
  * @property {string} [notes]
  * @property {{ context: number, input?: number, output: number }} limits
  * @property {{ reasoning?: boolean, temperature?: boolean, toolCall?: boolean,
@@ -42,11 +83,36 @@ export const ROOT = resolve(HERE, "..")
 export class ProfileError extends Error {}
 
 /**
- * Profiles live in profiles/ (verified) and examples/ (contrarian, still
- * installable). schema.json and index.json are not profiles.
+ * The lanes a profile may enable. Five are workflow positions in the plan ->
+ * build -> review -> finish loop; five are capability lanes that exist because
+ * one free model can do a job none of the other nine can.
+ */
+export const LANE_NAMES = [
+  "build",
+  "plan",
+  "reviewer",
+  "locate",
+  "verify",
+  "vision",
+  "doc",
+  "schema",
+  "sweep",
+  "longform",
+]
+
+/** The lanes that are part of the plan -> build -> review -> finish loop. */
+export const WORKFLOW_LANES = ["build", "plan", "reviewer", "locate", "verify"]
+
+// Retention, ordered safest-first. A fleet is labelled with the worst level
+// among the models it actually resolves to.
+const RETENTION_SEVERITY = ["zero-retention", "retained", "unknown", "may-train"]
+
+/**
+ * Profiles live in profiles/ (verified). schema.json and index.json are not
+ * profiles.
  */
 export function profileDirs() {
-  return [join(ROOT, "profiles"), join(ROOT, "examples")]
+  return [join(ROOT, "profiles")]
 }
 
 /** @param {string} id @returns {string | null} */
@@ -102,6 +168,7 @@ export function normalize(p) {
       default: p.effort?.default ?? null,
       reserveShare: p.effort?.reserveShare ?? 0.12,
     },
+    maxRetention: p.maxRetention ?? p.retention,
     prune: {
       enabled: p.prune?.enabled ?? false,
       keepRecentToolCalls: p.prune?.keepRecentToolCalls ?? 6,
@@ -112,198 +179,49 @@ export function normalize(p) {
   }
 }
 
-const VALID_RETENTION = ["zero-retention", "may-train", "unknown"]
+// --- lanes -----------------------------------------------------------------
 
-/** @param {Profile} p @param {string} [path] */
-export function validate(p, path = "<memory>") {
-  const where = p?.id ?? path
-  if (!p?.id) throw new ProfileError(`${path}: missing "id"`)
-  if (!p.provider) throw new ProfileError(`${where}: missing "provider"`)
-  if (!p.model) throw new ProfileError(`${where}: missing "model"`)
-  if (!VALID_RETENTION.includes(p.retention)) {
-    throw new ProfileError(
-      `${where}: retention must be one of ${VALID_RETENTION.join(", ")}`,
-    )
+/** @type {Record<string, Lane> | null} */
+let laneCache = null
+
+/**
+ * The lane table: what each job is for, and nothing about models.
+ * @returns {Record<string, Lane>}
+ */
+export function loadLanes() {
+  if (laneCache) return laneCache
+  const file = join(ROOT, "lanes.json")
+  if (!existsSync(file)) {
+    throw new ProfileError(`lane table missing: ${file}`)
   }
-  if (!p.limits?.context || p.limits.context <= 0) {
-    throw new ProfileError(`${where}: limits.context must be a positive integer`)
-  }
-  if (!p.limits?.output || p.limits.output <= 0) {
-    throw new ProfileError(`${where}: limits.output must be a positive integer`)
-  }
-  const share = p.effort?.reserveShare
-  if (share !== undefined && (share < 0 || share > 0.5)) {
-    throw new ProfileError(
-      `${where}: effort.reserveShare must be between 0 and 0.5`,
-    )
-  }
-  for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
-    if (!SPLITTABLE_ROLES.includes(role)) {
-      throw new ProfileError(
-        `${where}: roleModels.${role} is not one of ${SPLITTABLE_ROLES.join(", ")}`,
-      )
+  const parsed = JSON.parse(readFileSync(file, "utf8"))
+  const lanes = parsed.lanes ?? {}
+  for (const [name, lane] of Object.entries(lanes)) {
+    if (!lane.description) {
+      throw new ProfileError(`lanes.json: lane "${name}" has no description`)
     }
-    // resolveRoles walks `roles`, so a split for a role nobody asks for never
-    // reaches an agent. That reads as "split installed" while doing nothing.
-    if (!(role in (p.roles ?? {}))) {
-      throw new ProfileError(
-        `${where}: roleModels.${role} has no matching entry in roles, so it would never apply`,
-      )
-    }
-    if (!rm?.model || typeof rm.model !== "string") {
-      throw new ProfileError(`${where}: roleModels.${role} needs a model`)
-    }
-    if (rm.levels !== undefined && !Array.isArray(rm.levels)) {
-      throw new ProfileError(
-        `${where}: roleModels.${role}.levels must be an array`,
-      )
-    }
-    // retention.yml is the only place retention is decided, so a role model
-    // missing from it is a profile we cannot honestly write a header for.
-    if (!retentionFor(rm.model)) {
-      throw new ProfileError(
-        `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`,
-      )
+    if (!lane.prompt) {
+      throw new ProfileError(`lanes.json: lane "${name}" has no prompt file`)
     }
   }
-}
-
-// Canonical ordering for reasoning effort, used to snap a requested level onto
-// whatever the target model actually offers.
-const CANON = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-
-/**
- * Pick the available level closest to what a role asked for.
- *
- * A role asking for `max` on a model topping out at `xhigh` gets `xhigh`. A
- * model with no tunable effort resolves to null, meaning "emit no variant"
- * rather than "emit a level the model does not have".
- *
- * @param {string[]} levels
- * @param {EffortRequest} requested
- * @returns {string | null}
- */
-export function resolveEffort(levels, requested) {
-  /** @type {string | null} */
-  if (!requested) return null
-  if (!levels || levels.length === 0) return null
-  if (levels.includes(requested)) return requested
-
-  const want = CANON.indexOf(requested)
-  if (want < 0) {
-    // Unknown label. Snap to the top level, which is the safe reading of a
-    // role that asked for something strong.
-    return levels[levels.length - 1] ?? null
-  }
-  let best = null
-  let bestDist = Infinity
-  for (const level of levels) {
-    const have = CANON.indexOf(level)
-    if (have < 0) continue
-    const d = Math.abs(have - want)
-    if (d < bestDist) {
-      bestDist = d
-      best = level
-    }
-  }
-  return best ?? levels[levels.length - 1] ?? null
+  laneCache = lanes
+  return lanes
 }
 
 /**
- * Model and effort levels for one role, or null when the role stays on the
- * profile's base model.
- *
- * @param {Profile} p
- * @param {string} role
- * @returns {{ model: string, levels: string[] } | null}
+ * @param {string} name
+ * @returns {Lane | null}
  */
-export function resolveRoleModel(p, role) {
-  const rm = p.roleModels?.[role]
-  if (!rm) return null
-  return { model: rm.model, levels: rm.levels ?? [] }
+export function laneMeta(name) {
+  return loadLanes()[name] ?? null
 }
 
-/**
- * Effort levels a role's own model offers. Falls back to the profile's when the
- * role is not split out, so an unsplit profile behaves exactly as before.
- *
- * @param {Profile} p
- * @param {string} role
- * @returns {string[]}
- */
-function levelsForRole(p, role) {
-  const rm = resolveRoleModel(p, role)
-  if (rm) return rm.levels
-  return p.effort?.levels ?? []
+/** @returns {string[]} */
+export function laneNames() {
+  return Object.keys(loadLanes())
 }
 
-/**
- * @param {Profile} p
- * @returns {Record<string, string | null>}
- */
-export function resolveRoles(p) {
-  const out = /** @type {Record<string, string | null>} */ ({})
-  for (const [role, want] of Object.entries(p.roles ?? {})) {
-    // Resolve against the levels of the model this role actually runs on. A
-    // role asking for `max` on a model topping out at `xhigh` gets `xhigh`,
-    // which is only correct if the profile knows the role's real model.
-    out[role] = resolveEffort(levelsForRole(p, role), want)
-  }
-  return out
-}
-
-/** @param {Profile} p @returns {string | null} */
-export function resolveDefaultVariant(p) {
-  return resolveEffort(p.effort?.levels ?? [], p.effort?.default ?? null)
-}
-
-/**
- * Tokens held back from the input ceiling for reasoning growth and in-flight
- * tool output. Scaled from the model, never hardcoded.
- * @param {Profile} p @returns {number}
- */
-// The roles a profile may split onto another model. Kept in step with
-// `roleModels` in profiles/schema.json, which nothing validates at runtime.
-const SPLITTABLE_ROLES = ["plan", "build", "reviewer", "locate", "verify"]
-
-/**
- * The model whose limits govern context management: the one with the widest
- * input cap, not necessarily the base model.
- *
- * A split profile derives `reserved` and `prune` from a single `limits`, but
- * the roles do not share it. Sizing for the narrowest input cap silently
- * throttles every wider role to under half its real window, which is the whole
- * point of running them on a bigger model. Sizing for the widest means no role
- * can be under-reserved, which is the direction that has to be safe.
- *
- * @param {Profile} p
- * @returns {number}
- */
-export function inputCap(p) {
-  let cap = p.limits.input ?? p.limits.context
-  for (const s of roleSplitModels(p)) {
-    const other = s.limits?.input ?? s.limits?.context
-    if (typeof other === "number" && other > cap) cap = other
-  }
-  return cap
-}
-
-/**
- * @param {Profile} p
- * @returns {number}
- */
-export function reservedTokens(p) {
-  const share = p.effort?.reserveShare ?? 0.12
-  return Math.max(8000, Math.round(inputCap(p) * share))
-}
-
-/**
- * Context budget above which pruning should already be working.
- * @param {Profile} p @returns {number}
- */
-export function pruneThreshold(p) {
-  return inputCap(p) - reservedTokens(p)
-}
+// --- retention --------------------------------------------------------------
 
 /**
  * Minimal YAML reader for retention.yml: a two-level map of small records,
@@ -379,7 +297,8 @@ export function loadRetention() {
 /**
  * Retention as declared in retention.yml, which wins over the profile copy.
  * Accepts either a bare profile id or an already-qualified provider/model.
- * @param {string} id @returns {RetentionRecord | undefined}
+ * @param {string} id
+ * @returns {RetentionRecord | undefined}
  */
 export function retentionFor(id) {
   const table = loadRetention()
@@ -387,59 +306,395 @@ export function retentionFor(id) {
 }
 
 /**
- * Every model a profile can put behind the user, base plus any split roles.
+ * The retention of a model id, qualified or not.
+ * @param {string} model
+ * @returns {Retention}
+ */
+export function modelRetention(model) {
+  const declared = retentionFor(model)?.retention ?? "unknown"
+  return /** @type {Retention} */ (
+    ["zero-retention", "retained", "may-train", "unknown"].includes(declared)
+      ? declared
+      : "unknown"
+  )
+}
+
+/**
+ * Whether a model's retention is at or below a ceiling.
+ *
+ * `unknown` is never allowed: a lane that would run on a model nobody has
+ * stated the terms of is worse than a lane that runs on a worse model with
+ * known terms.
+ *
+ * @param {string} model
+ * @param {Retention} ceiling
+ * @returns {boolean}
+ */
+export function retentionAllowed(model, ceiling) {
+  const level = modelRetention(model)
+  if (level === "unknown") return false
+  const max = RETENTION_SEVERITY.indexOf(ceiling)
+  const have = RETENTION_SEVERITY.indexOf(level)
+  if (max < 0) return false
+  return have <= max
+}
+
+// --- lane resolution --------------------------------------------------------
+
+/**
+ * The ordered models that may serve a lane.
+ *
+ * A lane with no `roleModels` entry runs on the profile's base model, which
+ * is the single-model profile shape. A lane with a `chain` walks it.
  *
  * @param {Profile} p
+ * @param {string} role
  * @returns {string[]}
  */
-export function modelsInPlay(p) {
+export function resolveLaneChain(p, role) {
+  const rm = p.roleModels?.[role]
+  if (!rm) return [p.model]
+  const chain = rm.chain?.length ? rm.chain : [rm.model]
+  return chain
+}
+
+/**
+ * The model that actually serves a lane right now.
+ *
+ * The first rung of the chain that is allowed by the retention ceiling and is
+ * not marked unhealthy wins. When no rung qualifies, the lane falls back to
+ * the profile's base model, so a lane is never left without a model.
+ *
+ * @param {Profile} p
+ * @param {string} role
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {{ model: string, levels: string[] }}
+ */
+export function resolveLaneModel(p, role, opts = {}) {
+  const unhealthy = opts.unhealthy ?? new Set()
+  const ceiling = /** @type {Retention} */ (p.maxRetention ?? p.retention)
+  for (const candidate of resolveLaneChain(p, role)) {
+    if (unhealthy.has(candidate)) continue
+    if (!retentionAllowed(candidate, ceiling)) continue
+    return { model: candidate, levels: levelsOfModel(candidate) }
+  }
+  // Nothing in the chain qualifies. Use the first rung anyway rather than
+  // leaving the lane without a model, and let the config header say what the
+  // effective retention turned out to be.
+  const fallback = resolveLaneChain(p, role)[0] ?? p.model
+  return { model: fallback, levels: levelsOfModel(fallback) }
+}
+
+/**
+ * The effort levels a model publishes, read from that model's own profile.
+ *
+ * @param {string} model
+ * @returns {string[]}
+ */
+export function levelsOfModel(model) {
+  try {
+    return loadProfile(model).effort?.levels ?? []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Model and effort levels for one lane, or null when the lane stays on the
+ * profile's base model with no chain.
+ *
+ * @param {Profile} p
+ * @param {string} role
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {{ model: string, levels: string[] } | null}
+ */
+export function resolveRoleModel(p, role, opts = {}) {
+  const rm = p.roleModels?.[role]
+  if (!rm) return null
+  return resolveLaneModel(p, role, opts)
+}
+
+/**
+ * Effort levels a lane's own model offers. A lane with no chain falls back to
+ * the profile's own levels, so an unsplit profile behaves exactly as before.
+ *
+ * @param {Profile} p
+ * @param {string} role
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {string[]}
+ */
+function levelsForRole(p, role, opts) {
+  const rm = p.roleModels?.[role]
+  if (rm) return resolveLaneModel(p, role, opts).levels
+  return p.effort?.levels ?? []
+}
+
+/**
+ * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {Record<string, string | null>}
+ */
+export function resolveRoles(p, opts = {}) {
+  const out = /** @type {Record<string, string | null>} */ ({})
+  for (const [role, want] of Object.entries(p.roles ?? {})) {
+    // Resolve against the levels of the model this role actually runs on. A
+    // role asking for `max` on a model topping out at `xhigh` gets `xhigh`,
+    // which is only correct if the profile knows the role's real model.
+    out[role] = resolveEffort(levelsForRole(p, role, opts), want)
+  }
+  return out
+}
+
+/** @param {Profile} p @returns {string | null} */
+export function resolveDefaultVariant(p) {
+  return resolveEffort(p.effort?.levels ?? [], p.effort?.default ?? null)
+}
+
+// Canonical ordering for reasoning effort, used to snap a requested level onto
+// whatever the target model actually offers.
+const CANON = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+/**
+ * Pick the available level closest to what a role asked for.
+ *
+ * A role asking for `max` on a model topping out at `xhigh` gets `xhigh`. A
+ * model with no tunable effort resolves to null, meaning "emit no variant"
+ * rather than "emit a level the model does not have".
+ *
+ * @param {string[]} levels
+ * @param {EffortRequest} requested
+ * @returns {string | null}
+ */
+export function resolveEffort(levels, requested) {
+  /** @type {string | null} */
+  if (!requested) return null
+  if (!levels || levels.length === 0) return null
+  if (levels.includes(requested)) return requested
+
+  const want = CANON.indexOf(requested)
+  if (want < 0) {
+    // Unknown label. Snap to the top level, which is the safe reading of a
+    // role that asked for something strong.
+    return levels[levels.length - 1] ?? null
+  }
+  let best = null
+  let bestDist = Infinity
+  for (const level of levels) {
+    const have = CANON.indexOf(level)
+    if (have < 0) continue
+    const d = Math.abs(have - want)
+    if (d < bestDist) {
+      bestDist = d
+      best = level
+    }
+  }
+  return best ?? levels[levels.length - 1] ?? null
+}
+
+// --- validation -------------------------------------------------------------
+
+const VALID_RETENTION = ["zero-retention", "retained", "may-train", "unknown"]
+
+/** @param {Profile} p @param {string} [path] */
+export function validate(p, path = "<memory>") {
+  const where = p?.id ?? path
+  if (!p?.id) throw new ProfileError(`${path}: missing "id"`)
+  if (!p.provider) throw new ProfileError(`${where}: missing "provider"`)
+  if (!p.model) throw new ProfileError(`${where}: missing "model"`)
+  if (!VALID_RETENTION.includes(p.retention)) {
+    throw new ProfileError(
+      `${where}: retention must be one of ${VALID_RETENTION.join(", ")}`,
+    )
+  }
+  if (p.maxRetention && !VALID_RETENTION.includes(p.maxRetention)) {
+    throw new ProfileError(
+      `${where}: maxRetention must be one of ${VALID_RETENTION.join(", ")}`,
+    )
+  }
+  if (p.maxRetention === "unknown") {
+    throw new ProfileError(`${where}: maxRetention cannot be unknown`)
+  }
+  if (!p.limits?.context || p.limits.context <= 0) {
+    throw new ProfileError(`${where}: limits.context must be a positive integer`)
+  }
+  if (!p.limits?.output || p.limits.output <= 0) {
+    throw new ProfileError(`${where}: limits.output must be a positive integer`)
+  }
+  const share = p.effort?.reserveShare
+  if (share !== undefined && (share < 0 || share > 0.5)) {
+    throw new ProfileError(
+      `${where}: effort.reserveShare must be between 0 and 0.5`,
+    )
+  }
+  for (const role of Object.keys(p.roles ?? {})) {
+    if (!LANE_NAMES.includes(role)) {
+      throw new ProfileError(
+        `${where}: roles.${role} is not one of ${LANE_NAMES.join(", ")}`,
+      )
+    }
+    if (!laneMeta(role)) {
+      throw new ProfileError(
+        `${where}: roles.${role} has no lane definition in lanes.json`,
+      )
+    }
+  }
+  for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
+    if (!LANE_NAMES.includes(role)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} is not one of ${LANE_NAMES.join(", ")}`,
+      )
+    }
+    // resolveRoles walks `roles`, so a chain for a role nobody asks for never
+    // reaches an agent. That reads as "installed" while doing nothing.
+    if (!(role in (p.roles ?? {}))) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} has no matching entry in roles, so it would never apply`,
+      )
+    }
+    if (!rm?.model || typeof rm.model !== "string") {
+      throw new ProfileError(`${where}: roleModels.${role} needs a model`)
+    }
+    if (rm.levels !== undefined && !Array.isArray(rm.levels)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role}.levels must be an array`,
+      )
+    }
+    if (rm.chain !== undefined) {
+      if (!Array.isArray(rm.chain) || rm.chain.length === 0) {
+        throw new ProfileError(
+          `${where}: roleModels.${role}.chain must be a non-empty array`,
+        )
+      }
+      if (rm.chain[0] !== rm.model) {
+        throw new ProfileError(
+          `${where}: roleModels.${role}.chain must start with its model (${rm.chain[0]} vs ${rm.model})`,
+        )
+      }
+      for (const rung of rm.chain) {
+        if (!retentionFor(rung)) {
+          throw new ProfileError(
+            `${where}: roleModels.${role}.chain names ${rung}, which has no retention.yml entry`,
+          )
+        }
+      }
+    }
+    // retention.yml is the only place retention is decided, so a role model
+    // missing from it is a profile we cannot honestly write a header for.
+    if (!retentionFor(rm.model)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`,
+      )
+    }
+  }
+}
+
+// --- context sizing ---------------------------------------------------------
+
+/**
+ * The model whose limits govern context management: the NARROWEST one in play.
+ *
+ * A fleet mixes models with a 1M window and models with a 200k one, and
+ * `compaction.reserved` is a single number for the whole config. Sizing it by
+ * the widest model would reserve a sixth of a 1M window - 125k tokens - and
+ * leave a 200k lane with 74k usable, which is where the lane stops working.
+ * Sizing it by the narrowest model means every lane keeps a workable window,
+ * and a lane with a wide window simply compacts a little later.
+ *
+ * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {number}
+ */
+export function inputCap(p, opts = {}) {
+  let cap = p.limits.input ?? p.limits.context
+  for (const s of roleSplitModels(p, opts)) {
+    const other = s.limits?.input ?? s.limits?.context
+    if (typeof other === "number" && other < cap) cap = other
+  }
+  return cap
+}
+
+/**
+ * Tokens held back from the input ceiling for reasoning growth and in-flight
+ * tool output. Scaled from the model, never hardcoded.
+ * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {number}
+ */
+export function reservedTokens(p, opts = {}) {
+  const share = p.effort?.reserveShare ?? 0.12
+  return Math.max(8000, Math.round(inputCap(p, opts) * share))
+}
+
+/**
+ * Context budget above which pruning should already be working.
+ * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {number}
+ */
+export function pruneThreshold(p, opts = {}) {
+  return inputCap(p, opts) - reservedTokens(p, opts)
+}
+
+/**
+ * Every model a profile can put behind the user: the base model plus the model
+ * each lane actually resolves to.
+ *
+ * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {string[]}
+ */
+export function modelsInPlay(p, opts = {}) {
   const out = [p.model]
-  for (const rm of Object.values(p.roleModels ?? {})) {
-    if (!out.includes(rm.model)) out.push(rm.model)
+  for (const role of Object.keys(p.roleModels ?? {})) {
+    const model = resolveLaneModel(p, role, opts).model
+    if (!out.includes(model)) out.push(model)
   }
   return out
 }
 
 /**
- * The split roles, each with the limits of the model that role actually runs
- * on. A role on a different model has a different output cap, and the header
+ * The split lanes, each with the limits of the model that lane actually runs
+ * on. A lane on a different model has a different output cap, and the header
  * has to say so: reading "output cap 524,288" and assuming `build` can spend
  * all of it is wrong whenever build is split onto a smaller model.
  *
  * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
  * @returns {{ role: string, model: string, levels: string[], limits: Profile["limits"] | null }[]}
  */
-export function roleSplitModels(p) {
-  return Object.entries(p.roleModels ?? {}).map(([role, rm]) => {
+export function roleSplitModels(p, opts = {}) {
+  return Object.entries(p.roleModels ?? {}).map(([role]) => {
+    const resolved = resolveLaneModel(p, role, opts)
     let limits = null
     try {
-      limits = loadProfile(rm.model)?.limits ?? null
+      limits = loadProfile(resolved.model)?.limits ?? null
     } catch {
       limits = null
     }
-    return { role, model: rm.model, levels: rm.levels ?? [], limits }
+    return { role, model: resolved.model, levels: resolved.levels, limits }
   })
 }
 
-// Ordered safest-first: a profile is only as private as its least private model.
-const RETENTION_SEVERITY = ["zero-retention", "unknown", "may-train"]
-
 /**
- * The retention that actually applies once every role is considered, which is
+ * The retention that actually applies once every lane is considered, which is
  * what a config header has to print. `retention.yml` is the source of truth.
  *
  * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
  * @returns {{ retention: string, worst: string | null }}
  */
-export function effectiveRetention(p) {
+export function effectiveRetention(p, opts = {}) {
   let worst = null
   let retention = "zero-retention"
-  for (const id of modelsInPlay(p)) {
-    const declared = retentionFor(id)?.retention ?? "unknown"
+  for (const id of modelsInPlay(p, opts)) {
+    const declared = modelRetention(id)
     if (declared === "may-train") {
       return { retention: "may-train", worst: id }
     }
-    if (!worst || RETENTION_SEVERITY.indexOf(declared) > RETENTION_SEVERITY.indexOf(worst)) {
+    if (
+      !worst ||
+      RETENTION_SEVERITY.indexOf(declared) > RETENTION_SEVERITY.indexOf(worst)
+    ) {
       worst = declared
     }
     retention = worst
@@ -447,12 +702,43 @@ export function effectiveRetention(p) {
   return { retention, worst }
 }
 
+// --- config paths -----------------------------------------------------------
+
 /** Where opencode keeps its config, honouring the same env var it does. */
+export function configDir() {
+  return (
+    process.env.OPENCODE_CONFIG_DIR ?? join(process.env.HOME ?? "", ".config", "opencode")
+  )
+}
+
+/** @returns {string} */
 export function configFilePath() {
-  const dir =
-    process.env.OPENCODE_CONFIG_DIR ??
-    join(process.env.HOME ?? "", ".config", "opencode")
-  return join(dir, "opencode.jsonc")
+  return join(configDir(), "opencode.jsonc")
+}
+
+/**
+ * The config directory written the way opencode's `{file:...}` references
+ * want it: a tilde when it is the default, an absolute path otherwise.
+ *
+ * A relative reference is silently ignored by opencode, so a prompt file that
+ * resolves to nothing leaves the lane with no instructions and no error.
+ *
+ * @returns {string}
+ */
+export function configDirRef() {
+  const dir = configDir()
+  const home = homedir()
+  if (dir === join(home, ".config", "opencode")) return "~/.config/opencode"
+  return dir
+}
+
+/**
+ * The reference opencode resolves for a lane's prompt file.
+ * @param {string} lane
+ * @returns {string}
+ */
+export function promptRef(lane) {
+  return `{file:${configDirRef()}/prompts/${lane}.md}`
 }
 
 /**

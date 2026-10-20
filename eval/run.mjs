@@ -96,11 +96,11 @@ async function measurePruning() {
   const worktree = join(ROOT, ".space-eval")
   const { mkdirSync, writeFileSync, rmSync } = await import("node:fs")
   mkdirSync(join(worktree, ".space"), { recursive: true })
-  writeFileSync(join(worktree, ".space", "active"), "space-bunny-free\n")
+  writeFileSync(join(worktree, ".space", "active"), "fleet-safe\n")
 
   const hooks = await HarnessPlugin(
     { worktree, directory: worktree, project: {}, client: {}, $: () => {} },
-    { only: ["prune"], profile: "space-bunny-free" },
+    { only: ["prune"], profile: "fleet-safe" },
   )
   const transform = hooks["experimental.chat.messages.transform"]
   if (!transform) {
@@ -245,7 +245,7 @@ async function measureEffort() {
   const { loadProfile, resolveRoles } = await import(join(ROOT, "src", "profile.js"))
 
   const FALLBACK = { max: 18.7, xhigh: 7.8, high: 7.8, medium: 7.8, low: 7.8 }
-  const p = loadProfile("space-bunny-free")
+  const p = loadProfile("fleet-safe")
   const roles = resolveRoles(p)
 
   // A realistic session: one plan, eight builds, two reviews, four verifications.

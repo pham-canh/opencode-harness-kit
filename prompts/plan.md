@@ -1,26 +1,3 @@
----
-description: Plans work before code exists. Use when a task is vague, spans more than a few files, or two people could disagree about what "done" means.
-mode: primary
-model: opencode/space-bunny-free
-variant: max
-steps: 25
-permission:
-  edit: deny
-  bash:
-    "*": deny
-    "git status *": allow
-    "git log *": allow
-    "git diff *": allow
-    "git -C * status*": allow
-    "git -C * log*": allow
-    "git -C * diff*": allow
-    "grep*": allow
-    "rg*": allow
-    "find*": allow
-    "cat*": allow
-    "ls*": allow
----
-
 You turn a request into a plan someone else can execute without asking you
 anything. You do not write the code.
 
@@ -57,5 +34,5 @@ anything. You do not write the code.
 
 Markdown. No preamble, no restating the request.
 
-See also the `space-plan` skill for the full plan → build → review → finish
-loop and the shared task-file contract.
+See also the `space-plan` skill for the full plan -> build -> review ->
+finish loop and the shared task-file contract.

@@ -9,7 +9,7 @@ import assert from "node:assert/strict"
 
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { loadProfile } from "../src/profile.js"
+import { loadProfile, modelsInPlay } from "../src/profile.js"
 
 const ROOT = new URL("..", import.meta.url).pathname
 const LOOP = ["space-plan", "space-build", "space-review", "space-finish"]
@@ -74,26 +74,31 @@ test("the task-file contract is shared by all four loop skills", () => {
   }
 })
 
-test("skills never pin a model that is not the active profile's", () => {
-  const p = loadProfile("space-bunny-free")
+test("skills never pin a model that is not in the active profile", () => {
+  // A skill that names a model is a skill that tells the model to use a
+  // route the profile may have moved off, because a free route gets withdrawn
+  // and the skill does not.
+  const p = loadProfile("fleet-safe")
+  const inPlay = new Set(modelsInPlay(p))
   for (const name of readdirSync(join(ROOT, "skills"))) {
     const { text } = frontmatter(join(ROOT, "skills", name, "SKILL.md"))
     const named = text.match(/opencode\/([a-z0-9.\-]+)/i)
     assert.ok(
-      !named || named[1] === p.model,
-      `skills/${name} mentions opencode/${named?.[1]}, the kit runs on ${p.model}`,
+      !named || inPlay.has(named[1]),
+      `skills/${name} mentions opencode/${named?.[1]}, which is not in the active profile`,
     )
   }
 })
 
-test("the tiered agents point at their loop skill", () => {
-  // The agents carry the prompts, the skills carry the loop rules. Without a
-  // pointer each way, an edit to one side drifts from the other unnoticed.
-  for (const [agent, skill] of [["plan", "space-plan"], ["build", "space-build"], ["reviewer", "space-review"]]) {
-    const text = readFileSync(join(ROOT, "agents", `${agent}.md`), "utf8")
+test("the lane prompts point at their loop skill", () => {
+  // The prompts carry the lane's behaviour, the skills carry the loop rules.
+  // Without a pointer each way, an edit to one side drifts from the other
+  // unnoticed.
+  for (const [lane, skill] of [["plan", "space-plan"], ["build", "space-build"], ["reviewer", "space-review"]]) {
+    const text = readFileSync(join(ROOT, "prompts", `${lane}.md`), "utf8")
     assert.ok(
       text.includes(`\`${skill}\``),
-      `agents/${agent}.md must name the ${skill} skill so the loop stays wired`,
+      `prompts/${lane}.md must name the ${skill} skill so the loop stays wired`,
     )
   }
 })

@@ -1,0 +1,139 @@
+{
+  "$comment": "A fleet is ten jobs with ten models. `roleModels.<lane>.chain` is the ordered list of models that can serve that lane; the first rung the profile's `maxRetention` ceiling allows is the one that runs it, and the router walks the same chain when a route is spent. No model name in a lane is a promise that it will still exist next month, which is why every lane has a chain.",
+  "id": "fleet-safe",
+  "title": "Ten jobs, zero-retention models only",
+  "provider": "opencode",
+  "model": "minimax-m3.1-flash-free",
+  "family": null,
+  "verified": "2026-10-19",
+  "retention": "zero-retention",
+  "maxRetention": "zero-retention",
+  "notes": "The default. Every lane resolves to a model whose provider states a zero-retention policy: no training, nothing kept. The cost is that four of the ten jobs run on a model that is not the one that suits them best - the planner loses beam (30-day retention) and the reviewer loses Nemotron 3 Ultra - so this is the floor, not the ceiling. `fleet-all` gives every lane the model built for it.",
+  "limits": {
+    "context": 1000000,
+    "output": 512000
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": false,
+    "toolCall": true,
+    "structuredOutput": false,
+    "attachment": true
+  },
+  "effort": {
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "default": "max",
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low",
+    "vision": null,
+    "doc": null,
+    "schema": "max",
+    "sweep": "none",
+    "longform": null
+  },
+  "roleModels": {
+    "build": {
+      "model": "minimax-m3.1-flash-free",
+      "chain": [
+        "minimax-m3.1-flash-free",
+        "deepseek-v4.1-flash-free",
+        "longcat-2.5-preview-free"
+      ]
+    },
+    "plan": {
+      "model": "beam-free",
+      "chain": [
+        "beam-free",
+        "deepseek-v4.1-flash-free",
+        "longcat-2.5-preview-free"
+      ]
+    },
+    "reviewer": {
+      "model": "nemotron-3-ultra-free",
+      "chain": [
+        "nemotron-3-ultra-free",
+        "glm-5.3-flash-free",
+        "deepseek-v4.1-flash-free"
+      ]
+    },
+    "locate": {
+      "model": "nemotron-3.5-lightning-free",
+      "chain": [
+        "nemotron-3.5-lightning-free",
+        "big-pickle",
+        "longcat-2.5-preview-free"
+      ]
+    },
+    "verify": {
+      "model": "big-pickle",
+      "chain": [
+        "big-pickle",
+        "nemotron-3.5-lightning-free",
+        "deepseek-v4.1-flash-free"
+      ]
+    },
+    "vision": {
+      "model": "mimo-v2.6-flash-free",
+      "chain": [
+        "mimo-v2.6-flash-free",
+        "longcat-2.5-preview-free",
+        "minimax-m3.1-flash-free"
+      ]
+    },
+    "doc": {
+      "model": "glm-5.3-flash-free",
+      "chain": [
+        "glm-5.3-flash-free",
+        "deepseek-v4.1-flash-free",
+        "longcat-2.5-preview-free"
+      ]
+    },
+    "schema": {
+      "model": "deepseek-v4.1-flash-free",
+      "chain": [
+        "deepseek-v4.1-flash-free",
+        "beam-free",
+        "glm-5.3-flash-free"
+      ]
+    },
+    "sweep": {
+      "model": "nemotron-3.5-super-vl-free",
+      "chain": [
+        "nemotron-3.5-super-vl-free",
+        "longcat-2.5-preview-free",
+        "beam-free"
+      ]
+    },
+    "longform": {
+      "model": "longcat-2.5-preview-free",
+      "chain": [
+        "longcat-2.5-preview-free",
+        "minimax-m3.1-flash-free",
+        "beam-free"
+      ]
+    }
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": [
+    "deepseek-v4.1-flash-free",
+    "longcat-2.5-preview-free",
+    "glm-5.3-flash-free"
+  ]
+}

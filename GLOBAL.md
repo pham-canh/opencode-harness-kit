@@ -2,7 +2,7 @@
 
 You are working inside a harness that has already been tuned for the model in
 use. Everything the config and the hooks can enforce is enforced already: the
-tools, the permissions, the command allowlist, the guard, the per-role effort
+tools, the permissions, the command allowlist, the guard, the per-lane effort
 and step caps. This file is only what is left over once those are subtracted --
 the judgement calls no plugin can make for you.
 
@@ -41,6 +41,37 @@ your thoughts on the architecture" is a delay.
 
 Never ask what a `grep` would answer.
 
+## Send the work to the lane that has it
+
+Each lane is a separate agent on its own model, with its own context window
+and its own effort level. You do not switch models: you hand the job over.
+
+| The job | The lane | What it owns |
+|---|---|---|
+| Turn a vague request into a plan | `plan` | the requirement, the tasks, the verify commands |
+| Write and verify the change | `build` | the edit, the test run, the report |
+| Read a change in two passes | `reviewer` | blockers first, then quality |
+| Find where something lives | `locate` | `file:line` evidence, and nothing else |
+| Run the project's checks | `verify` | the real output of a real command |
+| Read an image, a screenshot, a diagram | `vision` | what is in the picture |
+| Read a long document or a spec | `doc` | what it says, and where the code disagrees |
+| Produce JSON or a JSON schema | `schema` | output a program can parse |
+| Sweep a lot of code mechanically | `sweep` | matches, with no judgement |
+| Read a megabyte, or write alternatives | `longform` | very long context, or several answers |
+
+Rules for the hand-off:
+
+- **Delegate the job, not the whole session.** A lane returns an answer; you
+  keep the thread. Do not hand over the conversation.
+- **One lane per job.** `sweep` finds the matches, `reviewer` judges them.
+  Asking one lane to do both gets you the weaker answer.
+- **Do the lane's job yourself when it is small.** Handing a one-line lookup to
+  a separate model costs a round trip and buys nothing. The lanes exist for
+  the jobs that need their own context window, their own model, or their own
+  effort level.
+- **A lane that reports a blocker is the loop working.** Read the file:line it
+  gives you and fix that.
+
 ## Locate before you read
 
 On the measured install, `read` ran 2,966 times against 135 `grep` and 114
@@ -77,11 +108,11 @@ next session more than a small code change.
 
 ## Reasoning budget
 
-Per-role effort and step caps are set in `opencode.json` and enforced by the
-harness, not by anything written here. `plan` and `reviewer` run at the highest
-available effort, `build` in the middle, `locate` and `verify` at the lowest,
-because finding a thing and checking a thing are not design work. If you are
-playing one of the low-effort roles and feel yourself designing an
+Per-lane effort and step caps are set in the generated config and enforced by
+the harness, not by anything written here. `plan` and `reviewer` run at the
+highest available effort, `build` in the middle, `locate` and `verify` at the
+lowest, because finding a thing and checking a thing are not design work. If
+you are playing one of the low-effort lanes and feel yourself designing an
 architecture, stop and report the evidence instead.
 
 ## When context grows
@@ -96,10 +127,10 @@ you need from it and get only that.
 
 ## Model etiquette
 
-If a request fails with a rate limit or a usage cap, **stop**. Do not retry the
-same model; free routes often stay blocked for days, and the daily window only
-resets at 00:00 UTC. Report it and ask for a new session. No plugin can swap
-the model of a live session, so a new session is the actual fix.
+If a request fails with a rate limit or a usage cap, **stop**. Do not retry
+the same model; free routes often stay blocked for days, and the daily window
+only resets at 00:00 UTC. Report it and ask for a new session. No plugin can
+swap the model of a live session, so a new session is the actual fix.
 
 If the model you are on is not the one described in the config, say so before
 starting anything expensive.
