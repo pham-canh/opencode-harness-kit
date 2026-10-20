@@ -34,6 +34,9 @@ can trust:
 - **A changed number.** If your change moves a number a profile claims —
   effort, context budget, token budget — the README has to change with it, in
   the same commit. A stale number in the README is a bug, not a nit.
+- **A change to the grader.** The grader decides what the A/B means, and a
+  number produced by a grader nobody has read is a number nobody should
+  quote. `test/verify.test.js` holds the cases that actually happened.
 - **Anything that writes to disk.** It needs a `--dryrun` path, and it must keep
   a backup. `~/.config/opencode/` is a live config for anyone who runs it,
   including the people reviewing your PR.
@@ -44,8 +47,17 @@ can trust:
 npm run check        # build + typecheck + tests, offline
 npm run check:install  # the above, plus the live install measurement and verify
 npm test             # the offline assertions, fast
-npm run typecheck
+npm run typecheck    # the library, then the scripts
+npm run typecheck:scripts  # only bin/ and eval/
 ```
+
+`bin/` and `eval/` are type-checked too, with a looser config than the
+library: they are plain JavaScript with no JSDoc on their parameters, and
+annotating a few hundred of them would be churn rather than work. The loose
+config still catches a wrong type and a missing property on a declared
+shape; it does not catch a property that does not exist on an object
+literal, so an object you build and then add to wants a `@type` on it. The
+comment in `tsconfig.scripts.json` says which is which.
 
 `npm run check:install` measures an existing OpenCode install and verifies
 the config in `~/.config/opencode/`. It does not install anything itself, and
