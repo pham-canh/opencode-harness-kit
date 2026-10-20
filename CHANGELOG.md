@@ -14,6 +14,21 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-10-20
+
+### Removed
+
+- **The video pipeline and the published demo.** The `video/` directory held
+  the take script, the voiceover, the recording driver and the superseded
+  dubbing pipeline; `docs/demo/pitch.mp4` and `docs/demo-loop.gif` held the
+  published film. This repository is a harness kit, and it is code.
+
+  The film was also stale: it said "seven profiles" and "one hundred and
+  sixty five tests", and the kit now ships twelve profiles and two hundred
+  and ten tests. A front page that misstates the project's own numbers is
+  worse than no front page, so it goes rather than gets quietly outdated
+  again.
+
 ## [0.4.2] — 2026-10-20
 
 ### Changed
@@ -433,7 +448,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/pham-canh/space-harness/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/pham-canh/space-harness/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/pham-canh/space-harness/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/pham-canh/space-harness/compare/v0.3.9...v0.4.0

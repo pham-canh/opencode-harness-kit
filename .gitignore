@@ -25,15 +25,4 @@ baseline-*.txt
 # but the handler does not run if the process is killed, so ignore it regardless.
 .test-build-*/
 
-# video build artifacts (regenerate with video/build.py)
-video/scenes/
-video/audio/
-video/space-harness-demo.mp4
 __pycache__/
-video/build/
-video/vo.m4a
-video/vo_timed.txt
-video/narration.m4a
-
-# vrec and btake are not in this repo. They keep their own .gitignore in their own
-# repos, so anything left here would only ever match a stray copy of one of them.

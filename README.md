@@ -3,25 +3,12 @@
 [![CI](https://github.com/pham-canh/space-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/pham-canh/space-harness/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/opencode-harness-kit.svg)](https://www.npmjs.com/package/opencode-harness-kit)
 
-<p align="center">
-  <video src="docs/demo/pitch.mp4" width="720" controls></video>
-</p>
-
-*Four minutes forty-seven seconds, recorded live from a real terminal and
-narrated. The take script and the voiceover are in [`video/`](video/), and
-rebuilding it is documented there — including the two mistakes that cost the
-most time, so the next person does not repeat them.*
-
 A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
 
 ```bash
 npx -y opencode-harness-kit init    # pick a free model, then install + verify
 ```
-
-<p align="center">
-  <img src="docs/demo-loop.gif" width="760" alt="oc-harness list showing the model-agnostic profiles, then oc-harness verify reporting a consistent install">
-</p>
 
 then restart opencode. That is the whole quickstart. No npm account needed on
 your side — `npx` only downloads the published kit. Prefer git? The same three
