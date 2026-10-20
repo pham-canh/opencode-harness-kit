@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { loadProfile } from "../src/profile.js"
 
 // Isolate from the developer's real opencode config. Without this, a test that
 // omits an explicit profile would read whatever happens to be installed, and
@@ -216,8 +217,23 @@ test("prune is inert until a profile is active, then it stubs old tool output", 
   const opts = { profile: "fleet-safe" }
 
   // No marker yet: prune declines rather than guessing thresholds.
+  //
+  // The hook is REGISTERED even then. It has to be: the profile is resolved
+  // on the first transform, because opencode builds the plugin factories
+  // before it runs the config hooks, and the config hook is what writes the
+  // marker. Resolving at factory time meant a fresh project had no marker
+  // yet, so pruning was off for that entire first session.
+  //
+  // What matters is that the transform changes nothing.
   const cold = await harness(dir)
-  assert.equal(cold["experimental.chat.messages.transform"], undefined)
+  const coldMessages = [toolMessage("cold", "assistant", "bash", "x".repeat(4000))]
+  const coldBefore = JSON.stringify(coldMessages)
+  await cold["experimental.chat.messages.transform"]({}, { messages: coldMessages })
+  assert.equal(
+    JSON.stringify(coldMessages),
+    coldBefore,
+    "pruning with no active profile must change nothing at all",
+  )
 
   writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
   const hooks = await harness(dir)
@@ -254,8 +270,11 @@ test("prune is inert until a profile is active, then it stubs old tool output", 
     m.parts.filter((p) => p.type === "tool"),
   )
   const stubbed = allToolParts.filter((p) => p.state?.metadata?.pruned)
-  // The count is the real invariant: everything but the retained tail.
-  assert.equal(stubbed.length, allToolParts.length - 6, `expected all but 6 pruned`)
+  // The count is the real invariant: everything but the retained tail. The
+  // number of retained calls comes from the profile, not from a literal in
+  // the test, so a profile change does not break a test about pruning.
+  const keep = loadProfile("fleet-safe").prune.keepRecentToolCalls
+  assert.equal(stubbed.length, allToolParts.length - keep, `expected all but ${keep} pruned`)
   for (const p of stubbed) {
     assert.equal(p.state.status, "completed", "the state must stay structurally valid")
     assert.ok(typeof p.state.time.start === "number")
@@ -263,6 +282,160 @@ test("prune is inert until a profile is active, then it stubs old tool output", 
     assert.ok(p.state.input.command, "the original input is preserved for a re-run")
     assert.ok(p.state.output.includes("pruned from context"))
   }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("prune drops old reasoning, and reports what it actually saved", async () => {
+  // The reasoning branch used to book 200 bytes "after" for a part that kept
+  // its full text. Reasoning is 15.6% of stored bytes, so the reported
+  // saving included bytes that were never removed - and the reasoning was
+  // still being re-sent on every turn, which is the problem the plugin
+  // exists to solve.
+  const dir = workspace()
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
+  const hooks = await harness(dir)
+
+  const messages = []
+  for (let i = 0; i < 8; i++) {
+    messages.push({
+      info: { id: `r${i}`, role: "assistant", time: { created: 1789000000000 } },
+      parts: [
+        {
+          id: `prt_r${i}`,
+          sessionID: "ses_test",
+          messageID: `r${i}`,
+          type: "reasoning",
+          text: "THINKING ".repeat(200),
+          time: { start: 1789000000000, end: 1789000001000 },
+        },
+      ],
+    })
+  }
+  const before = JSON.stringify(messages).length
+  await hooks["experimental.chat.messages.transform"]({}, { messages })
+  const after = JSON.stringify(messages).length
+
+  const old = messages[0].parts[0]
+  assert.ok(old.text.length < 200, `the reasoning was not dropped, it is ${old.text.length} bytes`)
+  assert.match(old.text, /dropped from context/)
+  assert.ok(after < before, "dropping reasoning has to make the request smaller")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("prune never stubs a diff, a file body, or a call that did not finish", async () => {
+  // These three are the ones that destroy something. A diff carries what
+  // changed, a file body carries the code, and an error state carries the
+  // reason the agent is stuck.
+  const dir = workspace()
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
+  const hooks = await harness(dir)
+
+  const messages = []
+  for (let i = 0; i < 8; i++) {
+    messages.push({
+      info: { id: `m${i}`, role: "assistant", time: { created: 1789000000000 } },
+      parts: [
+        { id: `p${i}`, type: "patch", text: "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new" },
+        { id: `f${i}`, type: "file", text: "const x = 1\n".repeat(50) },
+        {
+          id: `t${i}`,
+          type: "tool",
+          tool: "bash",
+          state: {
+            status: "error",
+            input: { command: "npm test" },
+            output: "AssertionError: expected 1 to be 2",
+            title: "bash",
+            time: { start: 1789000000000 },
+            metadata: {},
+          },
+        },
+      ],
+    })
+  }
+  await hooks["experimental.chat.messages.transform"]({}, { messages })
+
+  for (const m of messages) {
+    for (const part of m.parts) {
+      if (part.type === "patch") {
+        assert.match(part.text, /@@ -1 \+1 @@/, "a diff must never be stubbed")
+        assert.equal(part.metadata, undefined, "a diff must not be marked as pruned")
+      }
+      if (part.type === "file") {
+        assert.match(part.text, /const x = 1/, "a file body must never be stubbed")
+      }
+      if (part.type === "tool") {
+        assert.equal(part.state.status, "error", "the state must be untouched")
+        assert.match(part.state.output, /AssertionError/, "an error must survive")
+        assert.equal(part.state.metadata?.pruned, undefined, "an error must not be stubbed")
+      }
+    }
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a tool result attached to a user message is kept, because their instructions are the point", async () => {
+  // The user-message protection used to be tested with a user message that
+  // carried only TEXT, and text is kept everywhere - so the test passed for
+  // the wrong reason and the `keepUserMessages` option was never exercised.
+  // A user message with a tool result in it is the case that matters.
+  const dir = workspace()
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
+  const hooks = await harness(dir)
+
+  const messages = []
+  for (let i = 0; i < 8; i++) {
+    messages.push(toolMessage(`m${i}`, "assistant", "bash", "x".repeat(2000)))
+  }
+  messages.push({
+    info: { id: "u1", role: "user", time: { created: 1789000000000 } },
+    parts: [
+      { id: "ut", type: "text", text: "here is the failing output" },
+      {
+        id: "uTool",
+        type: "tool",
+        tool: "read",
+        state: {
+          status: "completed",
+          input: { filePath: "out.txt" },
+          output: "y".repeat(2000),
+          title: "read",
+          time: { start: 1789000000000 },
+          metadata: {},
+        },
+      },
+    ],
+  })
+  await hooks["experimental.chat.messages.transform"]({}, { messages })
+
+  const userTool = messages[messages.length - 1].parts[1]
+  assert.equal(userTool.state.metadata?.pruned, undefined, "a user's tool result must survive")
+  assert.equal(userTool.state.output.length, 2000)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("the prune log lands in the project, not in whatever directory the shell was in", async () => {
+  // It used to be written to `process.cwd()`. That is wherever opencode was
+  // started from - often the user's home directory - so the log was outside
+  // the project, and two projects sharing a cwd shared one log.
+  const dir = workspace()
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
+  const hooks = await harness(dir)
+  const messages = []
+  for (let i = 0; i < 8; i++) {
+    messages.push(toolMessage(`m${i}`, "assistant", "bash", "x".repeat(2000)))
+  }
+  await hooks["experimental.chat.messages.transform"]({}, { messages })
+
+  const log = join(dir, ".space", "prune.jsonl")
+  assert.ok(existsSync(log), `the prune log is not in the project: ${log}`)
+  const line = JSON.parse(readFileSync(log, "utf8").trim().split("\n").pop())
+  assert.equal(line.profile, "fleet-safe")
+  assert.ok(line.stubbed > 0, "the log says what was stubbed")
+  assert.ok(
+    line.savedBytes > 0,
+    "the reported saving must be real: it is what the transform actually removed",
+  )
   rmSync(dir, { recursive: true, force: true })
 })
 

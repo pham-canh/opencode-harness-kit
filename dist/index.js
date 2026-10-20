@@ -711,6 +711,29 @@ function validate(p, path = "<memory>") {
       );
     }
   }
+  if (p.prune) {
+    const prune = p.prune;
+    if (prune.keepRecentToolCalls !== void 0) {
+      if (!Number.isInteger(prune.keepRecentToolCalls) || prune.keepRecentToolCalls < 1) {
+        throw new ProfileError(
+          `${where}: prune.keepRecentToolCalls must be an integer of at least 1`
+        );
+      }
+    }
+    if (prune.keepRecentTurns !== void 0) {
+      if (!Number.isInteger(prune.keepRecentTurns) || prune.keepRecentTurns < 1) {
+        throw new ProfileError(
+          `${where}: prune.keepRecentTurns must be an integer of at least 1`
+        );
+      }
+    }
+    if (prune.keepUserMessages !== void 0 && typeof prune.keepUserMessages !== "boolean") {
+      throw new ProfileError(`${where}: prune.keepUserMessages must be a boolean`);
+    }
+    if (prune.enabled !== void 0 && typeof prune.enabled !== "boolean") {
+      throw new ProfileError(`${where}: prune.enabled must be a boolean`);
+    }
+  }
   for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
     if (!LANE_NAMES.includes(role)) {
       throw new ProfileError(
@@ -902,8 +925,7 @@ import { join as join2 } from "node:path";
 function activeProfileId(worktree) {
   const candidates = [
     process.env.OPENCODE_HARNESS_PROFILE,
-    join2(worktree, ".space", "active"),
-    join2(ROOT, "profiles", ".active")
+    join2(worktree, ".space", "active")
   ];
   for (const f of candidates) {
     if (!f) continue;
@@ -917,6 +939,7 @@ function activeProfileId(worktree) {
   }
   return null;
 }
+var REASONING_STUB = "[reasoning] dropped from context - it was from an earlier turn and is stale.";
 function sizeOf(part) {
   if (typeof part?.text === "string") return part.text.length;
   if (typeof part?.state?.output === "string") return part.state.output.length;
@@ -931,7 +954,7 @@ function stub(part) {
     const status = state.status ?? "done";
     let tail = "";
     const out = String(state.output ?? "");
-    const m = out.match(/(passed|failed|error|Error|ok|OK|\d+ (?:passed|failed))/g);
+    const m = out.match(/\b(?:\d+\s+(?:passed|failed)|passed|failed|error|ok)\b/gi);
     if (m && m.length) tail = `, ${m[m.length - 1]}`;
     return `[${tool}] ${cmd} -> ${status}${tail} | full output was pruned from context; re-run the command if you need it`;
   }
@@ -941,24 +964,39 @@ function stub(part) {
   }
   return `[${tool}] result pruned from context (${state.status ?? "done"}); re-run if you need it`;
 }
-var PrunePlugin = async ({ worktree, $ }) => {
-  let profile = null;
-  try {
-    const id = activeProfileId(worktree);
-    if (id) profile = loadProfile(id);
-  } catch {
-    profile = null;
-  }
-  if (!profile?.prune?.enabled) {
-    return {};
-  }
-  const keepCalls = profile.prune.keepRecentToolCalls ?? 6;
-  const keepTurns = profile.prune.keepRecentTurns ?? 3;
-  const keepUsers = profile.prune.keepUserMessages ?? true;
-  const threshold = pruneThreshold(profile);
+var PrunePlugin = async ({ worktree }) => {
+  const DISABLED = {
+    profile: null,
+    keepCalls: 0,
+    keepTurns: 0,
+    keepUsers: true,
+    threshold: 0
+  };
+  let cached = null;
+  const resolve2 = () => {
+    if (cached) return cached;
+    let profile = null;
+    try {
+      const id = activeProfileId(worktree);
+      if (id) profile = loadProfile(id);
+    } catch {
+      profile = null;
+    }
+    if (!profile?.prune?.enabled) return DISABLED;
+    cached = {
+      profile,
+      keepCalls: profile.prune.keepRecentToolCalls ?? 6,
+      keepTurns: profile.prune.keepRecentTurns ?? 3,
+      keepUsers: profile.prune.keepUserMessages ?? true,
+      threshold: pruneThreshold(profile)
+    };
+    return cached;
+  };
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve2();
+        if (!profile) return;
         const messages = output.messages;
         if (!Array.isArray(messages) || messages.length === 0) return;
         const floor = Math.max(0, messages.length - 1 - keepTurns);
@@ -1003,10 +1041,12 @@ var PrunePlugin = async ({ worktree, $ }) => {
                 stats.bytesAfter += size;
                 stats.kept++;
                 break;
-              case "reasoning":
-                stats.bytesAfter += Math.min(size, 200);
+              case "reasoning": {
+                part.text = REASONING_STUB;
+                stats.bytesAfter += sizeOf(part);
                 stats.stubbed++;
                 break;
+              }
               case "tool": {
                 const state = part.state;
                 if (state?.status !== "completed") {
@@ -1038,7 +1078,7 @@ var PrunePlugin = async ({ worktree, $ }) => {
         }
         if (stats.stubbed > 0) {
           const saved = Math.max(0, stats.bytesBefore - stats.bytesAfter);
-          await logPrune(profile.id, {
+          await logPrune(worktree, profile.id, {
             ...stats,
             saved,
             threshold
@@ -1052,8 +1092,8 @@ var PrunePlugin = async ({ worktree, $ }) => {
     }
   };
 };
-async function logPrune(profileId, stats) {
-  const dir = join2(process.cwd(), ".space");
+async function logPrune(worktree, profileId, stats) {
+  const dir = join2(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });

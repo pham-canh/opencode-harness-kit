@@ -141,7 +141,7 @@
         "keepUserMessages": {
           "type": "boolean",
           "default": true,
-          "description": "Never stub a user message. Their instructions are the point of the session."
+          "description": "Never stub anything inside a user message. Their instructions are the point of the session. This covers a tool result a user attached as well as their text: user text is kept either way, because prose is kept everywhere."
         }
       }
     },
