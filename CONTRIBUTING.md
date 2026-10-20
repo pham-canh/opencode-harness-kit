@@ -73,8 +73,10 @@ Keep the diff to one concern. Say what you changed, what you measured, and what
 you did not check. If you fixed a bug, the PR should fail before it and pass
 after — say which test does that.
 
-Bump nothing by hand in `package.json`: releases are cut by tagging `v*`, and the
-`publish` job reads the version from there.
+The version is set in `package.json` by `npm version`, and the tag is what
+triggers the publish. Keep the two in step: the job publishes the version in
+`package.json`, so a tag that says one version and a file that says another
+is refused by the registry with `EPUBLISHCONFLICT`.
 
 ## Cutting a release
 
@@ -90,7 +92,11 @@ git push origin main v<version>
 ```
 
 The tag triggers the workflow, the tests run, and the `publish` job publishes
-the tarball.
+the tarball. `npm version` writes the version into `package.json`, and the
+publish job publishes the version in `package.json` — so the tag and
+`package.json` have to agree, or the registry refuses the publish with
+`EPUBLISHCONFLICT`. That is the hazard worth guarding: not the bump, but a
+tag that says one version and a file that says another.
 
 ### How the publish authenticates
 

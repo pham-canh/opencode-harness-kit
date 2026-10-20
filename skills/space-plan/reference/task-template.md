@@ -21,7 +21,8 @@ has been pruned. Never keep it in your head.
   - files: <exact paths to change>
   - change: <what the change is, concretely, not "handle errors">
   - verify: <the exact command that proves it, and nothing else>
-  - status: pending | done | blocked
+  - status: <pending | done | blocked>
+  - output: <the command's verbatim final lines>
 - [x] <finished task>
   - files: <paths>
   - change: <what was done, including anything the original task did not name>

@@ -496,15 +496,20 @@ function loadRetention() {
   if (retentionCache) return retentionCache;
   const file = join(ROOT, "retention.yml");
   if (!existsSync(file)) {
-    retentionCache = {};
+    retentionCache = { models: {}, defaults: {} };
     return retentionCache;
   }
-  const out = (
+  const models = (
     /** @type {Record<string, any>} */
+    {}
+  );
+  const defaults = (
+    /** @type {Record<string, string>} */
     {}
   );
   const lines = readFileSync(file, "utf8").split("\n");
   let current = null;
+  let inDefaults = false;
   let i = 0;
   while (i < lines.length) {
     const raw = lines[i];
@@ -514,10 +519,28 @@ function loadRetention() {
       i++;
       continue;
     }
+    if (indent === 0 && line === "defaults:") {
+      inDefaults = true;
+      current = null;
+      i++;
+      continue;
+    }
+    if (indent === 0 && line === "models:") {
+      inDefaults = false;
+      current = null;
+      i++;
+      continue;
+    }
+    if (inDefaults) {
+      const pair = line.match(/^([a-z-]+)\s*:\s*(\S+)\s*$/);
+      if (pair) defaults[pair[1]] = pair[2];
+      i++;
+      continue;
+    }
     if (indent === 2 && line.endsWith(":")) {
       const key = line.slice(0, -1).trim();
       current = key.includes("/") ? key : `opencode/${key}`;
-      out[current] = { retention: "unknown" };
+      models[current] = { retention: "unknown" };
       i++;
       continue;
     }
@@ -541,25 +564,26 @@ function loadRetention() {
           if (l.length - l.trimStart().length <= indent) break;
           parts.push(l.trim());
         }
-        out[current][name] = parts.join(" ").replace(/\s+/g, " ").trim();
+        models[current][name] = parts.join(" ").replace(/\s+/g, " ").trim();
         i = j;
         continue;
       }
-      out[current][name] = rest.replace(/^["']|["']$/g, "");
+      models[current][name] = rest.replace(/^["']|["']$/g, "");
       i++;
       continue;
     }
     i++;
   }
-  retentionCache = out;
-  return out;
+  retentionCache = { models, defaults };
+  return retentionCache;
 }
 function retentionFor(id) {
-  const table = loadRetention();
+  const table = loadRetention().models;
   return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`];
 }
 function modelRetention(model) {
-  const declared = retentionFor(model)?.retention ?? "unknown";
+  const fallback = loadRetention().defaults?.unknown ?? "unknown";
+  const declared = retentionFor(model)?.retention ?? fallback;
   return (
     /** @type {Retention} */
     ["zero-retention", "retained", "may-train", "unknown"].includes(declared) ? declared : "unknown"

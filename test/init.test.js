@@ -113,7 +113,15 @@ test("a profile whose split role may train is announced before it becomes defaul
     r.out.includes("nemotron-3-ultra-free"),
     "the warning names the model that actually may train, not the zero-retention base",
   )
-  assert.ok(r.out.includes("Re-run with --yes to accept"), "the warning says what to do about it")
+  assert.ok(
+    r.out.includes("Continuing: there is no terminal to ask"),
+    "the warning says what it did about the consent, rather than asking for a re-run that already happened:\n" +
+      r.out,
+  )
+  assert.ok(
+    !r.out.includes("Re-run with --yes to accept"),
+    "the run has already continued, so telling the user to re-run is wrong",
+  )
   assert.ok(
     !r.out.includes("opencode/minimax-m3.1-flash-free may train"),
     "the base model is zero-retention and must not be named as the reason",

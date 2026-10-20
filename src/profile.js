@@ -256,21 +256,27 @@ export function laneNames() {
  * of every lane, and every candidate of every lane re-read and re-parsed
  * the whole file.
  *
- * @returns {Record<string, RetentionRecord>}
+ * The `defaults:` block is read, because it LOOKS like configuration and
+ * was not: the fallback for a model with no entry was hardcoded in the
+ * reader, so changing `defaults.unknown` in the file did nothing.
+ *
+ * @returns {{ models: Record<string, RetentionRecord>, defaults: Record<string, string> }}
  */
-/** @type {Record<string, RetentionRecord> | null} */
+/** @type {{ models: Record<string, RetentionRecord>, defaults: Record<string, string> } | null} */
 let retentionCache = null
 export function loadRetention() {
   if (retentionCache) return retentionCache
   const file = join(ROOT, "retention.yml")
   if (!existsSync(file)) {
-    retentionCache = {}
+    retentionCache = { models: {}, defaults: {} }
     return retentionCache
   }
-  const out = /** @type {Record<string, any>} */ ({})
+  const models = /** @type {Record<string, any>} */ ({})
+  const defaults = /** @type {Record<string, string>} */ ({})
   const lines = readFileSync(file, "utf8").split("\n")
 
   let current = null
+  let inDefaults = false
   let i = 0
 
   while (i < lines.length) {
@@ -282,12 +288,31 @@ export function loadRetention() {
       i++
       continue
     }
+    // `defaults:` is a top-level block, and its values are plain scalars.
+    if (indent === 0 && line === "defaults:") {
+      inDefaults = true
+      current = null
+      i++
+      continue
+    }
+    if (indent === 0 && line === "models:") {
+      inDefaults = false
+      current = null
+      i++
+      continue
+    }
+    if (inDefaults) {
+      const pair = line.match(/^([a-z-]+)\s*:\s*(\S+)\s*$/)
+      if (pair) defaults[pair[1]] = pair[2]
+      i++
+      continue
+    }
     // A model key sits at two-space indent under `models:`. A key with no
     // provider prefix gets one, so a lookup by bare model id finds it.
     if (indent === 2 && line.endsWith(":")) {
       const key = line.slice(0, -1).trim()
       current = key.includes("/") ? key : `opencode/${key}`
-      out[current] = { retention: "unknown" }
+      models[current] = { retention: "unknown" }
       i++
       continue
     }
@@ -314,18 +339,18 @@ export function loadRetention() {
           if (l.length - l.trimStart().length <= indent) break
           parts.push(l.trim())
         }
-        out[current][name] = parts.join(" ").replace(/\s+/g, " ").trim()
+        models[current][name] = parts.join(" ").replace(/\s+/g, " ").trim()
         i = j
         continue
       }
-      out[current][name] = rest.replace(/^["']|["']$/g, "")
+      models[current][name] = rest.replace(/^["']|["']$/g, "")
       i++
       continue
     }
     i++
   }
-  retentionCache = out
-  return out
+  retentionCache = { models, defaults }
+  return retentionCache
 }
 
 /**
@@ -335,17 +360,24 @@ export function loadRetention() {
  * @returns {RetentionRecord | undefined}
  */
 export function retentionFor(id) {
-  const table = loadRetention()
+  const table = loadRetention().models
   return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`]
 }
 
 /**
  * The retention of a model id, qualified or not.
+ *
+ * A model with no entry in retention.yml gets the `defaults.unknown` value
+ * from that file, which is `unknown` today. The fallback used to be
+ * hardcoded here, so the `defaults:` block in retention.yml looked like
+ * configuration and was not.
+ *
  * @param {string} model
  * @returns {Retention}
  */
 export function modelRetention(model) {
-  const declared = retentionFor(model)?.retention ?? "unknown"
+  const fallback = loadRetention().defaults?.unknown ?? "unknown"
+  const declared = retentionFor(model)?.retention ?? fallback
   return /** @type {Retention} */ (
     ["zero-retention", "retained", "may-train", "unknown"].includes(declared)
       ? declared
