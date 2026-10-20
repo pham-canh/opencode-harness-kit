@@ -142,6 +142,9 @@ test("marking done ticks the box and keeps the verify command runnable", () => {
   // string: the driver runs the command, so the command has to stay a command.
   assert.equal(after.tasks[0].verify, "npm test")
   assert.equal(after.tasks[0].output, "# pass 3")
+  // The output field sits at the same level as the field it belongs to, and
+  // its continuation lines are indented under it.
+  assert.ok(out.includes("  - output: # pass 3"), out)
 })
 
 test("marking twice replaces the output instead of stacking it", () => {

@@ -221,13 +221,16 @@ export function markTask(text, task, { status, verifyOutput }) {
     const verifyLine = fieldLine(lines, task, "verify")
     const anchor = verifyLine >= 0 ? verifyLine : lastFieldLine(lines, task)
     const source = lines[anchor] ?? lines[task.start] ?? ""
-    const indent = `${(source.match(/^\s*/) ?? [""])[0]}  `
+    // The field line sits at the same level as the field it belongs to; only
+    // the continuation lines under it are indented deeper.
+    const fieldIndent = (source.match(/^\s*/) ?? [""])[0]
+    const contIndent = `${fieldIndent}  `
     const quoted = String(verifyOutput)
       .trimEnd()
       .split("\n")
-      .map((l) => `${indent}${l}`)
+      .map((l) => `${contIndent}${l}`)
     // The first line rides on the field, the rest are continuations of it.
-    const block = [`${indent}- output: ${quoted[0].trim()}`, ...quoted.slice(1)]
+    const block = [`${fieldIndent}- output: ${quoted[0].trim()}`, ...quoted.slice(1)]
     lines.splice(anchor + 1, 0, ...block)
   }
 

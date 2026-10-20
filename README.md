@@ -214,6 +214,97 @@ it. One file covers ten jobs either way.
 The five-lane profiles run everything on one model, which is the right shape
 when you want one route and want to know exactly which one.
 
+## Free models are perishable, so check them
+
+Every model in the table above is a **free tier slot**, and free tier slots
+turn over in days. Zen states free models are available "for a limited time"
+with no date attached, so a profile is a snapshot of a moment rather than a
+stable thing.
+
+Observed lifetimes, from one install's 20-day history:
+
+| model | observed lifetime |
+|---|---|
+| `mimo-v2.5-free` | 1 day |
+| `big-pickle` | 1 day |
+| `nemotron-3-ultra-free` | 3 days |
+| `muse-spark-1.3-contributor-free` | still running at 20 days |
+
+The tier turned over again since. Five of this kit's own profiles are already
+withdrawn, and one of them was the **default** at the time:
+
+| withdrawn | why it matters |
+|---|---|
+| `space-bunny-free` | It was the default profile. A config left pointing at it kept working and kept saying it was zero-retention. |
+| `x-preview-f-free` | Withdrawn within a month of shipping. |
+| `deepseek-v4-flash-free` | Withdrawn within a month. Replaced by `deepseek-v4.1-flash-free`. |
+| `muse-spark-1.3-contributor-free` | A Meta contributor route whose provider was permitted to train on prompts. The paid route is still in the catalogue. |
+| `mimo-v2.5-free` | Observed alive for one day. Replaced by `mimo-v2.6-flash-free`. |
+
+The full list, with a reason for each, is in
+[`profiles/index.json`](profiles/index.json).
+
+### The four commands, and when each one runs
+
+| command | what it checks | when |
+|---|---|---|
+| `oc-harness list` | the profiles this kit ships, with retention and caveats | offline, any time |
+| `oc-harness doctor` | every profile against the live model catalogue, and the installed config against the active profile | **before every release**, and whenever a lane starts failing with a 429 or a "model not found" |
+| `oc-harness refresh <id>` | re-derives a profile's machine-derived fields from live metadata | when `doctor` reports drift |
+| `oc-harness verify` | the installed config still matches the profile, and the kit's own files are still installed | after every `use` / `install` |
+
+`doctor` separates the two kinds of finding, because they are not the same
+kind of finding:
+
+- **A broken install** — the config no longer matches the profile, or the
+  active profile no longer loads. This always exits non-zero.
+- **Perishable metadata** — a profile has drifted from models.dev because a
+  provider changed a context window or a capability flag. This is reported and
+  exits zero, unless you pass `--strict`, which is for a release.
+
+A CI job that failed on the second kind would go red on a Tuesday because
+somebody else changed a provider's limits, and a job that goes red for a
+reason you cannot act on is a job people stop reading.
+
+It is not a hypothetical. The day this was written, four of the twelve
+shipped profiles had already drifted from the live catalogue — the
+`temperature` flag had flipped on every one of them.
+
+### What `refresh` will and will not touch
+
+`refresh` rewrites only the fields a machine can derive: context, output and
+input ceilings, the effort levels a model publishes, and the capability flags.
+It never touches `retention`, `note`, `roles` or the fallback queue, because
+those are human judgements and a script overwriting a privacy verdict is worse
+than drift.
+
+**If a provider changes its terms, a human has to say so.** `retention.yml` is
+hand-curated and dated (`verified:` on every entry). `doctor` will catch the
+one case it can check mechanically — a profile that says `zero-retention`
+while `retention.yml` now says `may-train` — and nothing else.
+
+### What happens when a model is withdrawn
+
+No plugin hook can change the model of a running session, so the failover is
+not mid-flight:
+
+1. The router marks the route spent when a request fails with a free-tier
+   limit or a withdrawal.
+2. At the **next** session start, the lane that used it moves to the next rung
+   of its own chain, and the session's own model moves to the next profile in
+   the fallback queue.
+3. A fleet keeps its lanes. One spent route costs one lane, not ten — that is
+   the whole reason every lane carries a chain of models instead of a single
+   name.
+
+If a model is withdrawn and the lane's whole chain has gone with it, the lane
+falls back to the profile's base model. If even that is spent, the lane still
+gets a model and the config header says what the effective retention turned
+out to be. A lane is never left without one.
+
+See [docs/KNOWN-LIMITS.md](docs/KNOWN-LIMITS.md) for the rest of what this
+tier cannot do.
+
 ## Requirements
 
 | | |

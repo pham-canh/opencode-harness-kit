@@ -284,23 +284,21 @@ unhealthy and failing over at the next start is the honest behaviour.
 ## Free models get withdrawn quickly
 
 From one install's 20-day history, free model slots turned over in days:
+`mimo-v2.5-free` lasted a day, `big-pickle` a day, `nemotron-3-ultra-free`
+three days. Zen states free models are available "for a limited time" with no
+date. Treat profiles as perishable.
 
-| model | observed lifetime |
-|---|---|
-| `mimo-v2.5-free` | 1 day |
-| `big-pickle` | 1 day |
-| `nemotron-3-ultra-free` | 3 days |
-| `muse-spark-1.3-contributor-free` | still running at 20 days |
+The README's [Free models are perishable](../../README.md#free-models-are-perishable-so-check-them)
+section has the full list of withdrawn models, the four commands that check
+for drift, and what `refresh` will and will not rewrite. The short version:
+run `oc-harness doctor` before every release and whenever a lane starts
+failing with a 429 or a withdrawal.
 
-The tier turned over again since: four of this kit's five original profiles
-(`space-bunny-free`, `x-preview-f-free`, `deepseek-v4-flash-free`,
-`muse-spark-1.3-contributor-free`) were all withdrawn within a month of
-shipping, and the default profile pointed at a model that no longer existed.
-
-Zen states free models are available "for a limited time" with no date. Treat
-profiles as perishable: run `oc-harness doctor`, which re-checks each profile
-against live metadata and reports drift, and which also reports a lane whose
-whole chain has left the catalogue.
+The tier turned over again since. Every one of this kit's original
+profiles has been withdrawn — `space-bunny-free`, `x-preview-f-free`,
+`deepseek-v4-flash-free`, `muse-spark-1.3-contributor-free` and
+`mimo-v2.5-free` — and the default profile pointed at a model that no longer
+existed.
 
 ## A model-driven compressor is not assumed to work
 

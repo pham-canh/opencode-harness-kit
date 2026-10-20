@@ -389,11 +389,12 @@ var GuardPlugin = async ({ worktree }) => {
 // src/profile.js
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { homedir as homedir2 } from "node:os";
 import { fileURLToPath } from "node:url";
 var HERE = dirname(fileURLToPath(import.meta.url));
 function findRoot(start) {
   let dir = start;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 12; i++) {
     if (existsSync(join(dir, "profiles"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;
@@ -416,7 +417,13 @@ var LANE_NAMES = [
   "sweep",
   "longform"
 ];
-var RETENTION_SEVERITY = ["zero-retention", "retained", "unknown", "may-train"];
+var RETENTION_SEVERITY = ["zero-retention", "retained", "may-train", "unknown"];
+function retentionSeverity(level) {
+  return RETENTION_SEVERITY.indexOf(
+    /** @type {Retention} */
+    level
+  );
+}
 function profileDirs() {
   return [join(ROOT, "profiles")];
 }
@@ -484,9 +491,14 @@ function loadLanes() {
 function laneMeta(name) {
   return loadLanes()[name] ?? null;
 }
+var retentionCache = null;
 function loadRetention() {
+  if (retentionCache) return retentionCache;
   const file = join(ROOT, "retention.yml");
-  if (!existsSync(file)) return {};
+  if (!existsSync(file)) {
+    retentionCache = {};
+    return retentionCache;
+  }
   const out = (
     /** @type {Record<string, any>} */
     {}
@@ -539,6 +551,7 @@ function loadRetention() {
     }
     i++;
   }
+  retentionCache = out;
   return out;
 }
 function retentionFor(id) {
@@ -555,8 +568,8 @@ function modelRetention(model) {
 function retentionAllowed(model, ceiling) {
   const level = modelRetention(model);
   if (level === "unknown") return false;
-  const max = RETENTION_SEVERITY.indexOf(ceiling);
-  const have = RETENTION_SEVERITY.indexOf(level);
+  const max = retentionSeverity(ceiling);
+  const have = retentionSeverity(level);
   if (max < 0) return false;
   return have <= max;
 }
@@ -688,9 +701,9 @@ function validate(p, path = "<memory>") {
     if (!rm?.model || typeof rm.model !== "string") {
       throw new ProfileError(`${where}: roleModels.${role} needs a model`);
     }
-    if (rm.levels !== void 0 && !Array.isArray(rm.levels)) {
+    if (rm.levels !== void 0) {
       throw new ProfileError(
-        `${where}: roleModels.${role}.levels must be an array`
+        `${where}: roleModels.${role}.levels is not read by anything - the lane takes its levels from the model it runs on. Remove it.`
       );
     }
     if (rm.chain !== void 0) {
@@ -710,6 +723,11 @@ function validate(p, path = "<memory>") {
             `${where}: roleModels.${role}.chain names ${rung}, which has no retention.yml entry`
           );
         }
+        if (!profileExists(rung)) {
+          throw new ProfileError(
+            `${where}: roleModels.${role}.chain names ${rung}, which has no profile in this directory`
+          );
+        }
       }
     }
     if (!retentionFor(rm.model)) {
@@ -717,7 +735,22 @@ function validate(p, path = "<memory>") {
         `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`
       );
     }
+    if (!profileExists(rm.model)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} names ${rm.model}, which has no profile in this directory`
+      );
+    }
   }
+  for (const id of p.fallback ?? []) {
+    if (!profileExists(id)) {
+      throw new ProfileError(
+        `${where}: fallback names ${id}, which has no profile in this directory`
+      );
+    }
+  }
+}
+function profileExists(id) {
+  return profilePath(id) !== null;
 }
 function inputCap(p, opts = {}) {
   let cap = p.limits.input ?? p.limits.context;
@@ -747,7 +780,7 @@ function roleSplitModels(p, opts = {}) {
   });
 }
 function configDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join(process.env.HOME ?? "", ".config", "opencode");
+  return process.env.OPENCODE_CONFIG_DIR ?? join(homedir2(), ".config", "opencode");
 }
 function configFilePath() {
   return join(configDir(), "opencode.jsonc");
@@ -1080,7 +1113,6 @@ var RouterPlugin = async ({ worktree }) => {
         if (health.unhealthy?.[baseKey]) {
           const queue = [id, ...profile.fallback ?? []];
           for (const candidate of queue) {
-            if (health.unhealthy?.[`opencode/${candidate}`]) continue;
             let fallback;
             try {
               fallback = loadProfile(candidate);
@@ -1350,8 +1382,7 @@ function applyEffort(config, result, opts = {}) {
   }
   cfg.harness = {
     ...cfg.harness ?? {},
-    profile: result.profileId,
-    ...opts.fallbackProfileId ? { fallback: opts.fallbackProfileId } : {}
+    profile: result.profileId
   };
   return config;
 }
