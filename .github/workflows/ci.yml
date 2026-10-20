@@ -189,7 +189,10 @@ jobs:
             # two causes - a stage that gets through means the configuration
             # is right and only the direct publish was not allowed; a stage
             # that fails the same way means the configuration is missing.
-            if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            # Only when the OIDC exchange is what failed. A publish that
+            # failed for any other reason - the version is already published,
+            # say - must not go on to stage a second copy of it.
+            if [ -z "${NODE_AUTH_TOKEN:-}" ] && grep -q "oidc/token/exchange" /tmp/publish.log; then
               echo "::error::npm publish was refused. Trying the staged path to tell a refused direct publish from a missing trusted publisher."
               stage_code=0
               npm stage publish > /tmp/stage.log 2>&1 || stage_code=$?
