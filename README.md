@@ -792,8 +792,8 @@ either arm.
 The earlier version of this table said 52/60 against 59/59 - the kit looked
 clearly worse - and that was the grader's fault: it could not read a
 citation written as `**File:** x` on one line and `**Line:** 105` on the
-next, which is the shape the kit's own instructions produce. Re-scoring the
-same 120 runs with the fixed grader gives 38/40 against 36/40 on the lookup
+next, which is the shape some of the kit's answers took. Re-scoring the
+same 120 runs with the fixed grader gives 34/40 against 30/40 on the lookup
 tasks. The full account is in [eval/RESULTS.md](eval/RESULTS.md).
 
 What the kit buys is in the two places that suite cannot see: **long

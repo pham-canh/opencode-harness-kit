@@ -16,7 +16,7 @@
 //   - never touch patch or file parts, which carry diffs the model needs
 //   - never stub a user message unless asked to
 
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "./plugin.js"
 import { loadProfile, pruneThreshold, ROOT } from "./profile.js"
 import { projectRoot } from "./project.js"
 import { readFileSync, existsSync } from "node:fs"
@@ -163,7 +163,7 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
   }
 
   return {
-    "experimental.chat.messages.transform": async (_input, output) => {
+    "experimental.chat.messages.transform": async (_input: any, output: any) => {
       try {
         const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve()
         if (!profile) return

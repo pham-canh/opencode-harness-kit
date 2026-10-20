@@ -342,13 +342,13 @@ written as two markdown fields:
 
 The old pattern stopped at the newline, so the file and the number were
 never paired, the citation was lost, and the answer was scored wrong. The
-kit's own instructions tell the agent to cite a file and a line, and the
-shape the kit produces is the shape the grader could not read. The kit-off
-arm had no such instructions, answered in prose, and was graded by a
-pattern that handled prose.
+kit's own instructions ask the agent to name the file and the line, and
+some of the answers took the two-field markdown shape - the shape the
+grader could not read. The kit-off arm had no such instructions, mostly
+answered in prose, and was graded by a pattern that handled prose.
 
 Re-scoring the SAME run with the fixed grader - the same 120 agent runs,
-the same answers, only the grader changed - gives **38/40 against 36/40** on
+the same answers, only the grader changed - gives **34/40 against 30/40** on
 the four lookup tasks, the kit ahead. A harness that measures the harness
 is worse than one that measures nothing.
 
@@ -399,8 +399,8 @@ small - only the floor is enforced.
   different task. Neither window separates the kit from the work.
 - Which part of the kit does the work. Result 3 localises the effect to history
   accumulation, not to any individual rule or plugin.
-- Pruner bytes saved, reported from this machine's own `.space/prune.jsonl` below
-  rather than from the eval run. It describes one profile on one set of sessions,
+- Pruner characters saved, reported from this machine's own `.space/prune.jsonl`
+  below rather than from the eval run. It describes one profile on one set of sessions,
   not a population.
 - Whether the free model route is healthy. `oc-harness doctor` answers that and
   needs the network, so it is deliberately outside these scripts.
@@ -416,8 +416,8 @@ the 240 records it holds, all on profile `space-bunny-free`:
 | prunes | 240 |
 | tool outputs stubbed | 3,170 of 7,641 (41.5%) |
 | tool outputs kept | 4,471 |
-| bytes saved | 15,437,346 |
-| median / max per prune | 23,388 B / 418,510 B |
+| characters saved | 15,437,346 |
+| median / max per prune | 23,388 / 418,510 |
 
 Two caveats, because these are not comparable to the A/B numbers above. The
 records come from ordinary working sessions on this machine, not from a fixed

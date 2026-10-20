@@ -92,11 +92,14 @@ names could be reached through a wrapper. They cannot any more:
 cd /tmp && npm publish     blocked
 sudo npm publish           blocked
 sh -c "npm publish"        blocked
+sudo bash -c "npm publish" blocked
 ```
 
 The rules the kit already had - matched per segment, with the wrappers
 stripped and the payload of a `bash -c` followed - are the ones the denylist
-uses now.
+uses now. A command that reaches the guard through a shape the kit does not
+know about is still let through, so this is a much taller fence, not a
+proof.
 
 ## 7. New commands
 
@@ -106,7 +109,7 @@ None of these replace anything. `oc-harness help` lists all of them.
 |---|---|
 | `oc-harness doctor --watch` | Poll the catalogue and report only what changed. Free models are withdrawn in days, and a weekly check is the right rhythm. |
 | `oc-harness upgrade` | Check for a newer kit, refresh the profiles, and write the config again. |
-| `oc-harness cost` | What the kit is doing on THIS project, in numbers: bytes pruned, tool outputs stubbed, lanes sorted by cost. |
+| `oc-harness cost` | What the kit is doing on THIS project, in numbers: characters pruned, tool outputs stubbed, lanes sorted by cost. |
 | `oc-harness backups`, `oc-harness restore` | The old config is now kept as a dated copy with the profile id in it, and it can be put back. |
 | `oc-harness uninstall` | Remove the symlinks the install created. `npm uninstall` leaves them behind, and opencode then loads neither the rules nor the guard. |
 | `oc-harness doctor --json` | The same report, machine-readable. |

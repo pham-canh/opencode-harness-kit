@@ -44,7 +44,7 @@
 // `read` of a source file that happened to contain the word produced a record
 // claiming a rule had fired.
 
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "./plugin.js"
 import { join } from "node:path"
 import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
@@ -70,7 +70,7 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
   const closed = new Set<string>()
 
   return {
-    event: async ({ event }) => {
+    event: async ({ event }: any) => {
       // Events are provider-specific and opencode may add shapes we have never
       // seen. Anything unrecognised is ignored rather than trusted.
       const type = (event as { type?: unknown } | undefined)?.type
@@ -111,7 +111,7 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
       }
     },
 
-    "tool.execute.after": async (input, output) => {
+    "tool.execute.after": async (input: any, output: any) => {
       // A command the guard has a rule about, and that the guard let through.
       //
       // The list is `ASK_GATED` in rules.js, not a keyword list here: the

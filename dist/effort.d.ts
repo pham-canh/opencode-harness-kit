@@ -1,6 +1,8 @@
 export type Profile = import("./profile.js").Profile;
 export type EffortRequest = import("./profile.js").EffortRequest;
-export type Config = import("@opencode-ai/plugin").Config;
+export type Config = {
+    agent?: Record<string, any>;
+};
 export type EffortResult = {
     profileId: string;
     model: string;
@@ -12,7 +14,8 @@ export type EffortResult = {
 /**
  * @typedef {import("./profile.js").Profile} Profile
  * @typedef {import("./profile.js").EffortRequest} EffortRequest
- * @typedef {import("@opencode-ai/plugin").Config} Config
+ * @typedef {object} Config
+ * @property {Record<string, any>} [agent]
  * @typedef {object} EffortResult
  * @property {string} profileId
  * @property {string} model

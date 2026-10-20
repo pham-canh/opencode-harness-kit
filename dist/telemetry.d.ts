@@ -1,3 +1,3 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Plugin } from "./plugin.js";
 export declare const TelemetryPlugin: Plugin;
 export default TelemetryPlugin;

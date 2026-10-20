@@ -200,7 +200,17 @@ function tokenize(segment) {
   return tokens;
 }
 var ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
-var GIT_WRAPPERS = /* @__PURE__ */ new Set(["env", "sudo", "doas", "nohup", "time", "command", "exec", "xargs"]);
+var GIT_WRAPPERS = /* @__PURE__ */ new Set([
+  "env",
+  "sudo",
+  "doas",
+  "nohup",
+  "time",
+  "command",
+  "exec",
+  "xargs",
+  "npx"
+]);
 var WRAPPER_VALUE_FLAGS = /* @__PURE__ */ new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"]);
 var GIT_VALUE_FLAGS = /* @__PURE__ */ new Set([
   "-C",
@@ -277,9 +287,11 @@ var MAX_SHELL_DEPTH = 2;
 function shellPayload(segment) {
   const tokens = tokenize(segment);
   if (tokens.length < 2) return null;
-  if (tokens[0] === "eval") return tokens.slice(1).join(" ") || null;
-  if (!SHELL_BIN.test(tokens[0])) return null;
-  const c = tokens.findIndex((t) => /^-[a-zA-Z]*c$/.test(t));
+  const i = skipPrefixes(tokens);
+  if (i >= tokens.length) return null;
+  if (tokens[i] === "eval") return tokens.slice(i + 1).join(" ") || null;
+  if (!SHELL_BIN.test(tokens[i])) return null;
+  const c = tokens.findIndex((t, n) => n > i && /^-[a-zA-Z]*c$/.test(t));
   if (c === -1 || c === tokens.length - 1) return null;
   return tokens.slice(c + 1).join(" ") || null;
 }

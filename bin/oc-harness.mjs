@@ -14,7 +14,7 @@
 
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, join, relative, resolve, sep } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { createInterface } from "node:readline/promises"
@@ -1236,7 +1236,7 @@ async function fetchCatalog() {
       const body = readFileSync(url.slice("file://".length), "utf8")
       const parsed = JSON.parse(body)
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        fail(`${url} did not return a model catalogue`)
+        throw new Error(`${url} did not return a model catalogue`)
       }
       return parsed
     }
@@ -1249,11 +1249,33 @@ async function fetchCatalog() {
     })
     const parsed = JSON.parse(body)
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      fail(`${url} did not return a model catalogue`)
+      throw new Error(`${url} did not return a model catalogue`)
     }
     return parsed
   } catch (err) {
-    fail(`could not reach ${url}: ${err instanceof Error ? err.message : String(err)}`)
+    // THROWN, not exited. The caller decides what a catalogue that cannot be
+    // read means: `doctor --watch` has to carry on, because a catalogue that
+    // cannot be read says nothing about the models in it, and a failed poll
+    // that ends the watch turns a transient network error into a dead
+    // monitor.
+    throw new Error(`could not reach ${url}: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/**
+ * The catalogue, or a clean failure.
+ *
+ * The commands that read it once and go on to do something else want the
+ * error as a message; the ones that watch it want the error as an error, so
+ * they can carry on.
+ *
+ * @returns {Promise<any>}
+ */
+async function fetchCatalogOrFail() {
+  try {
+    return await fetchCatalog()
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -1297,7 +1319,7 @@ function diffProfile(p, live) {
  * looking for every profile at once and reports what changed.
  */
 async function cmdRefreshAll() {
-  const catalog = await fetchCatalog()
+  const catalog = await fetchCatalogOrFail()
   const ids = listProfileIds()
   const changed = []
   const gone = []
@@ -1349,6 +1371,41 @@ async function cmdRefreshAll() {
     )
   }
   console.log("")
+}
+
+/**
+ * Whether a path is a symlink, whether or not its target exists.
+ *
+ * @param {string} p
+ * @returns {boolean}
+ */
+function isSymlink(p) {
+  try {
+    return lstatSync(p).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether a symlink points into this package.
+ *
+ * The target is resolved RELATIVE TO THE LINK, and without requiring it to
+ * exist, so a dangling link - the thing `npm uninstall` leaves behind -
+ * still counts as the kit's.
+ *
+ * @param {string} p
+ * @returns {boolean}
+ */
+function pointsIntoKit(p) {
+  try {
+    if (!lstatSync(p).isSymbolicLink()) return false
+    const target = readlinkSync(p)
+    const resolved = isAbsolute(target) ? target : resolve(dirname(p), target)
+    return resolved.startsWith(ROOT + sep) || resolved.startsWith(ROOT + "/")
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -1512,7 +1569,11 @@ function cmdCost() {
         if (!line.trim()) continue
         const r = JSON.parse(line)
         prunes++
-        saved += r.savedChars ?? 0
+        // The published 0.4.3 wrote `savedBytes` into the same file, and the
+        // file is project-local and persistent, so the old records are still
+        // there. Reading only the new name would report every project that
+        // upgraded as having saved nothing.
+        saved += r.savedChars ?? r.savedBytes ?? 0
         stubbed += r.stubbed ?? 0
       }
     } catch {
@@ -1625,16 +1686,12 @@ function cmdUninstall() {
     // symlink in that directory - to their own prompts, to a shared folder -
     // and "a symlink in prompts/ is the kit's" would delete it. A link whose
     // target is inside this package is the kit's; anything else is kept.
-    const ours = entries.filter((f) => {
-      try {
-        const p = join(full, f)
-        if (!lstatSync(p).isSymbolicLink()) return false
-        const target = realpathSync(p)
-        return target.startsWith(ROOT + sep) || target.startsWith(ROOT + "/")
-      } catch {
-        return false
-      }
-    })
+    //
+    // The target is resolved WITHOUT requiring it to exist. A DANGLING link
+    // is the case this command exists for - `npm uninstall` leaves four of
+    // them behind - and `realpathSync` throws on those, which classified the
+    // kit's own broken links as somebody else's and left them in place.
+    const ours = entries.filter((f) => pointsIntoKit(join(full, f)))
     if (!ours.length) {
       kept.push(`${dir}/ holds real files`)
       continue
@@ -1647,12 +1704,17 @@ function cmdUninstall() {
     removed.push(`${dir}/ (${ours.length} link(s))`)
   }
   for (const t of targets) {
-    if (!existsSync(t)) continue
+    if (!existsSync(t) && !isSymlink(t)) continue
     try {
-      // Only a symlink is ours to remove. A real file the user put there
-      // is theirs.
-      if (!lstatSync(t).isSymbolicLink()) {
+      // Only a link into this package is ours to remove. A real file the
+      // user put there is theirs, and so is a link to their own file -
+      // `GLOBAL.md` is a standard opencode name.
+      if (!isSymlink(t)) {
         kept.push(`${t} is a real file`)
+        continue
+      }
+      if (!pointsIntoKit(t)) {
+        kept.push(`${t} points somewhere else`)
         continue
       }
       rmSync(t, { force: true })
@@ -1740,7 +1802,7 @@ async function cmdRefresh(id) {
   }
   const path = profilePath(id)
   if (!path) fail(`no profile named "${id}"`)
-  const catalog = await fetchCatalog()
+  const catalog = await fetchCatalogOrFail()
   const p = JSON.parse(readFileSync(path, "utf8"))
   const live = catalog?.[p.provider]?.models?.[p.model]
 
@@ -1973,18 +2035,17 @@ async function cmdDoctor() {
   // In JSON mode the human report is not printed at all. A report that is
   // half prose and half JSON is a report a script has to strip lines off.
   const wantJson = flag("--json")
-  if (wantJson) {
+  // ONE fetch. Two fetches means two round-trips to models.dev, and a
+  // window in which the pre-check and the report can disagree - a model
+  // withdrawn between them.
+  let catalog
+  try {
+    catalog = await fetchCatalog()
+  } catch (err) {
     // A catalogue that cannot be read is an error, and in JSON mode an
     // error is a JSON object: a script that pipes the output into a parser
     // gets something it can read rather than a parse failure.
-    try {
-      await fetchCatalog()
-    } catch (err) {
-      fail(
-        `the model catalogue could not be read: ${err instanceof Error ? err.message : String(err)}`,
-        true,
-      )
-    }
+    fail(err instanceof Error ? err.message : String(err), wantJson)
   }
   // The human report is built while the JSON one is not, and in JSON mode
   // the human lines go nowhere. They are collected rather than printed, so
@@ -1992,7 +2053,7 @@ async function cmdDoctor() {
   const realLog = console.log
   if (wantJson) console.log = () => {}
   try {
-    await runDoctor()
+    await runDoctor(catalog)
   } finally {
     console.log = realLog
   }
@@ -2005,8 +2066,7 @@ async function cmdDoctor() {
 // second doctor in the same process does not inherit the first one's findings.
 const doctorReport = { ok: true, problems: 0, drift: 0, strict: false, findings: [], json: false }
 
-async function runDoctor() {
-  const catalog = await fetchCatalog()
+async function runDoctor(catalog) {
   const retention = loadRetention().models
   const ids = listProfileIds()
   let problems = 0
