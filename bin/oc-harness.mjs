@@ -224,6 +224,45 @@ function cmdShow(id) {
   const plan = planEffort(id)
   const retention = loadRetention().models[`${p.provider}/${p.model}`]
 
+  // The machine-readable form. "What does this profile resolve to" is a
+  // question a script asks - to check a config, to diff two profiles, to
+  // feed a dashboard.
+  if (flag("--json")) {
+    console.log(
+      JSON.stringify(
+        {
+          id: p.id,
+          title: p.title ?? null,
+          provider: p.provider,
+          model: p.model,
+          limits: p.limits ?? null,
+          input_cap: inputCap(p),
+          output_cap: p.limits?.output ?? null,
+          effort_levels: p.effort?.levels ?? [],
+          default_variant: resolveDefaultVariant(p) ?? null,
+          temperature: Boolean(p.supports?.temperature),
+          attachment: Boolean(p.supports?.attachment),
+          reserved: reservedTokens(p),
+          prune_at: pruneThreshold(p),
+          retention: effectiveRetention(p).retention,
+          max_retention: p.maxRetention ?? null,
+          lanes: Object.fromEntries(
+            (roleSplitModels(p).length
+              ? roleSplitModels(p).map((s) => [s.role, { model: s.model, chain: resolveLaneChain(p, s.role) }])
+              : Object.keys(p.roles ?? {}).map((role) => [role, { model: p.model, chain: [p.model] }])
+            ),
+          ),
+          effort: plan.roles,
+          fallback: p.fallback ?? [],
+          notes: plan.notes ?? [],
+        },
+        null,
+        2,
+      ),
+    )
+    return
+  }
+
   console.log(`\n${bold(p.id)}  ${stamp(p.title ?? "")}\n`)
   const row = (k, v) => console.log(`  ${k.padEnd(20)} ${v}`)
   row("provider/model", `${p.provider}/${p.model}`)
@@ -1899,12 +1938,40 @@ async function cmdDoctorWatch() {
  * `--strict` makes the perishable finding fail too, for a release.
  */
 async function cmdDoctor() {
+  // In JSON mode the human report is not printed at all. A report that is
+  // half prose and half JSON is a report a script has to strip lines off.
+  const wantJson = flag("--json")
+  const human = []
+  const realLog = console.log
+  if (wantJson) console.log = (...a) => human.push(a.join(" "))
+  const restore = () => {
+    console.log = realLog
+  }
+  try {
+    await runDoctor(wantJson)
+  } finally {
+    restore()
+  }
+  doctorReport.json = wantJson
+  if (wantJson) console.log(JSON.stringify(doctorReport, null, 2))
+  doctorExit()
+}
+
+const doctorReport = { ok: true, problems: 0, drift: 0, strict: false, findings: [], json: false }
+
+async function runDoctor(wantJson) {
   const catalog = await fetchCatalog()
   const retention = loadRetention().models
   const ids = listProfileIds()
   let problems = 0
   let drift = 0
   const strict = flag("--strict")
+  // The machine-readable form. "Is the install healthy" is a question a CI
+  // job or a script asks, and the human report answers it in prose that has
+  // to be parsed.
+  const findings = doctorReport.findings
+  /** @param {string} level @param {string} profile @param {string} message */
+  const note = (level, profile, message) => findings.push({ level, profile, message })
 
   console.log(`\n${bold("doctor")}  ${stamp(`catalog ${Object.keys(catalog).length} providers`)}\n`)
 
@@ -1913,13 +1980,16 @@ async function cmdDoctor() {
     try {
       p = loadProfile(id)
     } catch (err) {
-      console.log(`  ${red("✗")} ${id.padEnd(32)} ${err instanceof Error ? err.message : String(err)}`)
+      const message = err instanceof Error ? err.message : String(err)
+      console.log(`  ${red("✗")} ${id.padEnd(32)} ${message}`)
+      note("problem", id, message)
       problems++
       continue
     }
     const live = catalog?.[p.provider]?.models?.[p.model]
     if (!live) {
       console.log(`  ${red("✗")} ${id.padEnd(32)} ${red("not in models.dev - may be withdrawn")}`)
+      note("drift", id, "not in models.dev - may be withdrawn")
       drift++
       continue
     }
@@ -1953,6 +2023,7 @@ async function cmdDoctor() {
       console.log(`  ${yellow("!")} ${id.padEnd(32)} ${yellow("drift")}`)
       for (const i of issues) console.log(`      ${i}`)
       console.log(`      ${stamp(`fix: oc-harness refresh ${id}`)}`)
+      for (const i of issues) note("drift", id, i)
     }
   }
   console.log(
@@ -1970,13 +2041,23 @@ async function cmdDoctor() {
   const activeId = profileIdFromConfig()
   if (!activeId) {
     console.log(`  ${yellow("!")} ${stamp("no profile recorded in the config. Run: oc-harness use <profile>")}\n`)
-    finishDoctor(problems, drift, strict)
+    note("problem", "-", "no profile recorded in the config")
+    problems++
+    doctorReport.problems = problems
+    doctorReport.drift = drift
+    doctorReport.strict = strict
+    doctorReport.ok = problems === 0 && (drift === 0 || !strict)
     return
   }
   const installed = existsSync(CONFIG_FILE) ? readConfigJson() : null
   if (!installed) {
     console.log(`  ${yellow("!")} ${stamp(`${CONFIG_FILE} missing. Run: oc-harness use ${activeId}`)}\n`)
-    finishDoctor(problems, drift, strict)
+    note("problem", activeId, `${CONFIG_FILE} missing`)
+    problems++
+    doctorReport.problems = problems
+    doctorReport.drift = drift
+    doctorReport.strict = strict
+    doctorReport.ok = problems === 0 && (drift === 0 || !strict)
     return
   }
   // A config pointing at a profile that no longer loads is a real problem, and
@@ -1985,8 +2066,10 @@ async function cmdDoctor() {
   try {
     active = loadProfile(activeId)
   } catch (err) {
-    console.log(`  ${red("✗")} ${stamp(`the active profile "${activeId}" cannot be loaded: ${err instanceof Error ? err.message : String(err)}`)}`)
+    const message = `the active profile "${activeId}" cannot be loaded: ${err instanceof Error ? err.message : String(err)}`
+    console.log(`  ${red("✗")} ${stamp(message)}`)
     console.log(`  ${stamp("fix: oc-harness use " + (index().default ?? "fleet-safe"))}\n`)
+    note("problem", activeId, message)
     problems++
     active = null
   }
@@ -1998,9 +2081,13 @@ async function cmdDoctor() {
     for (const d of fields) console.log(`  ${yellow("!")} ${d}`)
     console.log(`\n  ${yellow(`${fields.length} field(s) drifted from the profile`)}`)
     console.log(`  ${stamp(`fix: oc-harness use ${activeId}`)}\n`)
+    for (const d of fields) note("drift", activeId, d)
     problems++
   }
-  finishDoctor(problems, drift, strict)
+  doctorReport.problems = problems
+  doctorReport.drift = drift
+  doctorReport.strict = strict
+  doctorReport.ok = problems === 0 && (drift === 0 || !strict)
 }
 
 /**
@@ -2010,20 +2097,22 @@ async function cmdDoctor() {
  * perishable metadata and only fails under `--strict`, so a CI job that runs
  * this does not go red because a provider changed a context window.
  *
- * @param {number} problems
- * @param {number} drift
- * @param {boolean} strict
+ * Reads the report the doctor filled in, and exits with the code the
+ * report implies.
  */
-function finishDoctor(problems, drift, strict) {
+function doctorExit() {
+  const { problems, drift, strict, json } = doctorReport
+  // The exit code is the point of the command, and it is the same either
+  // way. In JSON mode the report is the output, so nothing else is printed.
   if (problems > 0) {
-    console.log(`  ${red(`${problems} problem(s) in the install`)}\n`)
+    if (!json) console.log(`  ${red(`${problems} problem(s) in the install`)}\n`)
     process.exit(1)
   }
   if (drift > 0 && strict) {
-    console.log(`  ${red(`${drift} profile(s) drifted from live metadata`)}\n`)
+    if (!json) console.log(`  ${red(`${drift} profile(s) drifted from live metadata`)}\n`)
     process.exit(1)
   }
-  if (drift > 0) {
+  if (drift > 0 && !json) {
     console.log(`  ${stamp(`${drift} profile(s) drifted from live metadata; re-run with --strict to fail on it`)}\n`)
   }
 }
