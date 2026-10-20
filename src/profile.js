@@ -363,7 +363,8 @@ export function resolveLaneChain(p, role) {
  *
  * The first rung of the chain that is allowed by the retention ceiling and is
  * not marked unhealthy wins. When no rung qualifies, the lane falls back to
- * the profile's base model, so a lane is never left without a model.
+ * the profile's base model, so a lane is never left without a model - and a
+ * base model that is itself spent is the last resort rather than the first.
  *
  * @param {Profile} p
  * @param {string} role
@@ -378,9 +379,16 @@ export function resolveLaneModel(p, role, opts = {}) {
     if (!retentionAllowed(candidate, ceiling)) continue
     return { model: candidate, levels: levelsOfModel(candidate) }
   }
-  // Nothing in the chain qualifies. Use the first rung anyway rather than
-  // leaving the lane without a model, and let the config header say what the
-  // effective retention turned out to be.
+  // Nothing in the chain qualifies. The base model is the next thing to try:
+  // it is the profile's own route, and a lane pinned to a rung the router has
+  // already recorded as spent is worse than a lane on a route that was never
+  // preferred for this job but is alive.
+  if (p.model && !unhealthy.has(p.model) && retentionAllowed(p.model, ceiling)) {
+    return { model: p.model, levels: levelsOfModel(p.model) }
+  }
+  // Last resort: the first rung anyway rather than leaving the lane without a
+  // model, and let the config header say what the effective retention turned
+  // out to be.
   const fallback = resolveLaneChain(p, role)[0] ?? p.model
   return { model: fallback, levels: levelsOfModel(fallback) }
 }
@@ -470,6 +478,14 @@ export function resolveEffort(levels, requested) {
   if (!requested) return null
   if (!levels || levels.length === 0) return null
   if (levels.includes(requested)) return requested
+
+  // `none` is not a rung on the reasoning scale. It is reasoning OFF, and
+  // "off" is not "the lowest level the model has". Snapping it onto `low`
+  // would turn the one lane that exists to stop reasoning into the lane that
+  // reasons the most, and it would do so silently. A model that does not
+  // publish `none` cannot turn reasoning off, so the honest answer is "emit
+  // no variant" and let the model use its own default.
+  if (requested === "none") return null
 
   const want = CANON.indexOf(requested)
   if (want < 0) {

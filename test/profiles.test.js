@@ -218,6 +218,54 @@ test("effort resolution snaps a missing level onto one the model has", () => {
   assert.equal(resolveEffort(["low"], null), null)
 })
 
+test("`none` is reasoning off, not the lowest level the model has", () => {
+  // `none` is a request to turn reasoning off. A model that does not publish
+  // it cannot do that, and the honest answer is "emit no variant" - snapping
+  // it onto `low` would turn the reasoning-off lane into the reasoning-on one.
+  assert.equal(resolveEffort(["low", "medium", "high", "xhigh", "max"], "none"), null)
+  assert.equal(resolveEffort(["low", "high", "max"], "none"), null)
+  // A model that does publish it gets exactly it.
+  assert.equal(resolveEffort(["none", "minimal", "low"], "none"), "none")
+  // The other end of the scale is unaffected.
+  assert.equal(resolveEffort(["low", "medium", "high"], "max"), "high")
+})
+
+test("a lane whose whole chain is spent falls back to the base model", () => {
+  // The chain is the preferred order, and the base model is what the profile
+  // itself runs on. Returning the first rung of a spent chain would pin the
+  // lane to a route the router has already recorded as dead.
+  const p = loadProfile("fleet-all")
+  const chain = resolveLaneChain(p, "plan")
+  assert.ok(chain.length > 1, "the plan lane has a chain to walk")
+
+  const allSpent = new Set(chain)
+  const resolved = resolveLaneModel(p, "plan", { unhealthy: allSpent })
+  assert.equal(resolved.model, p.model, "the lane falls back to the base model")
+  assert.ok(
+    !allSpent.has(resolved.model),
+    "the lane must not be pinned to a route that is already spent",
+  )
+
+  // The base model being spent too leaves the lane with something rather than
+  // nothing, and the first rung is the last resort.
+  const everything = new Set([...chain, p.model])
+  const last = resolveLaneModel(p, "plan", { unhealthy: everything })
+  assert.ok(last.model, "a lane is never left without a model")
+})
+
+test("the plan reports an effort request that was dropped entirely", () => {
+  // A lane whose model publishes no such level gets no variant at all. That
+  // is the one adjustment that has to be reported, because it is the one
+  // where the lane is not running at the effort anybody asked for.
+  const plan = planEffort("fleet-safe")
+  const dropped = plan.notes.filter((n) => n.includes("no variant is set"))
+  assert.ok(dropped.length > 0, "a dropped effort request has to be reported")
+  assert.ok(
+    dropped.some((n) => n.includes("sweep") && n.includes("none")),
+    `the sweep lane asks for none and gets none: ${JSON.stringify(plan.notes)}`,
+  )
+})
+
 test("generated config never contains an effort level the model lacks", () => {
   for (const id of listProfileIds()) {
     const p = loadProfile(id)

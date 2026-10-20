@@ -577,6 +577,9 @@ function resolveLaneModel(p, role, opts = {}) {
     if (!retentionAllowed(candidate, ceiling)) continue;
     return { model: candidate, levels: levelsOfModel(candidate) };
   }
+  if (p.model && !unhealthy.has(p.model) && retentionAllowed(p.model, ceiling)) {
+    return { model: p.model, levels: levelsOfModel(p.model) };
+  }
   const fallback = resolveLaneChain(p, role)[0] ?? p.model;
   return { model: fallback, levels: levelsOfModel(fallback) };
 }
@@ -610,6 +613,7 @@ function resolveEffort(levels, requested) {
   if (!requested) return null;
   if (!levels || levels.length === 0) return null;
   if (levels.includes(requested)) return requested;
+  if (requested === "none") return null;
   const want = CANON.indexOf(requested);
   if (want < 0) {
     return levels[levels.length - 1] ?? null;
@@ -1301,8 +1305,15 @@ function planEffort(profileId, opts = {}) {
     );
   }
   for (const [role, want] of Object.entries(p.roles ?? {})) {
+    if (!want) continue;
     const got = roles[role];
-    if (want && got && want !== got) {
+    if (got === null) {
+      notes.push(
+        `lane ${role} asked for ${want}; its model does not publish that level, so no variant is set.`
+      );
+      continue;
+    }
+    if (want !== got) {
       notes.push(`lane ${role} asked for ${want}; its model tops out at ${got}.`);
     }
   }
