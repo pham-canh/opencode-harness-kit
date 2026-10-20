@@ -1,4 +1,7 @@
-name: ci
+# The name is the filename, deliberately. npm's trusted publisher form asks
+# for the workflow FILENAME, and the Actions tab shows this name - so the
+# value that has to be typed on npmjs.com is the value that is on screen.
+name: ci.yml
 
 on:
   push:
@@ -129,8 +132,13 @@ jobs:
             try { t = JSON.parse(fs.readFileSync("/tmp/idtoken.json", "utf8")).value || "" } catch {}
             if (!t) { console.log("  the runner issued no id token"); process.exit(0) }
             const c = JSON.parse(Buffer.from(t.split(".")[1], "base64url").toString())
-            for (const k of ["aud", "sub", "repository", "repository_owner", "workflow", "workflow_ref", "job_workflow_ref", "ref", "event_name", "environment"]) {
-              console.log("  " + k + ": " + (c[k] === undefined ? "(absent)" : c[k]))
+            console.log("  what the registry will look for, and what it will be given:")
+            console.log("    repository    " + (c.repository ?? "(absent)"))
+            console.log("    workflow file " + String(c.workflow_ref ?? "").split("@")[0].split("/").pop() + "   (the trusted publisher must name exactly this)")
+            console.log("    environment   " + (c.environment ?? "(absent) - the trusted publisher must name NO environment"))
+            console.log("    owner         " + (c.repository_owner ?? "(absent)"))
+            for (const k of ["aud", "sub", "workflow", "workflow_ref", "job_workflow_ref", "ref", "event_name"]) {
+              console.log("    " + k + ": " + (c[k] === undefined ? "(absent)" : c[k]))
             }
           '
       - name: check the publish credentials
@@ -148,6 +156,10 @@ jobs:
               exit 1
             fi
             echo "publishing with a token"
+            # A token can also READ the stored trusted publisher, which is the
+            # one thing the OIDC path cannot do. It says exactly what npm has
+            # stored, against what the workflow will present.
+            npm trust list opencode-harness-kit --json 2>/dev/null || true
           else
             # No token, so trusted publishing. `npm whoami` does NOT reflect
             # an OIDC identity - the exchange happens inside the publish - so
