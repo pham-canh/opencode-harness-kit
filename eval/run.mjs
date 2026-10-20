@@ -23,6 +23,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { query as queryDb } from "../src/sqlite.js"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const DIST = join(ROOT, "dist", "index.js")

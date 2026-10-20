@@ -50,7 +50,8 @@
   ],
   "scripts": {
     "build": "npm run build:types && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck:scripts",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "pretest": "node -e \"const fs=require('fs');if(!fs.existsSync('test')){console.error('no test directory here - this is an installed package, not a checkout');process.exit(1)}\"",
     "test": "node --test \"test/*.test.js\"",
     "test:all": "npm run build && npm run typecheck && npm test",

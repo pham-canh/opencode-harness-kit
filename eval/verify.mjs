@@ -28,6 +28,16 @@ import { readFileSync, existsSync } from "node:fs"
 import { join, isAbsolute, resolve } from "node:path"
 
 /**
+ * The message of a caught value, whatever it turned out to be.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err)
+}
+
+/**
  * Pull file:line references out of free text.
  *
  * Handles the shapes an agent actually writes:
@@ -196,7 +206,7 @@ export function gradeMutation(runDir, spec) {
   try {
     body = readFileSync(abs, "utf8")
   } catch (e) {
-    return { ok: false, reason: `${spec.file} unreadable: ${e.message}` }
+    return { ok: false, reason: `${spec.file} unreadable: ${errorMessage(e)}` }
   }
   const count = (s) => body.split(s).length - 1
   for (const s of spec.mustContain ?? []) {

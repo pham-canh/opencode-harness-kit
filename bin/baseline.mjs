@@ -169,7 +169,9 @@ const topAskers = () => {
 // allowlist, which meant the number it reported was whatever the list looked
 // like when the copy was last edited. Every tuning decision in this project is
 // supposed to rest on this measurement, so it has to measure the real list.
-const { BASH_ALLOWLIST } = await import(new URL("../src/config.js", import.meta.url))
+const { BASH_ALLOWLIST } = await import(
+  new URL("../src/config.js", import.meta.url).href,
+)
 const kitAllowlist = BASH_ALLOWLIST
 const currentAllow = [
   "git status *", "git log *", "git diff *", "grep *",

@@ -554,7 +554,7 @@ async function cmdInstall() {
         chmodSync(hookDest, 0o755)
         hookState = `installed ${hookDest}`
       } catch (err) {
-        hookState = `could not install: ${err.message}`
+        hookState = `could not install: ${err instanceof Error ? err.message : String(err)}`
       }
     }
   } else if (process.env.OC_HARNESS_NO_HOOK) {
@@ -664,7 +664,7 @@ function linkOne(src, dest) {
   try {
     symlinkSync(target, dest)
   } catch (err) {
-    console.log(`  ${yellow("!")} ${stamp(`could not link ${dest}: ${err.message}`)}`)
+    console.log(`  ${yellow("!")} ${stamp(`could not link ${dest}: ${err instanceof Error ? err.message : String(err)}`)}`)
   }
 }
 
@@ -686,7 +686,7 @@ function cmdVerify() {
   try {
     p = loadProfile(activeId)
   } catch (err) {
-    fail(`active profile "${activeId}" cannot be loaded: ${err.message}`)
+    fail(`active profile "${activeId}" cannot be loaded: ${err instanceof Error ? err.message : String(err)}`)
   }
 
   // 1. The generated config must still be what the profile compiles to. A
@@ -713,7 +713,7 @@ function cmdVerify() {
   //    behavioural layer - the lane table, the rules, the read-pressure
   //    guidance - and every one of those paths resolved, so the check passed
   //    over a harness that was doing nothing.
-  const instructions = actual?.instructions ?? [globalInstructionsPath()]
+  const instructions = /** @type {any} */ (actual?.instructions) ?? [globalInstructionsPath()]
   for (const raw of instructions) {
     const target = raw.startsWith("~")
       ? join(homedir(), raw.slice(1))
@@ -732,7 +732,7 @@ function cmdVerify() {
   const kitTarget = kitInstruction.startsWith("~")
     ? join(homedir(), kitInstruction.slice(1))
     : kitInstruction
-  if (!instructions.includes(kitInstruction)) {
+  if (!/** @type {any} */ (instructions).includes(kitInstruction)) {
     problems.push(
       `the config does not load ${kitInstruction} - the kit's rules, the lane table and the read-pressure guidance are not being loaded. Run: oc-harness use ${p.id}`,
     )
@@ -786,7 +786,7 @@ function cmdVerify() {
     for (const name of readdirSync(dir).filter((f) => f.endsWith(".md"))) {
       const where = `${scope}:${dir.replace(`${homedir()}/`, "~/")}`
       const lane = name.replace(/\.md$/, "")
-      if (lane in (actual?.agent ?? {})) {
+      if (lane in (/** @type {any} */ (actual?.agent) ?? {})) {
         problems.push(
           `agent file ${where}/${name} shadows the ${lane} lane: an agent file replaces the config entry, so the lane would not run on its own model. Run: oc-harness install`,
         )
@@ -1100,7 +1100,7 @@ async function cmdUse(id) {
     if (!flag("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
       fail("left the existing config alone")
     }
-    const kept = keepBackup(readFileSync(CONFIG_FILE))
+    const kept = keepBackup(readFileSync(CONFIG_FILE, "utf8"))
     if (kept) {
       console.error(
         stamp(`  existing config backed up to ${join(BACKUP_DIR, kept)}`),
@@ -1193,7 +1193,7 @@ async function fetchCatalog() {
     }
     return parsed
   } catch (err) {
-    fail(`could not reach ${url}: ${err.message}`)
+    fail(`could not reach ${url}: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -1410,7 +1410,7 @@ function cmdBackups() {
     const full = join(dir, f)
     let profile = "?"
     try {
-      profile = parseJsonc(readFileSync(full, "utf8"))?.harness?.profile ?? "?"
+      profile = /** @type {any} */ (parseJsonc(readFileSync(full, "utf8")))?.harness?.profile ?? "?"
     } catch {}
     console.log(`  ${f.padEnd(40)} ${stamp(`profile ${profile}`)}`)
   }
@@ -1653,7 +1653,7 @@ async function cmdUpgrade() {
   try {
     loadProfile(activeId)
   } catch (err) {
-    fail(`the active profile cannot be loaded: ${err.message}`)
+    fail(`the active profile cannot be loaded: ${err instanceof Error ? err.message : String(err)}`)
   }
   await cmdUse(activeId)
   console.log(`  ${green("✓")} the config was written from ${activeId}`)
@@ -1757,7 +1757,7 @@ const WITHDRAWN_LOG = "withdrawn.jsonl"
  * Record that a model left the catalogue.
  *
  * @param {string} model
- * @param {string} profile
+ * @param {string} profiles the profile ids, comma-separated
  */
 function recordWithdrawal(model, profiles) {
   try {
@@ -1784,7 +1784,8 @@ function recordWithdrawal(model, profiles) {
  * chain has one fewer rung, and nobody is told.
  *
  * @param {any} catalog
- * @returns {string[]} the model ids that are gone
+ * @returns {Map<string, string[]>} the model ids that are gone, and the
+ *   profiles that used each one
  */
 function withdrawnModels(catalog) {
   /** @type {Map<string, string[]>} the model, and the profiles that use it */
@@ -1842,7 +1843,7 @@ async function cmdDoctorWatch() {
       // A failed fetch is NOT an empty catalogue. Treating it as one
       // announced every missing model as "is back", emptied the seen-set,
       // and made the next successful poll announce them all as gone again.
-      console.error(red(`  could not read the catalogue: ${err.message}`))
+      console.error(red(`  could not read the catalogue: ${err instanceof Error ? err.message : String(err)}`))
       if (!watch) process.exit(1)
       await new Promise((r) => setTimeout(r, interval * 1000))
       continue
@@ -1912,7 +1913,7 @@ async function cmdDoctor() {
     try {
       p = loadProfile(id)
     } catch (err) {
-      console.log(`  ${red("✗")} ${id.padEnd(32)} ${err.message}`)
+      console.log(`  ${red("✗")} ${id.padEnd(32)} ${err instanceof Error ? err.message : String(err)}`)
       problems++
       continue
     }
@@ -1984,7 +1985,7 @@ async function cmdDoctor() {
   try {
     active = loadProfile(activeId)
   } catch (err) {
-    console.log(`  ${red("✗")} ${stamp(`the active profile "${activeId}" cannot be loaded: ${err.message}`)}`)
+    console.log(`  ${red("✗")} ${stamp(`the active profile "${activeId}" cannot be loaded: ${err instanceof Error ? err.message : String(err)}`)}`)
     console.log(`  ${stamp("fix: oc-harness use " + (index().default ?? "fleet-safe"))}\n`)
     problems++
     active = null
@@ -2042,7 +2043,7 @@ function cmdLanes() {
   try {
     profile = loadProfile(activeId)
   } catch (err) {
-    fail(`active profile "${activeId}" cannot be loaded: ${err.message}`)
+    fail(`active profile "${activeId}" cannot be loaded: ${err instanceof Error ? err.message : String(err)}`)
   }
 
   // The plugin writes to the project root, so the file is found by walking up
@@ -2253,7 +2254,7 @@ function cmdAgents() {
     }
     const name = file.split("/").pop().replace(/\.md$/, "")
     const front = stripFrontmatter(text)
-    if (name in config.agent) {
+    if (name in /** @type {any} */ (config.agent)) {
       console.log(
         `  ${yellow("!")} ${name.padEnd(14)} ${yellow("shadows a lane in the config")}`,
       )
@@ -2426,5 +2427,5 @@ try {
   }
 } catch (err) {
   if (err instanceof ProfileError) fail(err.message)
-  fail(err.message)
+  fail(err instanceof Error ? err.message : String(err))
 }

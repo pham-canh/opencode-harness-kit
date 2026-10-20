@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "noEmit": true
+  },
+  "include": ["bin/**/*.mjs", "eval/**/*.mjs", "eval/**/*.js"],
+  "exclude": ["node_modules"]
+}

@@ -43,7 +43,11 @@ const red = (s) => `\x1b[31m${s}\x1b[0m`
  * Never throws: the caller has to be able to write the failure into the task
  * file, which is the only record anyone gets of why a task did not land.
  */
-export function sh(command, { cwd, timeoutMs = 900_000 } = {}) {
+export function sh(
+  command,
+  /** @type {{ cwd?: string, timeoutMs?: number }} */
+  { cwd, timeoutMs = 900_000 } = {},
+) {
   const started = Date.now()
   const res = spawnSync(command, {
     shell: true,
@@ -280,6 +284,13 @@ export function runLoop({
   }
 }
 
+/**
+ * The outcome of a run.
+ *
+ * @param {any[]} log
+ * @param {{ reason: string, code?: number, summary?: any, rounds?: number }} stop
+ * @returns {{ reason: string, code: number, rounds: number, log: any[], summary?: any }}
+ */
 function stop(log, { reason, code, summary, rounds }) {
   // `rounds` is the number of rounds the loop RAN, not the number of
   // entries in the log. The log only gets an entry after a verify that

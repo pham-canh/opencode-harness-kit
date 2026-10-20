@@ -34,6 +34,19 @@ import { countFlag, numberFlag } from "./flags.mjs"
 import { gradeAnswer, gradeMutation } from "./verify.mjs"
 import { checkPremises } from "./premises.mjs"
 
+/**
+ * The message of a caught value, whatever it turned out to be.
+ *
+ * `catch` gives `unknown` under strict mode, and the file is not strict -
+ * but a message is what these scripts exist to print.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err)
+}
+
 const args = process.argv.slice(2)
 const flag = (...n) => {
   const i = args.findIndex((a) => n.includes(a))
@@ -55,7 +68,7 @@ let reps
 try {
   reps = countFlag("--reps") ?? 3
 } catch (err) {
-  console.error(String(err.message))
+  console.error(String(errorMessage(err)))
   process.exit(1)
 }
 const expect = all("--expect")
@@ -80,7 +93,7 @@ try {
   if (minutes <= 0) throw new Error("--timeout must be more than 0, or the ceiling is removed")
   runTimeoutMs = minutes * 1000
 } catch (err) {
-  console.error(String(err.message))
+  console.error(String(errorMessage(err)))
   process.exit(1)
 }
 
@@ -119,7 +132,7 @@ if (suitePath) {
   try {
     parsed = JSON.parse(readFileSync(suitePath, "utf8"))
   } catch (e) {
-    console.error(`suite is not valid JSON: ${e.message}`)
+    console.error(`suite is not valid JSON: ${errorMessage(e)}`)
     process.exit(1)
   }
   const list = parsed.tasks ?? []
@@ -469,7 +482,7 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
   // scored as a success, and a run that hung until the ceiling was counted in
   // the correctness ratio and in every median.
   const timedOut =
-    res.error?.code === "ETIMEDOUT" ||
+    /** @type {any} */ (res.error)?.code === "ETIMEDOUT" ||
     res.signal === "SIGKILL" ||
     (res.status === null && Date.now() - t0 >= runTimeoutMs)
   return {
