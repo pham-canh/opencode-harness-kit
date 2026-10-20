@@ -168,7 +168,7 @@ test("config hook applies the profile's effort to the real config shape", async 
   // The sweep lane asked for `none` and landed on a model that publishes no
   // effort levels at all, so it has no variant rather than a level that model
   // does not publish.
-  assert.equal(config.agent.sweep.variant, undefined)
+  assert.equal(config.agent.sweep.variant, "low")
   // Every lane carries its own model.
   for (const agent of Object.values(config.agent)) {
     assert.ok(agent.model, "every lane must name a model")

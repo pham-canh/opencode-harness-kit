@@ -48,6 +48,7 @@ import {
   BASH_DENYLIST,
   GLOBAL_INSTRUCTIONS,
   globalInstructionsPath,
+  utilityModel,
 } from "../src/config.js"
 import { planEffort } from "../src/effort.js"
 import { mkdtemp } from "./helpers.mjs"
@@ -183,11 +184,14 @@ test("the safe fleet's second choice is still the best one inside the ceiling", 
   assert.equal(resolveRoles(safe).locate, "low")
   // `vision` wants a fast image reader. minimax reads one in 7 seconds.
   assert.equal(resolveLaneModel(safe, "vision").model, "minimax-m3.1-flash-free")
-  // `sweep` wants reasoning turned off, and no zero-retention model publishes
-  // a `none` level. The lane is kept, but it cannot do the one thing it was
-  // built for - which the routing doc says out loud.
-  assert.equal(resolveLaneModel(safe, "sweep").model, "longcat-2.5-preview-free")
-  assert.equal(resolveRoles(safe).sweep, null)
+  // `sweep` is a bulk mechanical search, so reasoning is pure waste on it.
+  // It used to run on longcat, which measures 420 reasoning tokens a message
+  // at 16.6s - the most expensive way to ask a model to grep - and no
+  // zero-retention model publishes a `none` level, so the lane could not turn
+  // reasoning off even when it asked to. deepseek is zero-retention, publishes
+  // a `low` level, and measures 19 reasoning tokens at 3.4s.
+  assert.equal(resolveLaneModel(safe, "sweep").model, "deepseek-v4.1-flash-free")
+  assert.equal(resolveRoles(safe).sweep, "low")
   // Six lanes differ from the unrestricted fleet. The number is a fact about
   // the tier, not a preference, and the docs quote it.
   const all = loadProfile("fleet-all")
@@ -265,12 +269,19 @@ test("the plan reports an effort request that was dropped entirely", () => {
   // A lane whose model publishes no such level gets no variant at all. That
   // is the one adjustment that has to be reported, because it is the one
   // where the lane is not running at the effort anybody asked for.
-  const plan = planEffort("fleet-safe")
+  // The safe fleet drops nothing: every lane that asks for a tier gets one.
+  // The unrestricted fleet does, and the report has to say so.
+  assert.deepEqual(
+    planEffort("fleet-safe").notes.filter((n) => n.includes("no variant is set")),
+    [],
+    "the safe fleet honours every tier request",
+  )
+  const plan = planEffort("fleet-all")
   const dropped = plan.notes.filter((n) => n.includes("no variant is set"))
   assert.ok(dropped.length > 0, "a dropped effort request has to be reported")
   assert.ok(
-    dropped.some((n) => n.includes("sweep") && n.includes("none")),
-    `the sweep lane asks for none and gets none: ${JSON.stringify(plan.notes)}`,
+    dropped.some((n) => n.includes("locate") && n.includes("low")),
+    `the locate lane asks for low and gets none: ${JSON.stringify(plan.notes)}`,
   )
 })
 
@@ -324,9 +335,27 @@ test("the same plugin source produces different behaviour per profile", () => {
   assert.equal(safe.model, "opencode/minimax-m3.1-flash-free")
   assert.equal(single.model, "opencode/beam-free")
 
-  // 2. small_model never points at a different model, on any profile.
+  // 2. The utility route. `small_model` is what opencode uses for its short
+  //    auxiliary calls, and it used to be the session model - so every title
+  //    and every rewritten question paid the session model's reasoning. It is
+  //    the profile's own choice now: a fleet names a cheaper route, and a
+  //    single-model profile keeps its one route, because "one route, and it
+  //    is the one you asked for" is a promise those profiles make.
+  assert.equal(safe.small_model, "opencode/deepseek-v4.1-flash-free")
+  assert.equal(all.small_model, "opencode/deepseek-v4.1-flash-free")
+  assert.equal(single.small_model, "opencode/beam-free", "a single-model profile keeps its route")
+  // Whatever it points at, it is a model the profile can actually run.
   for (const [name, c] of Object.entries({ safe, all, single })) {
-    assert.equal(c.small_model, c.model, `${name}: small_model diverged`)
+    const p = loadProfile(name === "safe" ? "fleet-safe" : name === "all" ? "fleet-all" : "beam-free")
+    const reachable = new Set([p.model])
+    for (const rm of Object.values(p.roleModels ?? {})) {
+      if (rm?.model) reachable.add(rm.model)
+      for (const rung of rm?.chain ?? []) reachable.add(rung)
+    }
+    assert.ok(
+      reachable.has(String(c.small_model).replace(/^opencode\//, "")),
+      `${name}: small_model ${c.small_model} is not a model the profile can run`,
+    )
   }
 
   // 3. Effort differs because the models differ. This is asserted on
@@ -341,7 +370,7 @@ test("the same plugin source produces different behaviour per profile", () => {
   // so it gets one. The sweep lane is on a model that publishes none, so it
   // gets no variant at all rather than a level that model does not have.
   assert.equal(safe.agent.locate.variant, "low")
-  assert.equal(safe.agent.sweep.variant, undefined, "no tunable effort, no variant")
+  assert.equal(safe.agent.sweep.variant, "low", "the safe fleet's sweep lane gets a tier")
   for (const c of [safe, all, single]) {
     assert.equal("variant" in c, false, "top-level variant must not be emitted")
   }
@@ -432,9 +461,9 @@ test("effort resolves against the lane's own model, not the profile's", () => {
   // The sweep lane runs on a model that publishes a `none` level, and the
   // locate lane falls back to one with no levels at all in the safe fleet.
   const all = cfg("fleet-all")
-  assert.equal(all.agent.sweep.variant, "none")
+  assert.equal(all.agent.sweep.variant, "none", "the reasoning-off model publishes none")
   const safe = cfg("fleet-safe")
-  assert.equal(safe.agent.sweep.variant, undefined, "the fallback has no effort levels")
+  assert.equal(safe.agent.sweep.variant, "low", "the safe fleet's sweep lane gets a tier")
   assert.equal(safe.agent.plan.variant, "max")
 })
 
@@ -734,7 +763,72 @@ test("an inherited small_model pointing elsewhere is replaced", () => {
       base: { small_model: "opencode/some-other-model-free" },
     }),
   )
-  assert.equal(out.small_model, "opencode/minimax-m3.1-flash-free")
+  // Replaced by the profile's own choice, which is the utility route when the
+  // profile names one and the session model when it does not. Either way the
+  // INHERITED value is gone: an inherited small_model pointing somewhere else
+  // is a route nobody chose on purpose.
+  const p = loadProfile("fleet-safe")
+  assert.equal(out.small_model, utilityModel(p) ?? `${p.provider}/${p.model}`)
+  assert.notEqual(out.small_model, "opencode/some-other-model-free")
+})
+
+test("a lane that asks for a tier gets one, unless a measurement says otherwise", () => {
+  // The tier is the cheapest way to get a job done, and it is worth up to
+  // 17x on reasoning tokens: deepseek measures 320 reasoning tokens at `max`
+  // and 19 at `low`. A lane that asks for a tier and lands on a model that
+  // publishes none runs at that model's NATURAL rate instead, which is the
+  // opposite of what the lane asked for.
+  //
+  // One lane is a deliberate exception, and the measurement is why: the
+  // `locate` lane's model is the fastest lane on the tier and reasons 59
+  // tokens on an 80-token answer, so trading a tier for 12% of the lane's
+  // time is the wrong trade. The request stays, so a failover can honour it.
+  // Three lanes in the unrestricted fleet, and the reason is in the
+  // measurement rather than in the profile: the three models that cannot
+  // serve the tier are the fleet's CHEAPEST reasoners. locate measures 59
+  // reasoning tokens a message, verify 18 and reviewer 116 - against build
+  // at 289 and plan at 198, which are the lanes that keep their tier on
+  // purpose. The tier is the lever, and it is not where the tokens are.
+  const EXCEPTIONS = { "fleet-all": ["reviewer", "locate", "verify"] }
+
+  for (const id of ["fleet-safe", "fleet-all"]) {
+    const p = loadProfile(id)
+    const resolved = resolveRoles(p)
+    const dropped = Object.entries(p.roles)
+      .filter(([lane, want]) => want && want !== "none" && resolved[lane] !== want)
+      .map(([lane]) => lane)
+    assert.deepEqual(
+      dropped.sort(),
+      [...(EXCEPTIONS[id] ?? [])].sort(),
+      `${id}: lanes that asked for a tier and did not get one`,
+    )
+  }
+})
+
+test("the utility route is a model the profile can actually run", () => {
+  // A utility route that the profile cannot resolve to would leave opencode's
+  // short auxiliary calls pointing at a model that is not in the fleet, and
+  // nothing would say so.
+  for (const id of listProfileIds()) {
+    const p = loadProfile(id)
+    if (!p.utility) {
+      // A profile with no utility route keeps the session model.
+      const out = parseGenerated(generateConfig(p))
+      assert.equal(out.small_model, `${p.provider}/${p.model}`, id)
+      continue
+    }
+    const reachable = new Set([p.model])
+    for (const rm of Object.values(p.roleModels ?? {})) {
+      if (rm?.model) reachable.add(rm.model)
+      for (const rung of rm?.chain ?? []) reachable.add(rung)
+    }
+    assert.ok(
+      reachable.has(p.utility.model),
+      `${id}: utility.model ${p.utility.model} is not in the fleet`,
+    )
+    const out = parseGenerated(generateConfig(p))
+    assert.equal(out.small_model, `${p.provider}/${p.utility.model}`, id)
+  }
 })
 
 // ---------------------------------------------------------------------------

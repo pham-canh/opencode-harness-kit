@@ -43,7 +43,7 @@ import {
   ProfileError,
   parseJsonc,
 } from "../src/profile.js"
-import { generateConfig, globalInstructionsPath } from "../src/config.js"
+import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin, MEMORY_PLUGIN } from "../src/config.js"
 import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
 import { planEffort } from "../src/effort.js"
 import { findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
@@ -584,6 +584,18 @@ async function cmdInit() {
   await cmdInstall()
   await cmdUse(id)
   cmdVerify()
+  if (memorySpec()) {
+    console.log(
+      `\n  ${stamp(
+        `memory: ${memorySpec()} is in the plugin list. It keeps its own config in`,
+      )}`,
+    )
+    console.log(
+      `  ${stamp(
+        "~/.config/opencode/opencode-mem.jsonc - give it a provider for auto-capture, or it stores without extracting.",
+      )}`,
+    )
+  }
   console.log(`\n  ${green("✓")} done. ${stamp("restart opencode, then ask it something")}\n`)
 }
 
@@ -929,7 +941,12 @@ function configDrift(p, actual) {
   const roles = resolveRoles(p)
 
   if (actual.model !== want) out.push(`model ${actual.model} -> ${want}`)
-  if (actual.small_model !== want) out.push(`small_model ${actual.small_model} -> ${want}`)
+  // The utility route, which is the session model unless the profile names
+  // a cheaper one for opencode's short auxiliary calls.
+  const wantUtility = utilityModel(p) ?? want
+  if (actual.small_model !== wantUtility) {
+    out.push(`small_model ${actual.small_model} -> ${wantUtility}`)
+  }
 
   for (const [role, level] of Object.entries(roles)) {
     if (level === undefined) continue
@@ -970,6 +987,23 @@ function configDrift(p, actual) {
     )
   }
   return out
+}
+
+/**
+ * The memory plugin to turn on, or null when the flag is absent.
+ *
+ * `--memory` turns on the default plugin, and `--memory=<id>` picks another -
+ * a pinned version, or a mirror of it.
+ *
+ * @returns {string | null}
+ */
+function memorySpec() {
+  if (!flag("--memory")) return null
+  const inline = args.find((a) => a.startsWith("--memory="))
+  if (inline) return inline.slice("--memory=".length)
+  const next = opt("--memory")
+  if (next && !next.startsWith("-")) return next
+  return MEMORY_PLUGIN
 }
 
 async function cmdUse(id) {
@@ -1013,8 +1047,14 @@ async function cmdUse(id) {
   }
 
   const base = readConfigJson()
+  // `--memory` turns on the memory plugin. The kit does not implement memory
+  // - a local vector store with embeddings, a web UI and auto-capture is a
+  // large thing to build badly, and `opencode-mem` already is one. What the
+  // kit can do is make it one flag away and keep the config honest about it.
+  const memory = memorySpec()
+  const effectiveBase = memory ? withMemoryPlugin(base, memory) : base
 
-  const out = generateConfig(p, { base, comments: true })
+  const out = generateConfig(p, { base: effectiveBase, comments: true })
   if (flag("--print")) {
     process.stdout.write(out)
     return
@@ -1230,6 +1270,89 @@ function chainOf(p) {
     out[lane] = resolveLaneChain(p, lane)
   }
   return out
+}
+
+/**
+ * Which shipped models are no longer in the live catalogue.
+ *
+ * This is the question a free-tier user actually has to ask, and the answer
+ * is not "has a profile drifted" - it is "is one of my routes gone". A model
+ * that has left the catalogue is a model whose lane now fails over, or whose
+ * chain has one fewer rung, and nobody is told.
+ *
+ * @param {any} catalog
+ * @returns {string[]} the model ids that are gone
+ */
+function withdrawnModels(catalog) {
+  const gone = []
+  for (const id of listProfileIds()) {
+    let p
+    try {
+      p = loadProfile(id)
+    } catch {
+      continue
+    }
+    for (const model of new Set([p.model, ...Object.values(p.roleModels ?? {}).flatMap((r) => r?.chain ?? [])])) {
+      if (!catalog?.[p.provider]?.models?.[model]) {
+        if (!gone.includes(model)) gone.push(model)
+      }
+    }
+  }
+  return gone
+}
+
+/**
+ * Watch the catalogue and report what disappeared.
+ *
+ * Free models on this tier are withdrawn in days - one of this kit's own
+ * profiles lasted a month, another a day. A weekly `doctor` is the right
+ * rhythm for a human, and this is the shape a cron wants: one run, a non-zero
+ * exit when something is gone, and a line of output that says what.
+ *
+ * `--watch` keeps running and reports only what CHANGED, so it can sit in a
+ * terminal for a week without becoming noise.
+ */
+async function cmdDoctorWatch() {
+  const watch = flag("--watch")
+  const interval = Math.max(30, Number(opt("--interval") ?? 300))
+  const seen = new Set()
+  let first = true
+  for (;;) {
+    /** @type {string[]} */
+    let gone = []
+    try {
+      const catalog = await fetchCatalog()
+      gone = withdrawnModels(catalog)
+    } catch (err) {
+      console.error(red(`  could not read the catalogue: ${err.message}`))
+      if (!watch) process.exit(1)
+    }
+    const current = new Set(gone)
+    const fresh = gone.filter((m) => !seen.has(m))
+    for (const m of fresh) {
+      console.log(red(`  ${new Date().toISOString()}  ${m} is no longer in the catalogue`))
+      console.log(stamp(`    fix: oc-harness doctor && oc-harness refresh <profile>`))
+    }
+    if (!first) {
+      for (const m of seen) {
+        if (!current.has(m)) {
+          console.log(green(`  ${new Date().toISOString()}  ${m} is back`))
+        }
+      }
+    }
+    seen.clear()
+    for (const m of current) seen.add(m)
+    if (!watch) {
+      if (gone.length) {
+        console.error(red(`  ${gone.length} shipped model(s) are gone: ${gone.join(", ")}`))
+        process.exit(1)
+      }
+      console.log(green("  every shipped model is still in the catalogue"))
+      return
+    }
+    first = false
+    await new Promise((r) => setTimeout(r, interval * 1000))
+  }
 }
 
 /**
@@ -1667,7 +1790,8 @@ try {
       process.exitCode = await trustMain(args.slice(1))
       break
     case "doctor":
-      await cmdDoctor()
+      if (flag("--watch") || flag("--check-models")) await cmdDoctorWatch()
+      else await cmdDoctor()
       break
     case "baseline":
       await import("./baseline.mjs")
@@ -1700,7 +1824,10 @@ try {
     --yes          accept a retention warning, back up the old config
     --retention    filter list by retention class
     --free         list free profiles only
+    --memory       turn on the memory plugin (--memory=<id> to pick one)
     --strict       doctor: fail on perishable catalogue drift too
+    --watch        doctor: keep watching the catalogue, report what disappeared
+    --check-models doctor: one run, non-zero when a shipped model is gone
 
   run options
     --role <agent>  which agent does the work (default: build)

@@ -43,6 +43,10 @@
     "sweep": "none",
     "longform": null
   },
+  "utility": {
+    "model": "deepseek-v4.1-flash-free",
+    "why": "Cheapest route measured for a short auxiliary call: 49 reasoning tokens and 7.2s for a title, against 110 and 13.4s on big-pickle and 332 and 10.6s on nemotron-3.5-super-vl. It is also in every chain of this fleet, so a failover cannot leave the utility route pointing at a model that is not in the fleet."
+  },
   "roleModels": {
     "build": {
       "model": "minimax-m3.1-flash-free",
@@ -73,7 +77,8 @@
       "chain": [
         "nemotron-3.5-lightning-free",
         "big-pickle",
-        "longcat-2.5-preview-free"
+        "longcat-2.5-preview-free",
+        "deepseek-v4.1-flash-free"
       ]
     },
     "verify": {

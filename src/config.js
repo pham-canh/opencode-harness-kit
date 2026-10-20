@@ -62,6 +62,55 @@ export function globalInstructionsPath() {
 export const GLOBAL_INSTRUCTIONS = "~/.config/opencode/GLOBAL.md"
 
 /**
+ * The memory plugin this kit can turn on.
+ *
+ * The kit does not implement memory. A local vector store with embeddings, a
+ * web UI and auto-capture is a large thing to build badly, and there is one
+ * that is already good: `opencode-mem` (MIT). What the kit can do is make it
+ * one flag away, and keep the config honest about it.
+ */
+export const MEMORY_PLUGIN = "opencode-mem@latest"
+
+/**
+ * The config with the memory plugin turned on.
+ *
+ * The plugin list is preserved. The user's own plugins are not the kit's to
+ * remove, and the entry is added rather than replaced so a config that
+ * already has it does not grow a second copy.
+ *
+ * opencode v1 calls the key `plugin` and v2 calls it `plugins`; whichever
+ * the config already uses is the one that is extended.
+ *
+ * @param {any} base the config as it is on disk
+ * @param {string} [spec] the plugin id, so a pinned version or a mirror works
+ * @returns {any}
+ */
+export function withMemoryPlugin(base, spec = MEMORY_PLUGIN) {
+  const b = base ?? {}
+  const key = Array.isArray(b.plugins) ? "plugins" : "plugin"
+  const list = Array.isArray(b[key]) ? [...b[key]] : []
+  if (!list.includes(spec)) list.push(spec)
+  return { ...b, [key]: list }
+}
+
+/**
+ * The utility route a profile names, as a full model id.
+ *
+ * `small_model` is opencode's route for the short auxiliary calls. It used to
+ * be the session model, so every title and every rewritten question paid the
+ * session model's reasoning - and reasoning, not output, is what a short call
+ * costs.
+ *
+ * @param {any} p the profile
+ * @returns {string | null}
+ */
+export function utilityModel(p) {
+  const u = p?.utility
+  if (!u || typeof u.model !== "string" || !u.model) return null
+  return `${p.provider ?? "opencode"}/${u.model}`
+}
+
+/**
  * The instruction list a generated config carries.
  *
  * The kit's own file is always in it. A config that already had an
@@ -241,10 +290,21 @@ export function generateConfig(p, opts = {}) {
     ...base_,
 
     model,
-    // Same model, not a cheaper one: swapping models mid-session changes the
-    // voice and the tool habits. Lower the effort instead. An inherited
-    // small_model pointing at a different model is replaced, not preserved.
-    small_model: model,
+    // The utility route, when the profile names one.
+    //
+    // `small_model` is what opencode uses for the short auxiliary calls: a
+    // title, a one-line summary, a question rewritten. It used to be the same
+    // model as the session, which meant every one of those calls paid the
+    // session model's reasoning - and reasoning, not output, is what a short
+    // call costs. Measured on this tier, a title costs 49 reasoning tokens on
+    // deepseek and 332 on nemotron-3.5-super-vl, and deepseek answers in
+    // 7.2s against 22.7s for glm.
+    //
+    // A profile that does not name a utility route keeps the session model.
+    // A single-model profile SHOULD keep it: "one route, and it is the one
+    // you asked for" is a promise the five-lane profiles make, and a cheaper
+    // route on the side would break it.
+    small_model: utilityModel(p) ?? model,
     // No top-level `variant`. The 1.18.35 Config schema sets
     // `additionalProperties: false` and has no `variant` key, so OpenCode
     // strips it from the resolved config - verified with `opencode debug
@@ -358,6 +418,11 @@ function render(cfg, p, opts) {
     `${c}`,
     `${c}profile      ${p.id}`,
     `${c}model        ${p.provider}/${p.model}`,
+    ...(p.utility
+      ? [
+          `${c}utility      ${p.provider}/${p.utility.model}  (opencode's short calls: titles, summaries)`,
+        ]
+      : []),
     ...(splits.length
       ? [
           `${c}lanes        ${splits.length} enabled, each on the first model its chain allows`,
@@ -382,7 +447,17 @@ function render(cfg, p, opts) {
     `${c}Derived numbers, do not hand-edit:`,
     `${c}  compaction.reserved  ${reservedTokens(p, { unhealthy }).toLocaleString("en-US")}  (${Math.round((p.effort?.reserveShare ?? 0.12) * 100)}% of the narrowest input cap in play, held back for reasoning growth)`,
     `${c}  prune threshold      ${pruneThreshold(p, { unhealthy }).toLocaleString("en-US")}  (narrowest input cap minus reserve)`,
-    `${c}  role effort          ${Object.entries(roles).map(([k, v]) => `${k}=${v ?? "unset"}`).join("  ")}`,
+    `${c}  role effort          ${Object.entries(roles)
+      .map(([k, v]) => {
+        // A lane that asked for a tier and did not get one says so HERE,
+        // in the file the user reads. The reason it is in the file and not
+        // only in `oc-harness show` is that the file is what a human
+        // looks at when a lane turns out to be slow.
+        const want = p.roles?.[k]
+        const dropped = want && want !== "none" && v !== want
+        return `${k}=${v ?? "unset"}${dropped ? `(asked ${want})` : ""}`
+      })
+      .join("  ")}`,
     ...(laneRows.length
       ? [
           `${c}  lane models          ${laneRows.map((r) => `${r.role}=${r.model}${r.limits ? ` (out ${r.limits.output.toLocaleString("en-US")})` : ""}`).join("  ")}`,
