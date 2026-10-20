@@ -68,6 +68,55 @@ They import a type from `@opencode-ai/plugin`, which was a devDependency, so
 a consumer that installed the package type-checked against a type it did
 not have. The subpath exports - `opencode-harness-kit/profile` and the rest
 - declared no types at all, even though the declarations were built and
+shipped.
+
+The plugin package depends on `effect`, `zod` and `@opencode-ai/sdk`, and
+has three peer dependencies of its own, so making it a peer is not an
+answer either: an optional peer is never installed by npm, and a required
+one drags all of that onto a consumer that only wanted to compile a config.
+
+So the published declarations no longer import it. The plugin type is
+declared structurally, in `src/plugin.ts`, and the real type is checked
+against it in `src/plugin-type-check.ts` - in CI, where the package is
+installed. A drift between the two is a failed build, not a broken
+consumer.
+
+**`sudo bash -c "rm -rf /"` was not blocked.**
+
+The guard unwrapped a shell's payload only when the shell was the first
+word of the segment, so a wrapper in front of it - `sudo`, `env`, `xargs`,
+`npx` - hid the whole command line. The same shape let `npx npm publish`
+through. The wrappers come off first now.
+
+**A failed catalogue fetch ended the watch instead of continuing it.**
+
+`fetchCatalog` called `fail()`, which exits. The catch around it could
+never run, so `doctor --watch` died on the first failed poll - a transient
+network error turned a monitor into a dead one. The fetch throws now, and
+the callers decide: the watch carries on, and `doctor --json` prints a
+JSON object with the error in it rather than nothing at all.
+
+**`uninstall` left the kit's own broken links behind.**
+
+It checked whether a link pointed inside the kit by resolving it, and
+resolving a DANGLING link throws - which is exactly the case the command
+exists for, because `npm uninstall` leaves four dangling links behind. A
+link is now resolved without requiring its target to exist, and the same
+test is applied to `GLOBAL.md` and the plugin link, which were removed
+whatever they pointed at.
+
+**`oc-harness cost` reported 0 for a project that had pruned anything.**
+
+The field in the log was renamed from `savedBytes` to `savedChars`, and
+the log is project-local and persistent: every project that upgraded had
+the old records and read them as zero. The old name is still read.
+
+**The published type declarations did not resolve for a consumer.**
+
+They import a type from `@opencode-ai/plugin`, which was a devDependency, so
+a consumer that installed the package type-checked against a type it did
+not have. The subpath exports - `opencode-harness-kit/profile` and the rest
+- declared no types at all, even though the declarations were built and
 shipped. The plugin is now an optional peer dependency and every subpath
 declares its types.
 
@@ -316,6 +365,10 @@ improvement from a NULL average.
   project. The prune log used to land in the process's working directory,
   which is often your home directory.
 ### Added
+
+- **`show --json` names the profile's own notes `notes`** and the compiler's
+  adjustments `adjustments`, because the human report calls them different
+  things and the JSON should not make one name mean two.
 
 - **`doctor --json` and `show --json`.** "Is the install healthy" and "what
   does this profile resolve to" are questions a CI job and a dashboard ask,

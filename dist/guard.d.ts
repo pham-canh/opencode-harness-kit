@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Plugin } from "./plugin.js";
 export declare const MARKER = "[opencode-harness-kit] blocked";
 /**
  * The files a patch touches.

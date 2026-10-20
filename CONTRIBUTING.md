@@ -55,9 +55,10 @@ npm run typecheck:scripts  # only bin/ and eval/
 library: they are plain JavaScript with no JSDoc on their parameters, and
 annotating a few hundred of them would be churn rather than work. The loose
 config still catches a wrong type and a missing property on a declared
-shape; it does not catch a property that does not exist on an object
-literal, so an object you build and then add to wants a `@type` on it. The
-comment in `tsconfig.scripts.json` says which is which.
+shape; it does not catch a property that does not exist on an INFERRED
+object literal - TypeScript does not check those in a `.js` file - so an
+object you build and then add to wants a `@type` on it. The comment in
+`tsconfig.scripts.json` says which is which.
 
 `npm run check:install` measures an existing OpenCode install and verifies
 the config in `~/.config/opencode/`. It does not install anything itself, and

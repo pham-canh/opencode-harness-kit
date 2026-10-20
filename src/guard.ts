@@ -6,7 +6,7 @@
 // Fail-closed: if the guard cannot decide, it blocks. A guard that quietly
 // passes when broken is worse than none, because the user stops watching it.
 
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "./plugin.js"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { checkBash, checkDenied, checkWrite, insideRoot } from "./rules.js"
@@ -118,7 +118,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
   }
 
   return {
-    "tool.execute.before": async (input, output) => {
+    "tool.execute.before": async (input: any, output: any) => {
       try {
         if (input.tool === "bash") {
           // The bash tool takes a `workdir`, and it becomes the command's

@@ -18,7 +18,7 @@
 // retry it. The daily window resets at 00:00 UTC, so waiting inside a session
 // is the wrong shape anyway.
 
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "./plugin.js"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { safeStringify } from "./safe.js"
@@ -68,7 +68,7 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
 
   return {
     // Runs once, before the session does any work.
-    config: async (config) => {
+    config: async (config: any) => {
       try {
         const cfg = config as Record<string, any>
         const health = readHealth(project)
@@ -150,7 +150,7 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
       }
     },
 
-    event: async ({ event }) => {
+    event: async ({ event }: any) => {
       const e = event as any
       const type = e?.type
       if (!type) return
@@ -174,7 +174,7 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
       failedSessions++
     },
 
-    "chat.message": async (input, output) => {
+    "chat.message": async (input: any, output: any) => {
       // If this session has already hit a spent route, say so once, early,
       // instead of letting the agent burn turns discovering it.
       if (failedSessions === 0) return

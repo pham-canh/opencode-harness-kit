@@ -108,13 +108,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "pham-canh",
-  "peerDependencies": {
-    "@opencode-ai/plugin": "^1.18.31"
-  },
-  "peerDependenciesMeta": {
-    "@opencode-ai/plugin": {
-      "optional": true
-    }
-  }
+  "author": "pham-canh"
 }

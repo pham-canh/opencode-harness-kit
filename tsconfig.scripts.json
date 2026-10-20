@@ -8,9 +8,10 @@
     //   CATCHED   a wrong type (TS2322), an argument of the wrong type
     //             (TS2345), a missing property on a declared shape
     //             (TS2739/TS2741), an unreachable branch.
-    //   NOT CAUGHT a property that does not exist on an object literal
-    //             (TS2339) - `noImplicitAny: false` turns that off for
-    //             exactly that case - and an untyped parameter.
+    //   NOT CAUGHT a property that does not exist on an INFERRED object
+    //             literal (TS2339) - TypeScript does not check those in a
+    //             .js file - and an untyped parameter. A literal with a
+    //             JSDoc type IS checked.
     //
     // The library itself is checked with the strict config, and that is
     // where the type errors that matter live.

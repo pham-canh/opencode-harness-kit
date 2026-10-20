@@ -346,7 +346,7 @@ truncation directory, so re-reading is possible. But "re-run the command to see
 it again" is more expensive than "scroll up". The stub is one line precisely so
 an agent can decide whether it is worth it, and the stub says so.
 
-A `savedBytes` of 0 in `prune.jsonl` is not a second, redundant pass. It means
+A `savedChars` of 0 in `prune.jsonl` is not a second, redundant pass. It means
 `bytesAfter` did not come out below `bytesBefore` for that turn, which happens
 when a stub is no shorter than the output it replaced (the stub's own label
 costs more than a short body), or when a `reasoning` part was under the 200

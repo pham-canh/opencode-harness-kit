@@ -12,7 +12,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "./plugin.js"
 import { GuardPlugin } from "./guard.js"
 import { PrunePlugin } from "./prune.js"
 import { RouterPlugin } from "./router.js"

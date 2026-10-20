@@ -16,7 +16,8 @@ import { loadProfile, resolveRoles, resolveDefaultVariant, resolveLaneModel, LAN
 /**
  * @typedef {import("./profile.js").Profile} Profile
  * @typedef {import("./profile.js").EffortRequest} EffortRequest
- * @typedef {import("@opencode-ai/plugin").Config} Config
+ * @typedef {object} Config
+ * @property {Record<string, any>} [agent]
  * @typedef {object} EffortResult
  * @property {string} profileId
  * @property {string} model

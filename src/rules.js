@@ -224,7 +224,20 @@ export function tokenize(segment) {
 }
 
 const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/
-const GIT_WRAPPERS = new Set(["env", "sudo", "doas", "nohup", "time", "command", "exec", "xargs"])
+// The wrappers that put another command in front of the real one. `npx`
+// runs a package's binary, so `npx npm publish` is `npm publish` with two
+// words in front of it.
+const GIT_WRAPPERS = new Set([
+  "env",
+  "sudo",
+  "doas",
+  "nohup",
+  "time",
+  "command",
+  "exec",
+  "xargs",
+  "npx",
+])
 // Wrappers whose flag consumes the next word, e.g. `sudo -u deploy git push`.
 const WRAPPER_VALUE_FLAGS = new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"])
 // git options that take a value, so the subcommand is the word after them.
@@ -336,9 +349,15 @@ const MAX_SHELL_DEPTH = 2
 export function shellPayload(segment) {
   const tokens = tokenize(segment)
   if (tokens.length < 2) return null
-  if (tokens[0] === "eval") return tokens.slice(1).join(" ") || null
-  if (!SHELL_BIN.test(tokens[0])) return null
-  const c = tokens.findIndex((t) => /^-[a-zA-Z]*c$/.test(t))
+  // The wrappers come off FIRST. `sudo bash -c "rm -rf /"` hides a whole
+  // command line behind one argument, and the shell doing the hiding is the
+  // second word - so looking only at the first word missed every command
+  // with a wrapper in front of it, which is the shape a wrapper is used for.
+  const i = skipPrefixes(tokens)
+  if (i >= tokens.length) return null
+  if (tokens[i] === "eval") return tokens.slice(i + 1).join(" ") || null
+  if (!SHELL_BIN.test(tokens[i])) return null
+  const c = tokens.findIndex((t, n) => n > i && /^-[a-zA-Z]*c$/.test(t))
   if (c === -1 || c === tokens.length - 1) return null
   return tokens.slice(c + 1).join(" ") || null
 }

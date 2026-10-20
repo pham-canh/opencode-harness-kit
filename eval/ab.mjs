@@ -511,7 +511,14 @@ function parseStream(file, root = TARGET_REAL) {
 function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
   const out = join(outDir, `${id}-${arm}-${idx}.json`)
   const env = { ...process.env }
-  if (arm === "off") env.HOME = home
+  if (arm === "off") {
+    env.HOME = home
+    // The kit-free home is only kit-free if the config is not found
+    // somewhere else. `OPENCODE_CONFIG_DIR` is what opencode looks at
+    // FIRST, so with it set the "off" arm loaded the kit's own config, used
+    // its rules, and used its model - and the arm was not an off arm at all.
+    delete env.OPENCODE_CONFIG_DIR
+  }
   const t0 = Date.now()
   // --dir is not optional. Nested inside an opencode session, `opencode run`
   // otherwise inherits the *parent* session's project directory and reads the
@@ -580,7 +587,11 @@ if (rescoreDir) {
     } else if (invalid) {
       why = "no output, not scored"
     } else {
-      const g = gradeAnswer(target, s.text, job.want)
+      // The same exclusions the live path applies. A re-score that graded
+      // the answers differently from the run it is re-scoring would be a
+      // measurement of the grader, and the number it produced would not be
+      // comparable with the one it is meant to explain.
+      const g = gradeAnswer(target, s.text, job.want, { exclude: SUITE_FILES })
       ok = g.ok
       why = g.ok ? `cited ${g.cited}` : g.cited === 0 ? "no citation" : `cited ${g.cited}, none held`
     }

@@ -25,7 +25,7 @@
 // that is a substring of one line of real source that is verified to exist.
 
 import { readFileSync, existsSync } from "node:fs"
-import { join, isAbsolute, resolve } from "node:path"
+import { join, isAbsolute, relative, resolve } from "node:path"
 
 /**
  * The message of a caught value, whatever it turned out to be.
@@ -76,7 +76,17 @@ export function extractRefs(text) {
   // about something else - inventing a claim the agent never made, and then
   // scoring the answer against it. Under-claiming a line is better than
   // claiming a wrong one.
-  for (const m of text.matchAll(/([\w./@~-]+\.[A-Za-z0-9]+)[^.\n]{0,40}?\blines?\s*:?\s*[*:_`\s]*(\d+)/gi))
+  //
+  // An ellipsis is not a sentence end. "see src/a.js ... line 5" is the
+  // shape the pattern is named after, and a full stop inside the gap lost
+  // it.
+  //
+  // The gap may not contain a full stop, EXCEPT the ones that are part of
+  // an ellipsis. "see src/a.js ... line 5" is the shape this pattern is
+  // named after, and a full stop inside the gap lost it.
+  for (const m of text.matchAll(
+    /([\w./@~-]+\.[A-Za-z0-9]+)(?:[^\n.]|\.(?=\.)|(?<=\.)\.){0,40}?\blines?\s*:?\s*[*:_`\s]*(\d+)/gi,
+  ))
     push(m[1], m[2])
 
   // path, then a line number on the NEXT line.
@@ -92,8 +102,13 @@ export function extractRefs(text) {
   // lost and a correct answer is scored wrong. Requiring the label is what
   // keeps this from pairing a path with a line number that belongs to the
   // next sentence.
+  //
+  // One blank line is allowed between the two fields. Markdown puts a blank
+  // line between a label and its value all the time, and a pattern that
+  // only allows adjacent lines loses the citation on a shape that is
+  // ordinary.
   for (const m of text.matchAll(
-    /([\w./@~-]+\.[A-Za-z0-9]+)[^\n]{0,40}?\n[ \t]*[*_`]{0,2}[Ll]ines?[*_`]{0,2}\s*:?\s*[*_`\s]*(\d+)/g,
+    /([\w./@~-]+\.[A-Za-z0-9]+)[^\n]{0,40}?\n(?:[ \t]*\n)?[ \t]*[*_`]{0,2}[Ll]ines?[*_`]{0,2}\s*:?\s*[*_`\s]*(\d+)/g,
   ))
     push(m[1], m[2])
 
@@ -196,11 +211,14 @@ export function gradeAnswer(target, text, want, { window = 1, exclude = [] } = {
     // suite is this repository, and the suite's answer key is inside it, so
     // an agent that greps for the symbol can cite the answer key and pass
     // without reading the source.
-    // `exclude` holds both file names and DIRECTORIES. A file path never
-    // ends with a directory name, so `endsWith` never matched "dist/" and a
-    // citation to the build output was graded as evidence.
-    if (isExcluded(ref.file, exclude)) {
-      return { ...ref, status: "excluded" }
+    //
+    // The test is on the RESOLVED path, relative to the target, not on the
+    // string the agent typed. "./dist/index.js", "src/../dist/index.js" and
+    // "/tmp/scratch/self/dist/index.js" are three spellings of the same
+    // file, and the build output is the build output however it is written.
+    const rel = relative(target, abs)
+    if (isExcluded(rel, exclude) || isExcluded(ref.file, exclude)) {
+      return { ...ref, status: "excluded", resolved: rel }
     }
     let lines
     try {

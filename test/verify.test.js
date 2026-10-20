@@ -221,6 +221,24 @@ test("a file and a line on the next line, labelled, is a citation", () => {
   )
 })
 
+test("a blank line between the two fields does not lose the citation", () => {
+  // Markdown puts a blank line between a label and its value all the time.
+  const refs = extractRefs("**File:** `src/a.js`\n\n**Line:** 5")
+  assert.ok(
+    refs.some((r) => r.file === "src/a.js" && r.line === 5),
+    `the citation was lost: ${JSON.stringify(refs)}`,
+  )
+})
+
+test("an ellipsis in the gap does not lose the citation", () => {
+  // "see src/a.js ... line 5" is the shape the pattern is named after.
+  const refs = extractRefs("see src/a.js ... line 5")
+  assert.ok(
+    refs.some((r) => r.file === "src/a.js" && r.line === 5),
+    `the citation was lost: ${JSON.stringify(refs)}`,
+  )
+})
+
 test("a line number that belongs to another sentence is not a line claim", () => {
   // The agent named the right file. The "line 2" is about the report. If the
   // two are paired, the answer is graded against a line the agent never
@@ -280,6 +298,27 @@ test("a directory in the exclude list excludes everything inside it", () => {
   assert.equal(isExcluded("src/index.ts", ["dist/", "eval/", "test/"]), false)
   // A file NAME in the list still excludes that file.
   assert.equal(isExcluded("tasks-self.json", ["tasks-self.json"]), true)
+})
+
+test("a citation to an excluded directory is not evidence, however it is spelled", () => {
+  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  mkdirSync(join(dir, "dist"), { recursive: true })
+  mkdirSync(join(dir, "src"), { recursive: true })
+  writeFileSync(join(dir, "dist", "index.js"), "export function theAnswer() { return 42 }")
+  // Three spellings of the same file. The test is on the RESOLVED path, so
+  // all three are the build output.
+  for (const spelling of [
+    "dist/index.js",
+    "./dist/index.js",
+    join(dir, "dist", "index.js"),
+  ]) {
+    const graded = gradeAnswer(dir, `it is in ${spelling} line 1`, WANT, { exclude: ["dist/"] })
+    assert.equal(
+      graded.ok,
+      false,
+      `an excluded citation was graded as evidence: ${spelling} ${JSON.stringify(graded.refs)}`,
+    )
+  }
 })
 
 test("a citation to an excluded directory is not evidence", () => {

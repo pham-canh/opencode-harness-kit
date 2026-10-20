@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Plugin } from "./plugin.js";
 export interface HarnessOptions {
     /** Profile id. Defaults to the one recorded in the config by `oc-harness use`. */
     profile?: string;
