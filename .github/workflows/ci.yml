@@ -3,6 +3,12 @@ name: ci
 on:
   push:
     branches: [main]
+    # A tag has to trigger the workflow, or the publish job below can never
+    # run: its condition is `startsWith(github.ref, 'refs/tags/v')`, and a
+    # workflow that only listens to `main` never sees a tag. That is how
+    # 0.2.1 shipped - by hand - while the publish job sat in the file looking
+    # like it worked.
+    tags: ['v*']
   pull_request:
 
 jobs:
