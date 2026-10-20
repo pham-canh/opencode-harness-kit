@@ -37,6 +37,15 @@ is not happening.
     reflected by `npm whoami` at all. Asking it unconditionally failed a
     publish that would have worked.
   - A token still works: if `NPM_TOKEN` is set, the job uses it.
+- **`npm run release:trust` configures the trusted publisher from the command
+  line.** npm's web form has four fields and npm does not validate what you
+  type into it, so a typo is discovered at publish time and reported as
+  "OIDC token exchange error - package not found" - which reads like a missing
+  package. npm ships `npm trust` for exactly this, and it can read what is
+  stored, so the configuration is now compared against the identity the
+  workflow will actually present and replaced when it differs.
+- The workflow is named after its file, so the value that has to be typed on
+  npmjs.com is the value the Actions tab shows.
 
 ### Fixed
 
