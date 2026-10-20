@@ -600,7 +600,7 @@ test("the header names each lane's real output cap", () => {
 })
 
 test("retention.yml is parsed and separates safe from training routes", () => {
-  const r = loadRetention()
+  const r = loadRetention().models
   assert.equal(r["opencode/minimax-m3.1-flash-free"].retention, "zero-retention")
   assert.equal(r["opencode/big-pickle"].retention, "may-train")
   assert.equal(r["opencode/beam-free"].retention, "retained")
@@ -610,8 +610,19 @@ test("retention.yml is parsed and separates safe from training routes", () => {
   assert.ok(!note.includes("\n"))
 })
 
-test("every profile has a retention.yml entry, and the two agree", () => {
+test("the retention.yml defaults block is read, not just written down", () => {
+  // The `defaults:` block looked like configuration and was not: the
+  // fallback for a model with no entry was hardcoded in the reader, so
+  // changing `defaults.unknown` in the file did nothing.
   const r = loadRetention()
+  assert.ok(r.defaults, "retention.yml declares a defaults block")
+  assert.equal(r.defaults.unknown, "unknown")
+  // And it is what a model with no entry gets.
+  assert.equal(modelRetention("no-such-model-free"), "unknown")
+})
+
+test("every profile has a retention.yml entry, and the two agree", () => {
+  const r = loadRetention().models
   let checked = 0
   for (const id of listProfileIds()) {
     const p = loadProfile(id)

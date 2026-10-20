@@ -129,7 +129,7 @@ function index() {
 
 async function cmdList() {
   const idx = index()
-  const retention = loadRetention()
+  const retention = loadRetention().models
   const only = opt("--retention")
   const freeOnly = flag("--free")
 
@@ -222,7 +222,7 @@ function cmdShow(id) {
   if (!id) fail("usage: oc-harness show <profile>")
   const p = loadProfile(id)
   const plan = planEffort(id)
-  const retention = loadRetention()[`${p.provider}/${p.model}`]
+  const retention = loadRetention().models[`${p.provider}/${p.model}`]
 
   console.log(`\n${bold(p.id)}  ${stamp(p.title ?? "")}\n`)
   const row = (k, v) => console.log(`  ${k.padEnd(20)} ${v}`)
@@ -970,12 +970,15 @@ async function cmdUse(id) {
     const msg =
       `${yellow("!")} ${eff.worst} may train on your prompts and completions.\n` +
       (trainOn.length ? `  ${trainOn.join(", ")}.\n` : "") +
-      `  ${retentionFor(eff.worst)?.note ?? ""}\n` +
-      `  Re-run with --yes to accept.`
+      `  ${retentionFor(eff.worst)?.note ?? ""}\n`
     if (process.stdin.isTTY && !flag("--print")) {
-      fail(msg + "\n")
+      // On a terminal the run stops here, so the way forward is to accept it.
+      fail(msg + "  Re-run with --yes to accept.\n")
     }
-    console.error(msg)
+    // Without a terminal there is nobody to ask, so the run continues and the
+    // config is written. Telling the user to re-run with --yes at that point
+    // would be asking them to do something that has already happened.
+    console.error(msg + "  Continuing: there is no terminal to ask.\n")
   }
 
   const base = readConfigJson()
@@ -1205,7 +1208,7 @@ function chainOf(p) {
  */
 async function cmdDoctor() {
   const catalog = await fetchCatalog()
-  const retention = loadRetention()
+  const retention = loadRetention().models
   const ids = listProfileIds()
   let problems = 0
   let drift = 0
