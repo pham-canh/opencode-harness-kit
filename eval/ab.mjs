@@ -170,7 +170,21 @@ const TARGET_REAL = realpathSync(target)
 function isInsideTarget(p, root = TARGET_REAL) {
   if (!p || typeof p !== "string") return true
   const abs = p.startsWith("/") ? realpathSafe(p) : join(root, p)
-  return abs === root || abs.startsWith(root + "/")
+  if (abs === root || abs.startsWith(root + "/")) return true
+  // The pristine subject is never allowed, even though it lives in the same
+  // temp directory: it is the tree the run copy was made from, and a run
+  // that modifies it invalidates the second rep.
+  if (abs === TARGET_REAL || abs.startsWith(TARGET_REAL + "/")) return false
+  // The OS temp directory is the ONE exception the kit makes, and GLOBAL.md
+  // says so: "This kit tells agents to put scratch files in a temp dir
+  // outside the workspace". A kit-on agent that follows that rule writes a
+  // scratch file outside the subject, and the escape check called that an
+  // escape and stopped the whole experiment.
+  //
+  // The check is about the agent walking out into the real repository or the
+  // user's files, not into a scratch file in /tmp.
+  const tmp = realpathSafe(tmpdir())
+  return abs === tmp || abs.startsWith(tmp + "/")
 }
 
 function realpathSafe(p) {
