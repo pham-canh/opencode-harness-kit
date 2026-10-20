@@ -54,8 +54,19 @@ export function planEffort(profileId, opts = {}) {
     )
   }
   for (const [role, want] of Object.entries(p.roles ?? {})) {
+    if (!want) continue
     const got = roles[role]
-    if (want && got && want !== got) {
+    if (got === null) {
+      // The request was lost entirely: the lane's model publishes no such
+      // level, so no variant is emitted for it. This is the one adjustment
+      // worth reporting loudly, because it is the one where the lane is not
+      // running at the effort anybody asked for.
+      notes.push(
+        `lane ${role} asked for ${want}; its model does not publish that level, so no variant is set.`,
+      )
+      continue
+    }
+    if (want !== got) {
       notes.push(`lane ${role} asked for ${want}; its model tops out at ${got}.`)
     }
   }
