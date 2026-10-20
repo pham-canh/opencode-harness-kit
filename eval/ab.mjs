@@ -159,6 +159,16 @@ const REAL_HOME = homedir()
 const TARGET_REAL = realpathSync(target)
 
 /**
+ * Files in the subject that are the SUITE's own, and whose contents are the
+ * answer key rather than the code.
+ *
+ * The self suite's subject is this repository, and this file names the
+ * answer. An agent that greps for the symbol and cites the suite passes
+ * without reading anything.
+ */
+const SUITE_FILES = ["tasks-self.json", "tasks.json", "tasks-ts.json"]
+
+/**
  * True when `p` is `root` or something under it. Symlinks are resolved on both
  * sides so `/tmp` -> `/private/tmp` does not read as an escape, and so does an
  * agent that echoes the fully resolved `/private` form.
@@ -170,11 +180,12 @@ const TARGET_REAL = realpathSync(target)
 function isInsideTarget(p, root = TARGET_REAL) {
   if (!p || typeof p !== "string") return true
   const abs = p.startsWith("/") ? realpathSafe(p) : join(root, p)
-  if (abs === root || abs.startsWith(root + "/")) return true
   // The pristine subject is never allowed, even though it lives in the same
   // temp directory: it is the tree the run copy was made from, and a run
-  // that modifies it invalidates the second rep.
+  // that modifies it invalidates the second rep. This is checked BEFORE the
+  // root test, because in the rescore path the root IS the pristine subject.
   if (abs === TARGET_REAL || abs.startsWith(TARGET_REAL + "/")) return false
+  if (abs === root || abs.startsWith(root + "/")) return true
   // The OS temp directory is the ONE exception the kit makes, and GLOBAL.md
   // says so: "This kit tells agents to put scratch files in a temp dir
   // outside the workspace". A kit-on agent that follows that rule writes a
@@ -359,7 +370,7 @@ function fingerprint(dir) {
 }
 
 function parseStream(file, root = TARGET_REAL) {
-  const reads = [], searches = [], others = [], escaped = new Set()
+  const reads = [], searches = [], others = [], escaped = new Set(), readOutside = new Set()
   let steps = 0, inputTokens = 0, reasoning = 0, finalCtx = 0, text = "", first = null, last = null
   for (const line of readFileSync(file, "utf8").split("\n")) {
     const s = line.trim()
@@ -375,8 +386,18 @@ function parseStream(file, root = TARGET_REAL) {
       // is kept verbatim. The first pilot ran in the *parent* session's project
       // and wrote to the real repository; --dir should stop that, and this is
       // the check that proves it did rather than assuming it.
+      // A WRITE outside the target is what the harness stops for: the first
+      // pilot wrote to the real repository while the task said not to modify
+      // anything. A READ outside it is wasteful and sometimes a privacy
+      // leak, but it damages nothing, and treating it as an escape stopped
+      // the whole experiment on an agent that grepped the filesystem root.
+      const writes = new Set(["write", "edit", "apply_patch", "patch"])
+      const isWrite = writes.has(p.tool)
       for (const k of ["filePath", "path"]) {
-        if (typeof input[k] === "string" && !isInsideTarget(input[k], root)) escaped.add(input[k])
+        if (typeof input[k] !== "string") continue
+        if (isInsideTarget(input[k], root)) continue
+        if (isWrite) escaped.add(input[k])
+        else readOutside.add(input[k])
       }
       if (p.tool === "read") {
         reads.push(input.offset !== undefined || input.limit !== undefined)
@@ -407,6 +428,7 @@ function parseStream(file, root = TARGET_REAL) {
     seconds: first !== null && last !== null ? elapsedSeconds(first, last) : null,
     text,
     escaped: [...escaped],
+    read_outside: [...readOutside],
   }
 }
 
@@ -515,7 +537,9 @@ if (rescoreDir) {
         ok = g.ok
         why = g.ok ? "edit ok" : `edit MISS (${g.reason})`
       } else {
-        const g = gradeAnswer(runDir, m.text, job.want)
+        // The suite's own file is excluded from the citations: the subject
+        // is a copy of this repository, so the answer key is inside it.
+        const g = gradeAnswer(runDir, m.text, job.want, { exclude: SUITE_FILES })
         ok = g.ok
         why = g.ok ? `cited ${g.cited}` : g.cited === 0 ? "no citation" : `cited ${g.cited}, none held`
       }
@@ -526,10 +550,10 @@ if (rescoreDir) {
       if (m.escaped.length) {
         console.log(`ESCAPED`)
         console.error("")
-        console.error(`FAIL: ${job.id} ${arm}-${i} touched ${m.escaped.length} path(s) outside ${runDir}`)
+        console.error(`FAIL: ${job.id} ${arm}-${i} WROTE to ${m.escaped.length} path(s) outside ${runDir}`)
         for (const p of m.escaped.slice(0, 10)) console.error(`  ${p}`)
         console.error("")
-        console.error("Stopping. Do not run further arms against a target the agent escapes.")
+        console.error("Stopping. Do not run further arms against a target the agent writes outside.")
         console.error(`raw stream kept for inspection: ${r.out}`)
         console.error(`run copy kept for inspection: ${runDir}`)
         process.exit(1)

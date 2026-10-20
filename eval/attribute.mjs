@@ -23,7 +23,6 @@
 //   node eval/attribute.mjs          human-readable
 //   node eval/attribute.mjs --json
 
-import { execFileSync } from "node:child_process"
 import { existsSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"

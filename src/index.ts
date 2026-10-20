@@ -63,6 +63,10 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
     // the hook. The config file does, so read the id from there.
     const id = opts.profile ?? config?.harness?.profile ?? profileIdFromConfig()
     if (!id) return
+    // The PROJECT root, not the worktree: the worktree is the filesystem
+    // root in a project that is not a git repository, so the spent-route
+    // file the router writes is somewhere else entirely.
+    const project = projectRoot(ctx.directory, ctx.worktree)
     try {
       // The same set of spent routes the router used. A lane that failed over
       // to a model with fewer effort levels must not keep the variant the
@@ -75,7 +79,7 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
         typeof config?.harness?.sessionModel === "string"
           ? config.harness.sessionModel
           : undefined
-      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }), {
+      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(project) }), {
         sessionModel,
       })
       // Record it where the prune hook looks, so pruning picks up this
@@ -85,7 +89,7 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
       // filesystem root in a project that is not a git repository, and the
       // write fails there with a permission error that this catch swallows.
       // The pruner then finds no active profile and does nothing at all.
-      const dir = join(projectRoot(ctx.directory, ctx.worktree), ".space")
+      const dir = join(project, ".space")
       mkdirSync(dir, { recursive: true })
       writeFileSync(join(dir, "active"), `${id}\n`)
     } catch {

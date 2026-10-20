@@ -88,9 +88,32 @@ export const MEMORY_PLUGIN = "opencode-mem@latest"
 export function withMemoryPlugin(base, spec = MEMORY_PLUGIN) {
   const b = base ?? {}
   const key = Array.isArray(b.plugins) ? "plugins" : "plugin"
-  const list = Array.isArray(b[key]) ? [...b[key]] : []
+  const existing = b[key]
+  if (existing !== undefined && !Array.isArray(existing)) {
+    // The value is not a list. Appending to it would replace whatever the
+    // user had, so it is left alone.
+    return { ...b }
+  }
+  const list = Array.isArray(existing) ? [...existing] : []
   if (!list.includes(spec)) list.push(spec)
   return { ...b, [key]: list }
+}
+
+/**
+ * Whether the memory plugin can be added to this config.
+ *
+ * A config whose plugin value is not a list is left alone: replacing a
+ * string with a list is data loss, and the promise is that the user's own
+ * plugins are never touched.
+ *
+ * @param {any} base
+ * @returns {boolean}
+ */
+export function canAddMemoryPlugin(base) {
+  const b = base ?? {}
+  const key = Array.isArray(b.plugins) ? "plugins" : "plugin"
+  const existing = b[key]
+  return existing === undefined || Array.isArray(existing)
 }
 
 /**

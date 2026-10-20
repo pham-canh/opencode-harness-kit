@@ -17,13 +17,19 @@ import { execFileSync } from "node:child_process"
  * Whether the sqlite3 CLI is available.
  * @returns {boolean}
  */
+/** @type {boolean | null} */
+let sqliteCli = null
 export function hasSqlite() {
+  // Memoised. The measurement scripts issue one query per message, and a
+  // process spawn per query is thousands of throwaway processes.
+  if (sqliteCli !== null) return sqliteCli
   try {
     execFileSync("sqlite3", ["-version"], { stdio: "ignore" })
-    return true
+    sqliteCli = true
   } catch {
-    return false
+    sqliteCli = false
   }
+  return sqliteCli
 }
 
 /**
@@ -35,13 +41,17 @@ export function hasSqlite() {
  *
  * @returns {boolean}
  */
+/** @type {boolean | null} */
+let pythonSqlite = null
 export function hasPythonSqlite() {
+  if (pythonSqlite !== null) return pythonSqlite
   try {
     execFileSync("python3", ["-c", "import sqlite3"], { stdio: "ignore" })
-    return true
+    pythonSqlite = true
   } catch {
-    return false
+    pythonSqlite = false
   }
+  return pythonSqlite
 }
 
 /**
@@ -67,6 +77,19 @@ export function sqliteMissingMessage() {
     "It is the sqlite3 CLI and not the sqlite3 library: the python3 and node",
     "modules of that name do not put a `sqlite3` command on your PATH.",
   ].join("\n")
+}
+
+/**
+ * A database path as a URI.
+ *
+ * A path with a `?` or a `#` in it is parsed as a URI query or fragment
+ * rather than as a filename, so it is percent-encoded.
+ *
+ * @param {string} db
+ * @returns {string}
+ */
+function encodePath(db) {
+  return db.split("/").map(encodeURIComponent).join("/")
 }
 
 /**
@@ -100,14 +123,16 @@ export function query(db, sql) {
  * @returns {any[]}
  */
 function queryWithPython(db, sql) {
+  // The cursor is used once. The description came from a SECOND execute of
+  // the same statement, which re-ran the whole scan.
   const script = [
     "import json, sqlite3, sys",
     "con = sqlite3.connect('file:' + sys.argv[1] + '?mode=ro', uri=True)",
-    "rows = con.execute(sys.argv[2]).fetchall()",
-    "cols = [d[0] for d in con.execute(sys.argv[2]).description]",
-    "print(json.dumps([dict(zip(cols, r)) for r in rows]))",
+    "cur = con.execute(sys.argv[2])",
+    "cols = [d[0] for d in cur.description]",
+    "print(json.dumps([dict(zip(cols, r)) for r in cur.fetchall()]))",
   ].join("\n")
-  const out = execFileSync("python3", ["-c", script, db, sql], {
+  const out = execFileSync("python3", ["-c", script, encodePath(db), sql], {
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
   }).trim()

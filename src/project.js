@@ -24,19 +24,17 @@ import { dirname, join, resolve } from "node:path"
 /**
  * The root of the project a session is working in.
  *
- * @param {string | undefined | null} directory the session's working directory
- * @param {string | undefined | null} worktree opencode's worktree, as a fallback
- * @returns {string}
- */
-/**
- * @param {string | null | undefined} directory
- * @param {string | null | undefined} worktree
+ * @param {string | null | undefined} directory the session's working directory
+ * @param {string | null | undefined} worktree opencode's worktree, as a fallback
  * @returns {string}
  */
 export function projectRoot(directory, worktree) {
   const start = resolve(directory || worktree || ".")
   let dir = start
-  for (let i = 0; i < 12; i++) {
+  // The walk is bounded by the filesystem, not by a number: a session more
+  // than a dozen directories below the git root is a monorepo, and a cap
+  // that stops early would put the kit's files in a subdirectory.
+  for (let i = 0; i < 64; i++) {
     if (existsSync(join(dir, ".git"))) return dir
     const parent = dirname(dir)
     if (parent === dir) break

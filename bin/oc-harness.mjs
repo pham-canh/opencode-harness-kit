@@ -43,7 +43,7 @@ import {
   ProfileError,
   parseJsonc,
 } from "../src/profile.js"
-import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin, MEMORY_PLUGIN } from "../src/config.js"
+import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin, canAddMemoryPlugin, MEMORY_PLUGIN } from "../src/config.js"
 import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
 import { planEffort } from "../src/effort.js"
 import { findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
@@ -1053,6 +1053,13 @@ async function cmdUse(id) {
   // kit can do is make it one flag away and keep the config honest about it.
   const memory = memorySpec()
   const effectiveBase = memory ? withMemoryPlugin(base, memory) : base
+  if (memory && !canAddMemoryPlugin(base)) {
+    console.error(
+      yellow(
+        `  the config's plugin value is not a list, so ${memory} was not added. Fix it by hand.`,
+      ),
+    )
+  }
 
   const out = generateConfig(p, { base: effectiveBase, comments: true })
   if (flag("--print")) {
@@ -1292,7 +1299,14 @@ function withdrawnModels(catalog) {
     } catch {
       continue
     }
-    for (const model of new Set([p.model, ...Object.values(p.roleModels ?? {}).flatMap((r) => r?.chain ?? [])])) {
+    for (const model of new Set([
+      p.model,
+      // The utility route is a model the kit runs, so it can be withdrawn
+      // like any other.
+      p.utility?.model,
+      ...Object.values(p.roleModels ?? {}).flatMap((r) => r?.chain ?? []),
+    ])) {
+      if (!model) continue
       if (!catalog?.[p.provider]?.models?.[model]) {
         if (!gone.includes(model)) gone.push(model)
       }
@@ -1314,7 +1328,10 @@ function withdrawnModels(catalog) {
  */
 async function cmdDoctorWatch() {
   const watch = flag("--watch")
-  const interval = Math.max(30, Number(opt("--interval") ?? 300))
+  // A mistyped interval used to become NaN, and `setTimeout(fn, NaN)` fires
+  // after 0ms - so `--watch --interval abc` hammered models.dev a thousand
+  // times a second.
+  const interval = Math.max(30, positiveNumber(opt("--interval"), 300))
   const seen = new Set()
   let first = true
   for (;;) {
@@ -1324,8 +1341,13 @@ async function cmdDoctorWatch() {
       const catalog = await fetchCatalog()
       gone = withdrawnModels(catalog)
     } catch (err) {
+      // A failed fetch is NOT an empty catalogue. Treating it as one
+      // announced every missing model as "is back", emptied the seen-set,
+      // and made the next successful poll announce them all as gone again.
       console.error(red(`  could not read the catalogue: ${err.message}`))
       if (!watch) process.exit(1)
+      await new Promise((r) => setTimeout(r, interval * 1000))
+      continue
     }
     const current = new Set(gone)
     const fresh = gone.filter((m) => !seen.has(m))

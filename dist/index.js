@@ -383,7 +383,7 @@ import { dirname, join as join2, resolve } from "node:path";
 function projectRoot(directory, worktree) {
   const start = resolve(directory || worktree || ".");
   let dir = start;
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 64; i++) {
     if (existsSync2(join2(dir, ".git"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;
@@ -1059,10 +1059,9 @@ function profileIdFromConfig() {
 import { readFileSync as readFileSync2, existsSync as existsSync4 } from "node:fs";
 import { join as join5 } from "node:path";
 function activeProfileId(worktree) {
-  const candidates = [
-    process.env.OPENCODE_HARNESS_PROFILE,
-    join5(worktree, ".space", "active")
-  ];
+  const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
+  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+  const candidates = [join5(worktree, ".space", "active")];
   for (const f of candidates) {
     if (!f) continue;
     try {
@@ -1266,6 +1265,13 @@ function safeStringify(value) {
   }
 }
 
+// src/config.js
+function utilityModel(p) {
+  const u = p?.utility;
+  if (!u || typeof u.model !== "string" || !u.model) return null;
+  return `${p.provider ?? "opencode"}/${u.model}`;
+}
+
 // src/router.ts
 function healthPath(worktree) {
   return join6(worktree, ".space", "health.json");
@@ -1399,7 +1405,7 @@ var RouterPlugin = async ({ worktree, directory }) => {
 ${WARN_TEXT}`;
         return;
       }
-      writeHealth(worktree, readHealth(project));
+      writeHealth(project, readHealth(project));
     }
   };
 };
@@ -1410,7 +1416,7 @@ function applySessionModel(cfg, profile, opts = {}) {
   try {
     const model = `${profile.provider}/${profile.model}`;
     cfg.model = model;
-    cfg.small_model = model;
+    cfg.small_model = utilityModel(profile) ?? model;
     const variant = profile.effort?.default;
     if (profile.effort?.levels?.length && variant) cfg.variant = variant;
     else delete cfg.variant;
@@ -1591,12 +1597,13 @@ var HarnessPlugin = async (ctx, options) => {
     if (routerConfig) await routerConfig(config);
     const id = opts.profile ?? config?.harness?.profile ?? profileIdFromConfig();
     if (!id) return;
+    const project = projectRoot(ctx.directory, ctx.worktree);
     try {
       const sessionModel = typeof config?.harness?.sessionModel === "string" ? config.harness.sessionModel : void 0;
-      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }), {
+      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(project) }), {
         sessionModel
       });
-      const dir = join8(projectRoot(ctx.directory, ctx.worktree), ".space");
+      const dir = join8(project, ".space");
       mkdirSync3(dir, { recursive: true });
       writeFileSync2(join8(dir, "active"), `${id}
 `);

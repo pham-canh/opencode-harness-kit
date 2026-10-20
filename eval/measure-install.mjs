@@ -19,7 +19,6 @@
 // how it reads, because that is a property of the transcripts, not of a
 // synthetic one. Narrow reads and context per request are that property.
 
-import { execFileSync } from "node:child_process"
 import { existsSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -55,16 +54,28 @@ const installStamp = existsSync(installDir)
 // The windows are now fixed and equal around the split: `--days` of work on
 // each side. `--since` puts the old unbounded behaviour back, for the case
 // where the question really is "everything since".
-const days = Number(flag("--days") ?? 7)
-if (!Number.isFinite(days) || days <= 0) {
-  console.error(`--days must be a positive number, got: ${flag("--days")}`)
+let days
+try {
+  days = numberFlag("--days") ?? 7
+} catch (err) {
+  console.error(String(err.message))
   process.exit(1)
 }
-const split = flag("--split") ? Date.parse(flag("--split")) : installStamp
-const before = flag("--before") ? Date.parse(flag("--before")) : split - days * 864e5
-const after = flag("--after")
-  ? Date.parse(flag("--after"))
-  : flag("--since")
+if (days <= 0) {
+  console.error(`--days must be more than 0, got: ${days}`)
+  process.exit(1)
+}
+// `--since` is a BOOLEAN. It used to be read with the value-after-the-flag
+// helper, so `--since` as the last argument was indistinguishable from
+// `--since` followed by nothing, and the unbounded window was never taken.
+const since = args.includes("--since")
+const split = stringFlag("--split") ? Date.parse(stringFlag("--split")) : installStamp
+const before = stringFlag("--before")
+  ? Date.parse(stringFlag("--before"))
+  : split - days * 864e5
+const after = stringFlag("--after")
+  ? Date.parse(stringFlag("--after"))
+  : since
     ? Date.now()
     : Math.min(Date.now(), split + days * 864e5)
 
@@ -103,7 +114,7 @@ if (!existsSync(DB)) {
 // Both helpers live in ./metrics.js so they can be tested without a database.
 import { pct, readsPerSearch, ctxDropPct as computeCtxDropPct } from "./metrics.js"
 import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
-import { numberFlag } from "./flags.mjs"
+import { numberFlag, stringFlag } from "./flags.mjs"
 
 function query(sql) {
   return queryDb(DB, sql)
@@ -159,7 +170,9 @@ function pick(rows, win) {
     // NULL, not zero, when the window has no rows. Zero would say "the
     // average context per request was zero", and the drop computed from it
     // would be 100%.
-    avg_ctx: c ? Math.round(Number(c.avg_ctx ?? 0)) : null,
+    // A NULL average is not zero. `avg()` over rows with no tokens is NULL,
+    // and turning that into 0 reported a 100% context improvement.
+    avg_ctx: c && c.avg_ctx !== null ? Math.round(Number(c.avg_ctx)) : null,
     avg_reasoning: c ? Math.round(Number(c.avg_reasoning ?? 0)) : null,
   }
 }

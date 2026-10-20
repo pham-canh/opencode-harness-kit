@@ -29,10 +29,13 @@ import { join } from "node:path"
  * guessing at thresholds.
  */
 function activeProfileId(worktree: string): string | null {
-  const candidates = [
-    process.env.OPENCODE_HARNESS_PROFILE,
-    join(worktree, ".space", "active"),
-  ]
+  // The environment variable is a PROFILE ID, not a path.
+  //
+  // It was being checked with existsSync, like the marker below it, so it
+  // never matched a file and the documented override had never worked.
+  const fromEnv = process.env.OPENCODE_HARNESS_PROFILE
+  if (fromEnv && fromEnv.trim()) return fromEnv.trim()
+  const candidates = [join(worktree, ".space", "active")]
   for (const f of candidates) {
     if (!f) continue
     try {
