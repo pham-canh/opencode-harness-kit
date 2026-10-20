@@ -66,6 +66,14 @@ A read counts as **narrow** when the caller bounded it with `offset` or
 `limit`. `README.md` counted `offset` alone; that is the 423 figure below, and
 this script's 501 is the same reads plus the ones bounded only by `limit`.
 
+**Results 1 and 2 are a snapshot, not a live reading.** They were taken from
+this install on 2026-10-20, and they describe the windows of that date. The
+commands above reproduce them against the same database; against a later one
+they show later windows, because the windows are anchored on the install, not
+on the day of writing. The pruner number in the table near the top is the
+one that moves with the data, because it replays the real pruner over real
+sessions and holds everything else still.
+
 ## Result 1 - a week before the install against a week after
 
     npm run measure
@@ -139,7 +147,7 @@ costs; it shrinks what the agent drags along behind it.
 
 ## The A/B on TypeScript
 
-    node eval/ab.mjs --target <dir> --suite eval/tasks-ts.json --reps 1 --sanitize
+    node eval/ab.mjs --target <dir> --suite eval/tasks-ts.json --reps 2 --sanitize
 
 **A pilot, not a result.** The kit is written in TypeScript and the Python suite
 above is Python, which is the wrong language for judging the code. This closes
@@ -153,7 +161,7 @@ wrong, which is the whole reason this subject is worth having. All three answers
 were checked to occur in exactly one file under `src/` before the tasks were
 written, because two earlier tasks were wrong for failing that check.
 
-| Metric (median of 8) | kit on | kit off |
+| Metric (median of 8 runs per arm) | kit on | kit off |
 | --- | --- | --- |
 | wall seconds | 26.1 | **19.4** |
 | tool calls | 5 | 3.5 |
