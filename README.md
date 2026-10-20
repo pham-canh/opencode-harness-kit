@@ -772,22 +772,29 @@ decides it ships.
 ## What it costs, measured
 
 The kit's own A/B - the same task with and without it, ten reps per arm, 120
-agent runs, on this repository at a pinned commit so anyone can repeat it:
+agent runs, both arms on the same model, on this repository at a pinned commit
+so anyone can repeat it:
 
 | metric (median) | kit on | kit off |
 |---|---|---|
-| **correct** | **52/60** | **59/59** |
-| tool calls | 11.5 | 3 |
-| input tokens | 51,449 | 4,551 |
-| final context | 39,603 | 10,855 |
-| wall seconds | 43.6 | 32.5 |
+| **correct** | **55/60** | **54/60** |
+| tool calls | 11 | 7 |
+| input tokens | 49,995 | 10,578 |
+| final context | 39,860 | 12,576 |
+| wall seconds | 51.4 | 25.1 |
 | paths written outside the target | 0 | 0 |
 
-**On a task that fits in one read, the kit is a cost.** The instruction file
-says *locate before you read*, and a one-file question is exactly the case
-where there is nothing to locate - so the rule makes the agent search for
-something it was going to be told. The two edit tasks are a tie at 10/10, and
-the guard stopped no writes in either arm.
+**On a task that fits in one read, the kit is a cost.** It spends nearly five
+times the input tokens and takes twice as long, and the answers are a tie.
+The two edit tasks are a tie at 10/10, and the guard stopped no writes in
+either arm.
+
+The earlier version of this table said 52/60 against 59/59 - the kit looked
+clearly worse - and that was the grader's fault: it could not read a
+citation written as `**File:** x` on one line and `**Line:** 105` on the
+next, which is the shape the kit's own instructions produce. Re-scoring the
+same 120 runs with the fixed grader gives 38/40 against 36/40 on the lookup
+tasks. The full account is in [eval/RESULTS.md](eval/RESULTS.md).
 
 What the kit buys is in the two places that suite cannot see: **long
 sessions**, where the pruner removes 80.5% of the context, and **process** -

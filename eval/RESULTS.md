@@ -14,8 +14,9 @@ and nothing is estimated from a synthetic transcript: `eval/run.mjs` covers the
 pruner and the allowlist, and cannot say anything about how the agent reads.
 
 Everything in this file comes from the commands above. The A/B section at the
-bottom runs the same task with and without the kit; it is six agent runs, which
-is enough to be worth reading and not enough to be worth trusting.
+bottom runs the same task with and without the kit, ten times each, on both
+arms at once - 120 agent runs, which is enough to be worth reading and not
+enough to be worth trusting.
 
 ## Two measurements, and the difference between them
 
@@ -292,48 +293,64 @@ Six tasks, ten reps per arm, 120 agent runs: four lookups and two edits. The
 lookups are graded on the `file:line` the agent cited, read out of the
 snapshot; the edits are graded on the file after the run.
 
+**Both arms ran on the same model**, `opencode/minimax-m3.1-flash-free`, and
+the report prints it. The kit-off arm used to run with an empty config, so
+opencode picked its own default: not the model the kit-on arm was on, and
+not a model that answered - four kit-off runs hit the 600-second ceiling
+with no output at all, and a timed-out run has zero tools and zero context,
+so it entered the medians as a fast, empty, wrong answer.
+
 | metric (median) | kit on | kit off |
 | --- | --- | --- |
-| **correct** | **52/60** | **59/59** |
-| tool calls | 11.5 | 3 |
-| read calls | 3 | 1 |
-| narrow reads | 100% | 100% |
-| input tokens | 51,449 | 4,551 |
-| final context | 39,603 | 10,855 |
-| wall seconds | 43.6 | 32.5 |
+| **correct** | **55/60** | **54/60** |
+| tool calls | 11 | 7 |
+| read calls | 2.5 | 2 |
+| narrow reads | 58.4% | 66.7% |
+| grep/glob calls | 3 | 2 |
+| steps | 8 | 6 |
+| input tokens | 49,995 | 10,578 |
+| final context | 39,860 | 12,576 |
+| wall seconds | 51.4 | 25.1 |
 | paths written outside the target | 0 | 0 |
 
 | per task | kit on | kit off |
 | --- | --- | --- |
-| `read-control` | 7/10 | 10/10 |
-| `read-multi-denylist` | 9/10 | 10/10 |
-| `read-multi-gate` | 8/10 | 10/10 |
-| `read-two-files` | 8/10 | 9/9 |
+| `read-control` | 10/10 | 10/10 |
+| `read-multi-denylist` | 8/10 | 8/10 |
+| `read-multi-gate` | 8/10 | 6/10 |
+| `read-two-files` | 9/10 | 10/10 |
 | `edit-rename` | 10/10 | 10/10 |
 | `edit-multi` | 10/10 | 10/10 |
 
-One kit-off run timed out and is excluded from every number above.
-
 ### What this says
 
-**On a task that fits in one read, the kit is a cost, not a benefit.** Its
-own instructions cost **11x the input tokens** and **four times the tool
-calls**, the run takes **34% longer**, and the answers are **worse**: 52
-against 59.
+**On correctness, the kit is a tie.** 55 against 54, on sixty runs a side.
+That is inside the noise of a single task flipping, and it is the opposite
+of what the previous version of this file said.
 
-The reason is visible in the tool counts. The instruction file says *locate
-before you read*, and the lookups here are exactly the case where there is
-nothing to locate - so the rule makes the agent search for a file it was
-going to be told the location of. The narrow-read share is 100% in both arms:
-the rule is followed, and on a one-file question following it is waste.
+**On everything else, the kit is a cost.** It spends **4.7x the input
+tokens** and takes **twice as long**, and it makes **more** tool calls.
+Those are the same numbers as before, and they are the honest ones.
 
-**The two edit tasks are a tie at 10/10.** Where the work is real, the
-kit's overhead is not what decides the answer, and neither arm gets it
-wrong.
+**The previous conclusion was the grader's fault, and it is worth writing
+down.** The earlier run said 52/60 against 59/59 - the kit looked clearly
+worse - and the reason was that the grader could not read a citation
+written as two markdown fields:
 
-**The guard did its job in every run.** No arm wrote a path outside the
-target, and the kit-off arm had to be given a throwaway home so that its
-writes could not land in the real repository.
+    **File:** `src/profile.js`
+    **Line:** 105
+
+The old pattern stopped at the newline, so the file and the number were
+never paired, the citation was lost, and the answer was scored wrong. The
+kit's own instructions tell the agent to cite a file and a line, and the
+shape the kit produces is the shape the grader could not read. The kit-off
+arm had no such instructions, answered in prose, and was graded by a
+pattern that handled prose.
+
+Re-scoring the SAME run with the fixed grader - the same 120 agent runs,
+the same answers, only the grader changed - gives **38/40 against 36/40** on
+the four lookup tasks, the kit ahead. A harness that measures the harness
+is worse than one that measures nothing.
 
 ### What this does not say
 
@@ -350,10 +367,18 @@ edits. The value it does have is in two places this suite cannot see:
   grader that counts correct answers cannot see them.
 
 The honest position is a trade, and it is now a trade with a number on it:
-**the kit costs about eleven times the input tokens on a small task, and buys
-process discipline and an 80% smaller context on a long one.** Whether that
-is worth it depends on whether the work is long. A repo of one-file lookups
-should not install this.
+**the kit costs about five times the input tokens on a small task, gets the
+answer right about as often, and buys process discipline and an 80% smaller
+context on a long one.** Whether that is worth it depends on whether the
+work is long. A repo of one-file lookups should not install this.
+
+The narrow-read share is worth one more line. The kit's instructions say
+*locate before you read*, and the share of reads that were bounded was
+**58% with the kit and 67% without it** - the rule is followed less often
+when the agent is also carrying the rule in its context, because the
+context is where the budget goes. A fleet that routes each job to the model
+built for it is the other half of what the kit offers, and this suite uses
+one model on both sides, so it cannot see that.
 
 ## The gate
 
