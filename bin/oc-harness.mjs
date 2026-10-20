@@ -688,15 +688,30 @@ function cmdVerify() {
   //    is missing or whose frontmatter is broken is skipped silently by
   //    OpenCode, so half the plan -> build -> review -> finish loop can go
   //    missing without any error surfacing.
+  //
+  //    The check covers the kit's OWN skills, and only the kit's own skills.
+  //    OpenCode identifies a skill by its DIRECTORY name, not by the `name:`
+  //    in its frontmatter, so a skill whose two differ loads perfectly well
+  //    under its directory name. A checker that insists they match fails a
+  //    perfectly good install over somebody else's naming choice - which is
+  //    what happened on an install that carried 220-odd community skills.
+  //
+  //    For the kit's own skills the two DO have to agree: the loop refers to
+  //    them by name, and a skill whose frontmatter drifted away from its
+  //    directory is one the loop will not find.
   const skillsDir = join(CONFIG_DIR, "skills")
+  const ourSkills = kitSkillNames()
   if (!existsSync(skillsDir)) {
     notes.push("no skills directory: the skill loop is not installed. Run: oc-harness install")
   } else {
+    const installed = new Set(readdirSync(skillsDir))
     let valid = 0
-    for (const name of readdirSync(skillsDir)) {
+    for (const name of ourSkills) {
       const skillFile = join(skillsDir, name, "SKILL.md")
       if (!existsSync(skillFile)) {
-        problems.push(`skills/${name} has no SKILL.md - it will never load. Run: oc-harness install`)
+        problems.push(
+          `skills/${name} has no SKILL.md - the ${name} step of the loop will never load. Run: oc-harness install`,
+        )
         continue
       }
       const front = stripFrontmatter(readFileSync(skillFile, "utf8"))
@@ -708,7 +723,19 @@ function cmdVerify() {
         valid += 1
       }
     }
-    if (valid) ok.push(`${valid} skill(s) valid`)
+    // A directory of the same name as one of the kit's would shadow it, and
+    // the installer refuses to replace a real directory - so the kit's skill
+    // would be missing and the loop would break at that step.
+    for (const name of installed) {
+      if (ourSkills.has(name)) continue
+      const foreign = join(skillsDir, name, "SKILL.md")
+      if (!existsSync(foreign)) {
+        problems.push(`skills/${name} has no SKILL.md - it will never load`)
+      }
+    }
+    const others = [...installed].filter((n) => !ourSkills.has(n)).length
+    if (valid) ok.push(`${valid} kit skill(s) valid`)
+    if (others) ok.push(`${others} other skill(s) present`)
   }
 
   console.log(`\n${bold("verify")}  ${stamp(`profile ${p.id} -> ${CONFIG_FILE}`)}\n`)
@@ -721,6 +748,21 @@ function cmdVerify() {
     process.exit(1)
   }
   console.log(`\n  ${green("install is consistent with the profile")}\n`)
+}
+
+/**
+ * The names of the skills this kit installs, read from the repo.
+ *
+ * These are the ones the loop refers to by name, so their frontmatter has to
+ * agree with their directory. Everything else in the skills directory belongs
+ * to whoever put it there.
+ *
+ * @returns {Set<string>}
+ */
+function kitSkillNames() {
+  const dir = join(ROOT, "skills")
+  if (!existsSync(dir)) return new Set()
+  return new Set(readdirSync(dir).filter((n) => existsSync(join(dir, n, "SKILL.md"))))
 }
 
 /** Minimal `key: value` reader for agent frontmatter. */

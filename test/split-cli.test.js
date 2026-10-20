@@ -260,3 +260,50 @@ test("`lanes` reports which lanes the fleet used", () => {
     box.cleanup()
   }
 })
+
+test("verify does not fail over somebody else's skill naming", () => {
+  // OpenCode identifies a skill by its DIRECTORY name, not by the `name:` in
+  // its frontmatter, so a skill whose two differ loads perfectly well. A
+  // checker that insists they match fails a good install over a naming choice
+  // that is not the kit's business - and it did, on an install carrying 220
+  // community skills whose frontmatter names are shorter than their folders.
+  const box = sandbox()
+  try {
+    run(box, ["use", "fleet-safe", "--yes"])
+    const skills = join(box.dir, "skills")
+    mkdirSync(join(skills, "community-short-name"), { recursive: true })
+    writeFileSync(
+      join(skills, "community-short-name", "SKILL.md"),
+      "---\nname: short-name\ndescription: a skill somebody else installed\n---\nbody\n",
+    )
+    const out = run(box, ["verify"])
+    assert.doesNotMatch(
+      out,
+      /names "short-name"/,
+      `a foreign skill's naming is not the kit's business:\n${out}`,
+    )
+    assert.match(out, /other skill\(s\) present/, out)
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("verify still fails when one of the kit's own skills drifts", () => {
+  // The kit's skills DO have to agree with their directory: the loop refers to
+  // them by name, and one whose frontmatter drifted is a step of the loop
+  // that will not load.
+  const box = sandbox()
+  try {
+    run(box, ["use", "fleet-safe", "--yes"])
+    const dir = join(box.dir, "skills", "space-build")
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      "---\nname: space-builder\ndescription: the build step, with a drifted name\n---\nbody\n",
+    )
+    const out = run(box, ["verify"])
+    assert.match(out, /names "space-builder", expected "space-build"/, out)
+  } finally {
+    box.cleanup()
+  }
+})
