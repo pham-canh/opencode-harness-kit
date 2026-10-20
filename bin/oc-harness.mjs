@@ -794,9 +794,9 @@ async function cmdUse(id) {
   const p = loadProfile(id)
 
   // A split profile puts the user behind every model in play, not just the base
-  // one. `p.retention` describes the base only, so gating on it let
-  // muse-split-free -- whose plan/build/reviewer run on a may-train endpoint --
-  // install silently. Every check below is over the whole set.
+  // one. `p.retention` describes the base only, so gating on it let a profile
+  // whose plan/build/reviewer run on a may-train endpoint install silently.
+  // Every check below is over the whole set.
   const eff = effectiveRetention(p)
   const unrecorded = modelsInPlay(p).filter((m) => {
     const entry = retentionFor(m)

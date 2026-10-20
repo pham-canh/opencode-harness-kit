@@ -1,6 +1,6 @@
 {
   "name": "opencode-harness-kit",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Harness kit for OpenCode: capability profiles, a fleet of job lanes with one free model each, role-based reasoning effort, context pruning, and measured baselines.",
   "license": "MIT",
   "homepage": "https://github.com/pham-canh/space-harness#readme",
@@ -39,6 +39,8 @@
     "lanes.json",
     "lanes.schema.json",
     "GLOBAL.md",
+    "CHANGELOG.md",
+    "MIGRATION.md",
     "README.md",
     "LICENSE"
   ],
