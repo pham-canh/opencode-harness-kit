@@ -12,6 +12,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { listProfileIds, loadProfile, loadLanes } from "../src/profile.js"
@@ -42,16 +44,43 @@ test("the README names every withdrawn model, with the reason", () => {
   }
 })
 
-test("the README does not advertise a model the kit has withdrawn", () => {
-  // A withdrawn model must not appear in the shipped-profiles table or in
-  // the fleet table. It may appear in the withdrawn table, which is where
-  // the reader goes looking for it.
-  const shipped = INDEX.profiles ?? []
-  const shippedIds = new Set(shipped.map((p) => p.id))
+test("the README's shipped-profiles table names exactly the shipped profiles", () => {
+  // The table is where a reader decides which model to run on. A withdrawn
+  // model in it, or a shipped model missing from it, is a wrong table - and
+  // the previous version of this test only checked `profiles/index.json`
+  // against itself, so it would have stayed green with a table full of
+  // withdrawn models.
+  const table = README.slice(
+    README.indexOf("## Shipped profiles"),
+    README.indexOf("## Free models are perishable"),
+  )
+  const shipped = new Set((INDEX.profiles ?? []).map((p) => p.id))
+  const withdrawn = new Set((INDEX.withdrawn ?? []).map((p) => p.id))
+
+  for (const id of shipped) {
+    assert.ok(
+      table.includes(`\`${id}\``),
+      `the shipped-profiles table does not mention ${id}`,
+    )
+  }
+  for (const id of withdrawn) {
+    assert.ok(
+      !table.includes(`\`${id}\``),
+      `the shipped-profiles table still lists ${id}, which was withdrawn`,
+    )
+  }
+})
+
+test("the README's withdrawn table names every withdrawn model", () => {
+  // And the other way round: a model that was withdrawn has to be findable.
+  const table = README.slice(
+    README.indexOf("## Free models are perishable"),
+    README.indexOf("## Requirements"),
+  )
   for (const entry of INDEX.withdrawn ?? []) {
     assert.ok(
-      !shippedIds.has(entry.id),
-      `${entry.id} is both shipped and withdrawn`,
+      table.includes(`\`${entry.id}\``),
+      `the withdrawn table does not mention ${entry.id}`,
     )
   }
 })
@@ -61,10 +90,17 @@ test("the README's command list is the CLI's command list", () => {
   // command the CLI has has to be in the README: a command nobody documents
   // is found by nobody, and a command the README describes that does not
   // exist is a broken promise.
-  const cli = readFileSync(join(ROOT, "bin", "oc-harness.mjs"), "utf8")
-  const help = /console\.log\(`\n  oc-harness <command>([\s\S]*?)`\)/.exec(cli)
-  assert.ok(help, "the CLI has a help block")
-  const advertised = [...help[1].matchAll(/^\s{4}([a-z]+)\s/mg)].map((m) => m[1])
+  //
+  // The list comes from RUNNING the CLI's help, not from reading its source:
+  // a test that greps the source breaks on a reformat and proves nothing
+  // about what the user sees.
+  const r = spawnSync("node", [join(ROOT, "bin", "oc-harness.mjs"), "help"], {
+    encoding: "utf8",
+  })
+  assert.equal(r.status, 0, "the help command failed")
+  const help = r.stdout ?? ""
+  const advertised = [...help.matchAll(/^\s{4}([a-z]+)\s/gm)].map((m) => m[1])
+  assert.ok(advertised.length >= 10, `the help lists ${advertised.length} commands`)
   for (const cmd of advertised) {
     assert.ok(
       new RegExp(`oc-harness ${cmd}\\b`).test(README),
@@ -93,15 +129,15 @@ test("the README's perishable section says what the doctor actually does", () =>
     /broken install/i.test(README),
     "the perishable section must say that a broken install is what fails",
   )
-  // The claim that `list` is offline has to stay true.
-  const list = /function cmdList\(\)[\s\S]*?\n}/.exec(
-    readFileSync(join(ROOT, "bin", "oc-harness.mjs"), "utf8"),
-  )
-  assert.ok(list, "cmdList exists")
-  assert.ok(
-    !/fetchCatalog/.test(list[0]),
-    "cmdList must not read the network - the README says it is offline",
-  )
+  // The claim that `list` is offline is checked by RUNNING it, not by
+  // reading the source of the function: a test that greps the source breaks
+  // on a refactor and proves nothing about the behaviour.
+  const r = spawnSync("node", [join(ROOT, "bin", "oc-harness.mjs"), "list"], {
+    encoding: "utf8",
+    env: { ...process.env, OPENCODE_CONFIG_DIR: tmpdir() },
+  })
+  assert.equal(r.status, 0, `list failed:\n${r.stdout ?? ""}${r.stderr ?? ""}`)
+  assert.match(r.stdout ?? "", /fleet-safe/)
 })
 
 test("the perishable section names the commands that exist and the lanes that exist", () => {

@@ -23,6 +23,7 @@ import {
   listProfileIds,
   loadRetention,
   modelRetention,
+  retentionOf,
   retentionAllowed,
   ProfileError,
   validate,
@@ -620,11 +621,32 @@ test("the retention.yml defaults block is read, not just written down", () => {
   // The `defaults:` block looked like configuration and was not: the
   // fallback for a model with no entry was hardcoded in the reader, so
   // changing `defaults.unknown` in the file did nothing.
+  //
+  // The shipped value happens to be "unknown", which is what the hardcoded
+  // fallback was - so a test that only checked the value could not tell the
+  // two apart. The proof is that the TABLE decides: a table whose default
+  // says something else makes an unknown model that.
   const r = loadRetention()
   assert.ok(r.defaults, "retention.yml declares a defaults block")
   assert.equal(r.defaults.unknown, "unknown")
-  // And it is what a model with no entry gets.
   assert.equal(modelRetention("no-such-model-free"), "unknown")
+
+  // The file's default is what a model with no entry gets.
+  assert.equal(
+    retentionOf({ models: {}, defaults: { unknown: "retained" } }, "no-such-model-free"),
+    "retained",
+    "the default in the table must be the one that applies",
+  )
+  // And a table with no defaults at all still refuses to guess.
+  assert.equal(retentionOf({ models: {} }, "no-such-model-free"), "unknown")
+  // A model WITH an entry uses its own entry, not the default.
+  assert.equal(
+    retentionOf(
+      { models: { "opencode/x": { retention: "may-train" } }, defaults: { unknown: "retained" } },
+      "x",
+    ),
+    "may-train",
+  )
 })
 
 test("every profile has a retention.yml entry, and the two agree", () => {
