@@ -16,7 +16,7 @@
   "module": "./dist/index.js",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
     "./profile": "./src/profile.js",
@@ -49,7 +49,7 @@
     "test/"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
+    "build": "npm run build:types && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
     "typecheck": "tsc --noEmit",
     "pretest": "node -e \"const fs=require('fs');if(!fs.existsSync('test')){console.error('no test directory here - this is an installed package, not a checkout');process.exit(1)}\"",
     "test": "node --test \"test/*.test.js\"",
@@ -69,7 +69,8 @@
     "attribute": "node eval/attribute.mjs",
     "attribute:json": "node eval/attribute.mjs --json",
     "thresholds": "node eval/thresholds.mjs",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "build:types": "tsc -p tsconfig.types.json"
   },
   "keywords": [
     "opencode",

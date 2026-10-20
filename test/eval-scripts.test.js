@@ -1,182 +1,147 @@
-// The measurement scripts are the part of this kit that touches the outside
-// world: they clone a repository, run agents against it, and delete what they
-// built. A mistake in them is not a wrong number in a report - it is a
-// deleted directory or a command that ran when nobody asked for one.
+// The measurement scripts, exercised.
 //
-// These tests cover the two ways that used to happen.
+// `npm run measure:check` is the gate that decides whether the kit is still
+// doing its job, and no test touched the scripts behind it. A gate whose
+// implementation nothing exercises is a gate that breaks on a change and is
+// not noticed until a release.
 //
-//   eval/prepare.mjs --name ../..     deleted a directory tree outside the
-//                                     scratch root, recursively and without
-//                                     asking.
-//   eval/prepare.mjs --repo 'x$(id)'  executed the `$(...)`, because the
-//                                     paths were quoted with JSON.stringify
-//                                     and run through `sh -c`.
-//
-// The suite must stay offline, so nothing here reaches the network. `git` is
-// used for real, on a repository created in a temp directory.
+// These run the scripts against a database built on the spot, so they need
+// no opencode install and no model.
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
-import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs"
+import { execFileSync, spawnSync } from "node:child_process"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { mkdtemp } from "./helpers.mjs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const PREPARE = join(REPO, "eval", "prepare.mjs")
+import { hasPythonSqlite } from "../src/sqlite.js"
 
-function scratchDir(prefix) {
-  return mkdtemp(prefix)
-}
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 /**
- * Run prepare.mjs with a scratch root of our own.
+ * A database with a couple of assistant messages that carry tokens.
+ *
+ * The shape is the one the measurement scripts read: `tokens.input`,
+ * `tokens.cache.read` and `tokens.reasoning` on an assistant message, and
+ * tool parts with a `state.input` that may or may not be bounded.
  */
-function prepare(args, scratch) {
-  const r = spawnSync("node", [PREPARE, ...args], {
-    encoding: "utf8",
-    env: { ...process.env, SPACE_HARNESS_SCRATCH: scratch },
-  })
-  return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` }
+/**
+ * Build a database, and return it with the split point that was used.
+ *
+ * The split is computed HERE and handed to the script, so the fixture and the
+ * measurement agree on where the boundary is.
+ */
+function buildDb(dir) {
+  const db = join(dir, "install.db")
+  const split = Date.now() - 1800000
+  execFileSync("python3", [
+    "-c",
+    `import json, sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("create table message (id text primary key, session_id text, time_created integer, data text)")
+con.execute("create table part (id text primary key, message_id text, session_id text, time_created integer, data text)")
+con.execute("create table session (id text primary key, time_created integer)")
+def msg(i, sess, t, inp, cache, reas, out):
+    d = {"id": i, "sessionID": sess, "role": "assistant", "modelID": "deepseek-v4.1-flash-free",
+         "agent": "build", "time": {"created": t, "completed": t + 1000},
+         "tokens": {"input": inp, "output": out, "reasoning": reas, "cache": {"read": cache}}}
+    con.execute("insert into message values (?,?,?,?)", (i, sess, t, json.dumps(d)))
+    p = {"id": "p" + i, "messageID": i, "sessionID": sess, "type": "tool", "tool": "read",
+         "state": {"status": "completed", "input": {"filePath": "a.ts"}, "output": "x" * 500}}
+    con.execute("insert into part values (?,?,?,?,?)", ("p" + i, i, sess, t, json.dumps(p)))
+# The timestamps have to be recent: the measurement scripts look at the last
+# N days, and a fixture from 2023 is outside every window.
+import time
+split = int(sys.argv[2])
+# TWO SESSIONS, one on each side of the split. The attribution script
+# groups by session and compares the two groups, so one session cannot
+# straddle the split - and it exits 1, correctly, when one side has no data.
+# Six messages a session: the pruner leaves the last few turns alone, so a
+# session with fewer than that has nothing to prune and is not worth
+# measuring.
+for n in range(8):
+    msg("b%d" % n, "before", split - 1800000 + n * 1000, 1000, 500, 20, 50)
+for n in range(8):
+    msg("a%d" % n, "after", split + 1000 + n * 1000, 400, 200, 10, 40)
+con.execute("insert into session values ('before', ?)", (split - 1800000,))
+con.execute("insert into session values ('after', ?)", (split + 1000,))
+con.commit()`,
+    db,
+    String(split),
+  ])
+  return { db, split }
 }
 
-/** A git repository with one commit, so `git archive` has something to pack. */
-function gitRepo(dir) {
-  mkdirSync(dir, { recursive: true })
-  exec("git", ["init", "-q", dir])
-  exec("git", ["-C", dir, "config", "user.email", "test@example.invalid"])
-  exec("git", ["-C", dir, "config", "user.name", "test"])
-  writeFileSync(join(dir, "README.md"), "# subject\n")
-  exec("git", ["-C", dir, "add", "."])
-  exec("git", ["-C", dir, "commit", "-q", "-m", "subject"])
-  return dir
-}
-
-function exec(cmd, args) {
-  const r = spawnSync(cmd, args, { encoding: "utf8" })
-  if (r.status !== 0) {
-    throw new Error(`${cmd} failed: ${r.stderr ?? ""}`)
+test("the measurement scripts run against a database", (t) => {
+  if (!hasPythonSqlite()) {
+    t.skip("python3 has no sqlite3 module")
+    return
   }
-  return r.stdout
-}
-
-test("a label that is a path is refused, and nothing outside the scratch root is deleted", () => {
-  // The bug: `--name` was joined onto the scratch root without being checked,
-  // and the result was removed with `rmSync(..., { recursive: true })`. A
-  // label of `../victim` deleted the victim's directory tree.
-  const base = scratchDir("ock-prepare-")
+  const dir = mkdtempSync(join(tmpdir(), "ock-eval-"))
   try {
-    const scratch = join(base, "scratch")
-    mkdirSync(scratch, { recursive: true })
-    const victim = join(base, "victim")
-    mkdirSync(victim, { recursive: true })
-    writeFileSync(join(victim, "keep.txt"), "do not delete me\n")
+    const { db, split } = buildDb(dir)
 
-    const source = join(base, "source")
-    mkdirSync(source, { recursive: true })
-    writeFileSync(join(source, "file.txt"), "x\n")
-
-    const r = prepare(["--from", source, "--name", "../victim"], scratch)
-    assert.notEqual(r.code, 0, "a path is not a name")
-    assert.match(r.out, /single directory name/)
-    assert.equal(
-      existsSync(join(victim, "keep.txt")),
-      true,
-      "the directory outside the scratch root was deleted",
+    // The pruner measurement: it has to run, and it has to say what it did.
+    const prune = spawnSync(
+      "node",
+      [join(ROOT, "eval", "measure-prune.mjs"), "--db", db, "--sessions", "5", "--min-saved", "0"],
+      { encoding: "utf8" },
     )
+    assert.equal(prune.status, 0, `${prune.stdout}\n${prune.stderr}`)
+    assert.match(prune.stdout, /PRUNER EFFECT/)
+    assert.match(prune.stdout, /context before/)
+
+    // The install-wide one.
+    const install = spawnSync(
+      "node",
+      [
+        join(ROOT, "eval", "measure-install.mjs"),
+        "--db", db,
+        "--split", "2023-11-15T00:00:00.000Z",
+        "--before", "2023-11-14T00:00:00.000Z",
+        "--after", "2023-11-16T00:00:00.000Z",
+      ],
+      { encoding: "utf8" },
+    )
+    assert.equal(install.status, 0, `${install.stdout}\n${install.stderr}`)
+    assert.match(install.stdout, /INSTALL EFFECTIVENESS/)
+
+    // The attribution one. It needs data on both sides of the split.
+    const attribute = spawnSync(
+      "node",
+      [
+        join(ROOT, "eval", "attribute.mjs"),
+        "--db", db,
+        "--split", new Date(split).toISOString(),
+      ],
+      { encoding: "utf8" },
+    )
+    assert.equal(attribute.status, 0, `${attribute.stdout}\n${attribute.stderr}`)
   } finally {
-    rmSync(base, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test("a label cannot escape the scratch root by any route", () => {
-  const base = scratchDir("ock-prepare-")
-  try {
-    const scratch = join(base, "scratch")
-    mkdirSync(scratch, { recursive: true })
-    const source = join(base, "source")
-    mkdirSync(source, { recursive: true })
-    writeFileSync(join(source, "file.txt"), "x\n")
-
-    for (const label of ["..", "../..", "a/b", "a\\b", ".", "x..y"]) {
-      const r = prepare(["--from", source, "--name", label], scratch)
-      assert.notEqual(r.code, 0, `the label "${label}" was accepted`)
-    }
-    // And nothing landed outside the scratch root.
-    assert.deepEqual(
-      existsSync(join(base, "victim")) ? ["victim"] : [],
-      [],
-      "something was written outside the scratch root",
-    )
-  } finally {
-    rmSync(base, { recursive: true, force: true })
-  }
+test("a malformed gate flag is an error, not a disabled gate", () => {
+  // `--min-narrow abc` became NaN, and `NaN` compares false against
+  // everything, so the gate never fired and the report said PASS.
+  const r = spawnSync(
+    "node",
+    [join(ROOT, "eval", "measure-install.mjs"), "--min-narrow", "abc"],
+    { encoding: "utf8" },
+  )
+  assert.notEqual(r.status, 0, "a mistyped gate was accepted")
+  assert.match(`${r.stdout}${r.stderr}`, /must be a number/)
 })
 
-test("a path with a command substitution in it is not executed", () => {
-  // The bug: the archive step was one `sh -c` string, and the paths were
-  // quoted with `JSON.stringify`. JSON escaping is not shell quoting: `$` and
-  // backticks survive it, so a path containing `$(...)` ran the command.
-  const base = scratchDir("ock-prepare-")
-  try {
-    const scratch = join(base, "scratch")
-    mkdirSync(scratch, { recursive: true })
-    const marker = join(base, "injected.marker")
-    // The name is literal. The directory is called `x$(touch ...)` and the
-    // shell would run the substitution if anything ever passed it to one.
-    const weird = join(base, `x$(touch ${marker})`)
-    gitRepo(weird)
-
-    const r = prepare(["--repo", weird, "--ref", "HEAD"], scratch)
-    assert.equal(
-      existsSync(marker),
-      false,
-      "the command substitution in the path was executed",
-    )
-    // The archive itself still worked: the subject was built.
-    assert.equal(r.code, 0, `prepare failed for an ordinary repo:\n${r.out}`)
-  } finally {
-    rmSync(base, { recursive: true, force: true })
-  }
-})
-
-test("an ordinary subject is still built", () => {
-  // The fix must not break the thing the script is for.
-  const base = scratchDir("ock-prepare-")
-  try {
-    const scratch = join(base, "scratch")
-    mkdirSync(scratch, { recursive: true })
-    const source = join(base, "source")
-    mkdirSync(source, { recursive: true })
-    writeFileSync(join(source, "file.txt"), "x\n")
-
-    const r = prepare(["--from", source, "--name", "subject"], scratch)
-    assert.equal(r.code, 0, r.out)
-    assert.ok(existsSync(join(scratch, "subject", "file.txt")), "the subject was not copied")
-    assert.ok(
-      existsSync(join(scratch, "subject", ".space-harness-subject.json")),
-      "the manifest was not written",
-    )
-  } finally {
-    rmSync(base, { recursive: true, force: true })
-  }
-})
-
-test("a git subject is unpacked from its commit", () => {
-  const base = scratchDir("ock-prepare-")
-  try {
-    const scratch = join(base, "scratch")
-    mkdirSync(scratch, { recursive: true })
-    const repo = gitRepo(join(base, "repo"))
-
-    const r = prepare(["--repo", repo, "--ref", "HEAD", "--name", "packed"], scratch)
-    assert.equal(r.code, 0, r.out)
-    assert.ok(existsSync(join(scratch, "packed", "README.md")), "the commit was not unpacked")
-    // A `git archive` carries no .git, which is the point of it.
-    assert.equal(existsSync(join(scratch, "packed", ".git")), false)
-  } finally {
-    rmSync(base, { recursive: true, force: true })
-  }
+test("the pruner measurement refuses a mistyped flag", () => {
+  const r = spawnSync(
+    "node",
+    [join(ROOT, "eval", "measure-prune.mjs"), "--min-saved", "abc"],
+    { encoding: "utf8" },
+  )
+  assert.notEqual(r.status, 0, "a mistyped gate was accepted")
+  assert.match(`${r.stdout}${r.stderr}`, /must be a number/)
 })

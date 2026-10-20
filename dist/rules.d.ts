@@ -1,0 +1,89 @@
+/**
+ * Whether a write target stays inside the project. A relative path is resolved
+ * against the project root, which is where the agent's working directory is.
+ * @param {string} target
+ * @param {string} root
+ * @returns {boolean}
+ */
+export declare function insideRoot(target: string, root: string): boolean;
+export type Rule = {
+    name: string;
+    test?: RegExp;
+    check?: (text: string) => boolean;
+    why: string;
+    scope?: "segment" | "command";
+    unless?: RegExp;
+};
+export type Hit = {
+    name: string;
+    why: string;
+    segment: string;
+};
+/**
+ * Split a shell command into the individual commands it runs. Separators
+ * inside quotes, and heredoc bodies, are not command boundaries.
+ * @param {string} command
+ * @returns {string[]}
+ */
+export declare function segments(command: string): string[];
+/**
+ * Split one segment into words, honouring quotes so that a quoted phrase is
+ * one argument rather than several.
+ * @param {string} segment
+ * @returns {string[]}
+ */
+export declare function tokenize(segment: string): string[];
+/**
+ * A segment with its prefixes removed, so a rule anchored at `^` sees the
+ * command it is actually about: `sudo rm -rf /` becomes `rm -rf /`.
+ * Segment rules are matched against this rather than the raw text, because
+ * without it every anchored rule is one `sudo` away from being decorative.
+ * @param {string} segment
+ * @returns {string} empty when the segment names no command
+ */
+export declare function stripPrefixes(segment: string): string;
+/**
+ * Resolve the git subcommand a segment actually runs, or null if the segment
+ * does not run git.
+ * @param {string} segment
+ * @returns {string | null}
+ */
+export declare function gitSubcommand(segment: string): string | null;
+/**
+ * The command line hidden inside `sh -c "..."` or `eval "..."`.
+ * @param {string} segment
+ * @returns {string | null}
+ */
+export declare function shellPayload(segment: string): string | null;
+/**
+ * Commands the guard deliberately does NOT block.
+ *
+ * `git push` is ask-gated through opencode's permission rules rather than
+ * guard-blocked, so it is the one command the agent reaches for that the
+ * guard has a policy about and lets through. It lives here, beside the rules,
+ * so there is ONE place that says what the guard's policy is - a keyword list
+ * in the telemetry was a second copy of it, and it drifted.
+ *
+ * @type {RegExp[]}
+ */
+export declare const ASK_GATED: RegExp[];
+/** @type {Rule[]} */
+export declare const BASH_RULES: Rule[];
+/** @type {Rule[]} */
+export declare const WRITE_RULES: Rule[];
+/**
+ * @param {string} command
+ * @param {Rule[]} [rules]
+ * @param {number} [depth]
+ * @returns {Hit | null}
+ */
+export declare function checkBash(command: string, rules?: Rule[], depth?: number): Hit | null;
+/**
+ * @param {string} target
+ * @param {Rule[]} [rules]
+ * @param {string} [root] the project directory, when the host knows it
+ * @returns {Hit | null}
+ */
+export declare function checkWrite(target: string, rules?: Rule[], root?: string): Hit | null;
+/** Names of every rule, for `oc-harness show` and documentation. */
+export declare function ruleNames(): string[];
