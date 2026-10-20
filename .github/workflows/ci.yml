@@ -221,6 +221,13 @@ jobs:
                 exit 1
               fi
               echo "::error::the staged publish was refused the same way, so the trusted publisher configuration itself does not match. Check that npmjs.com lists this PACKAGE (not the account) with: Organization or user = pham-canh, Repository = space-harness, Workflow filename = ci.yml, Environment name = EMPTY (the workflow declares no environment, so an environment on npmjs.com can never match), and Allowed actions includes npm publish."
+            elif grep -q "one-time password" /tmp/publish.log; then
+              # The token was accepted for reading - `npm whoami` passed - but
+              # the publish was refused with EOTP. That is the account's
+              # two-factor authentication, not the token's package scope: a
+              # granular token needs "Bypass two-factor authentication" ticked
+              # to publish on an account with 2FA on.
+              echo "::error::the publish was refused with a one-time password challenge. The token authenticated (npm whoami passed) but the account has two-factor authentication on, and a granular token only bypasses it when 'Bypass two-factor authentication' is ticked when the token is created. Create the token again with that box ticked, plus 'Read and write' on opencode-harness-kit."
             else
               echo "::error::npm publish failed (exit $code). With a token it is usually a token without WRITE access to the opencode-harness-kit package - npm answers 404 for a package the token cannot touch, which reads like a missing package."
             fi
