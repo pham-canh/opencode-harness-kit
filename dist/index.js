@@ -1248,10 +1248,6 @@ async function logPrune(worktree, profileId, stats) {
   }
 }
 
-// src/router.ts
-import { readFileSync as readFileSync3, writeFileSync, mkdirSync as mkdirSync2 } from "node:fs";
-import { join as join6 } from "node:path";
-
 // src/safe.ts
 function safeStringify(value) {
   try {
@@ -1272,32 +1268,36 @@ function utilityModel(p) {
   return `${p.provider ?? "opencode"}/${u.model}`;
 }
 
-// src/router.ts
-function healthPath(worktree) {
-  return join6(worktree, ".space", "health.json");
+// src/health.js
+import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync } from "node:fs";
+import { join as join6 } from "node:path";
+function healthPath(dir) {
+  return join6(dir, ".space", "health.json");
 }
-function readHealth(worktree) {
+function readHealth(dir) {
   try {
-    return JSON.parse(readFileSync3(healthPath(worktree), "utf8"));
+    return JSON.parse(readFileSync3(healthPath(dir), "utf8"));
   } catch {
     return { unhealthy: {} };
   }
 }
-function writeHealth(worktree, h) {
+function writeHealth(dir, health) {
   try {
-    mkdirSync2(join6(worktree, ".space"), { recursive: true });
-    writeFileSync(healthPath(worktree), JSON.stringify(h, null, 2));
+    if (!existsSync5(join6(dir, ".space"))) mkdirSync2(join6(dir, ".space"), { recursive: true });
+    writeFileSync(healthPath(dir), JSON.stringify(health, null, 2));
   } catch {
   }
 }
-function unhealthyModels(worktree) {
-  const health = readHealth(worktree);
+function unhealthyModels(dir) {
+  const health = readHealth(dir);
   const out = /* @__PURE__ */ new Set();
   for (const key of Object.keys(health.unhealthy ?? {})) {
     out.add(key.includes("/") ? key.slice(key.indexOf("/") + 1) : key);
   }
   return out;
 }
+
+// src/router.ts
 var SPENT = [
   /FreeUsageLimitError/i,
   /rate[_ -]?limit/i,

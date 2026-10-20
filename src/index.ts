@@ -15,11 +15,12 @@ import { join } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
 import { GuardPlugin } from "./guard.js"
 import { PrunePlugin } from "./prune.js"
-import { RouterPlugin, unhealthyModels } from "./router.js"
+import { RouterPlugin } from "./router.js"
 import { TelemetryPlugin } from "./telemetry.js"
 import { applyEffort, planEffort } from "./effort.js"
 import { profileIdFromConfig } from "./profile.js"
 import { projectRoot } from "./project.js"
+import { unhealthyModels } from "./health.js"
 
 export interface HarnessOptions {
   /** Profile id. Defaults to the one recorded in the config by `oc-harness use`. */
