@@ -245,6 +245,42 @@ improvement from a NULL average.
   which is often your home directory.
 ### Added
 
+- **`oc-harness cost`** — what the kit is doing on THIS project, in numbers.
+  The kit's claim is a trade: a fixed overhead on every request, and the
+  context it prunes back. Both numbers were already being written — the prune
+  log records what each pass removed, and the telemetry records what each lane
+  cost — and nothing read them together. On the one measured here: 83.7 MB
+  removed over 272 prune passes, 48,122 tool outputs stubbed, and the lanes
+  sorted by what they cost.
+
+- **`oc-harness uninstall`.** The install SYMLINKS the plugin, the prompts,
+  the skills and GLOBAL.md out of the kit's directory, so `npm uninstall` left
+  four dangling symlinks and opencode then loaded neither the rules nor the
+  guard — and said nothing about it.
+
+- **`oc-harness refresh --all`**, which re-derives every shipped profile
+  against the live catalogue, and updates `verified`, which is the field that
+  says when a profile was last checked. Leaving it stale made it a lie.
+
+- **`oc-harness upgrade`**, which checks the registry for a newer kit,
+  refreshes the profiles, and writes the config again. Three things go stale
+  on their own and all three were invisible.
+
+- **`oc-harness backups` and `oc-harness restore`.** The single `.bak` was
+  overwritten on the next `use` and carried no profile id, so "go back to
+  what I had" was not something a person could do at 2am. The config also
+  records which kit wrote it.
+
+- **Type declarations.** The package's `types` pointed at `src/index.ts` — a
+  TypeScript SOURCE file — and the tsconfig had `noEmit`, so no declarations
+  were ever produced. A consumer type-checked the kit's source out of
+  node_modules.
+
+- **Tests for the pieces the suite never reached**: the python fallback, the
+  project root for a project that is not a git repository, the escape rule,
+  the flag parser, and the measurement scripts themselves — the gate that
+  `npm run measure:check` depends on had no test at all.
+
 - **The demo is back on the front page.** `docs/demo/pitch.mp4` and
   `docs/demo-loop.gif` are in the README again, and `video/` still holds the
   take script, the voiceover and the recording driver. The film was recorded
