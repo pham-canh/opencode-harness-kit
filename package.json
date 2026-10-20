@@ -22,7 +22,9 @@
     "./profile": "./src/profile.js",
     "./config": "./src/config.js",
     "./rules": "./src/rules.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./lanes.schema.json": "./lanes.schema.json",
+    "./profiles/schema.json": "./profiles/schema.json"
   },
   "bin": {
     "oc-harness": "bin/oc-harness.mjs"
@@ -45,8 +47,7 @@
     "CONTRIBUTING.md",
     "SECURITY.md",
     "LICENSE",
-    "eval/",
-    "test/"
+    "eval/"
   ],
   "scripts": {
     "build": "npm run build:types && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
