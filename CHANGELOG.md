@@ -14,6 +14,15 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-20
+
+### Added
+
+- **The trusted publisher is configured**, so the release path holds no
+  secret: the tag triggers the workflow, the tests run, and the publish job
+  exchanges the runner's OIDC identity for a short-lived publish token. There
+  is no npm token in the repository to leak, rotate or expire.
+
 ## [0.4.0] — 2026-10-20
 
 ### Fixed
@@ -414,7 +423,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/pham-canh/space-harness/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/pham-canh/space-harness/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/pham-canh/space-harness/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/pham-canh/space-harness/compare/v0.3.7...v0.3.8
