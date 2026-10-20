@@ -18,7 +18,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 import { median } from "./metrics.js"
-import { hasSqlite, sqliteMissingMessage } from "../src/sqlite.js"
+import { canQuerySqlite, sqliteMissingMessage, query as queryDb } from "../src/sqlite.js"
 
 const args = process.argv.slice(2)
 const flag = (...n) => {
@@ -63,12 +63,7 @@ from part
 where json_extract(data,'$.type')='tool' and time_created >= ${split}
 group by day having reads >= ${minReads} order by day`
 
-const rows = JSON.parse(
-  execFileSync("sqlite3", ["-json", `file:${DB}?mode=ro`, sql], {
-    encoding: "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-  }).trim() || "[]",
-)
+const rows = queryDb(DB, sql)
 
 const days = rows.map((r) => ({
   day: r.day,

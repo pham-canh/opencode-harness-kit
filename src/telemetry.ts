@@ -47,11 +47,15 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { join } from "node:path"
 import { write } from "./telemetry-store.js"
+import { projectRoot } from "./project.js"
 import { safeStringify } from "./safe.js"
 import { ASK_GATED } from "./rules.js"
 
-export const TelemetryPlugin: Plugin = async ({ worktree }) => {
-  const dir = join(worktree, ".space")
+export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
+  // The project root, not the worktree: the worktree is the filesystem root
+  // in a project that is not a git repository, so the telemetry was written
+  // somewhere nobody looks, or nowhere at all.
+  const dir = join(projectRoot(directory, worktree), ".space")
   const started = Date.now()
 
   // The message id of every lane record already written, and of every one

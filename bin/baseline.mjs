@@ -19,7 +19,7 @@ const wantJson = args.includes("--json")
 const dbArg = args.indexOf("--db")
 const DB = dbArg >= 0 ? args[dbArg + 1] : join(homedir(), ".local/share/opencode/opencode.db")
 
-const { hasSqlite, sqliteMissingMessage } = await import("../src/sqlite.js")
+const { canQuerySqlite, sqliteMissingMessage, query: queryDb } = await import("../src/sqlite.js")
 
 if (!existsSync(DB)) {
   console.error(`opencode database not found: ${DB}`)
@@ -30,17 +30,13 @@ if (!existsSync(DB)) {
 // The sqlite3 CLI, not the library. A missing tool is a thing a person can
 // fix, and the failure used to be a raw `spawnSync sqlite3 ENOENT` stack
 // trace.
-if (!hasSqlite()) {
+if (!canQuerySqlite()) {
   console.error(sqliteMissingMessage())
   process.exit(1)
 }
 
 function query(sql) {
-  const out = execFileSync("sqlite3", ["-json", `file:${DB}?mode=ro`, sql], {
-    encoding: "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-  }).trim()
-  return out ? JSON.parse(out) : []
+  return queryDb(DB, sql)
 }
 
 const ASSISTANT = `json_extract(data,'$.role')='assistant'`
