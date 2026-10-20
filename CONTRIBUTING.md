@@ -135,6 +135,14 @@ npm login                       # 2FA has to be enabled on the account
 oc-harness trust                # check, and replace it if it is wrong
 ```
 
+npm asks for a one-time password, and `oc-harness trust` asks for it too —
+in a terminal, with the code typed straight in. Under `npx` there is no
+terminal to ask on, so the code can be given on the command line instead:
+
+```bash
+npx -y opencode-harness-kit@latest trust --otp=123456
+```
+
 `oc-harness trust` reads what npm has stored, compares it against the
 workflow's own identity, and replaces it when it differs. npm allows exactly
 one configuration per package and cannot edit it, so replacing means revoking

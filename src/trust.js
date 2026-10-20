@@ -84,21 +84,101 @@ function npm(args, opts = {}) {
 }
 
 /**
- * The stored trusted publisher configurations for this package.
- * @param {string} name
- * @returns {any[]}
+ * Run npm, and if it asks for a one-time password, ask for one here and run
+ * it again.
+ *
+ * npm's own helper for this opens a browser - but only when stdin and stdout
+ * are both terminals, and under `npx` they are not. The result is a failure
+ * that prints a web URL masked as `auth/cli/***`, which cannot be opened.
+ *
+ * So the code is asked for here, and the same code is passed straight back to
+ * npm as `--otp`.
+ *
+ * @param {string[]} args
+ * @param {{ otp?: string }} [state]
+ * @returns {Promise<string>}
  */
-function listConfigs(name) {
-  const out = npm(["trust", "list", name, "--json"], { allowFail: true })
-  if (!out.trim()) return []
+async function npmWithOtp(args, state = {}) {
+  /** @param {string[]} extra */
+  const run = (extra) => {
+    try {
+      return {
+        out: execFileSync("npm", [...args, ...extra], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+        failed: false,
+      }
+    } catch (err) {
+      const e = /** @type {any} */ (err)
+      return { out: `${e.stdout ?? ""}${e.stderr ?? ""}`, failed: true }
+    }
+  }
+
+  const withOtp = state.otp ? [`--otp=${state.otp}`] : []
+  let result = run(withOtp)
+  if (!result.failed || !/one-time password|EOTP/i.test(result.out)) return result.out
+
+  // npm wants a code. Get one.
+  const code = state.otp ?? (await askForOtp())
+  if (!code) {
+    console.error(red("npm needs a one-time password and none was given."))
+    console.error(dim(`  run it again with --otp=<the code from your authenticator app>`))
+    process.exit(1)
+  }
+  state.otp = code
+  result = run([`--otp=${code}`])
+  return result.out
+}
+
+/**
+ * Ask for the one-time password.
+ *
+ * @returns {Promise<string | null>}
+ */
+async function askForOtp() {
+  if (!process.stdin.isTTY) {
+    console.error(
+      red("this needs a one-time password, and there is no terminal to ask for it on."),
+    )
+    console.error(dim(`  run it with --otp=<the code from your authenticator app>`))
+    return null
+  }
+  const { createInterface } = await import("node:readline/promises")
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const answer = (await rl.question("  one-time password from your authenticator app: ")).trim()
+    return answer || null
+  } finally {
+    rl.close()
+  }
+}
+
+/**
+ * The stored trusted publisher configurations for this package.
+ *
+ * A package with no configuration is not the same as a call that failed: the
+ * first is a fact and the second is a question, and treating the second as the
+ * first sends you off to create a configuration that already exists.
+ *
+ * @param {string} name
+ * @param {{ otp?: string }} [state]
+ * @returns {Promise<{ configs: any[], failed: boolean }>}
+ */
+async function listConfigs(name, state = {}) {
+  const out = await npmWithOtp(["trust", "list", name, "--json"], state)
+  if (/one-time password|EOTP/i.test(out) && !state.otp) {
+    return { configs: [], failed: true }
+  }
+  if (!out.trim()) return { configs: [], failed: false }
   let parsed
   try {
     parsed = JSON.parse(out)
   } catch {
-    return []
+    return { configs: [], failed: true }
   }
   const items = Array.isArray(parsed) ? parsed : parsed.configs ?? [parsed]
-  return items.filter(Boolean)
+  return { configs: items.filter(Boolean), failed: false }
 }
 
 /**
@@ -116,14 +196,17 @@ function describe(config) {
 
 /**
  * @param {string[]} argv
- * @returns {number} the exit code
+ * @returns {Promise<number>} the exit code
  */
-export function main(argv = []) {
+export async function main(argv = []) {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"))
   const name = pkg.name
   const repo = repoOf(pkg.repository)
   const file = process.env.TRUSTED_PUBLISHER_FILE ?? "ci.yml"
   const checkOnly = argv.includes("--check")
+  // A code given on the command line is used as-is. A code given at the
+  // prompt is remembered for the rest of the run, so the user types it once.
+  const state = { otp: argv.find((a) => a.startsWith("--otp="))?.slice("--otp=".length) }
 
   console.log(`\n${bold("npm trusted publishing")}  ${dim(`${name} · ${repo} · ${file}`)}\n`)
 
@@ -143,7 +226,13 @@ export function main(argv = []) {
     return 1
   }
 
-  const configs = listConfigs(name)
+  const { configs, failed } = await listConfigs(name, state)
+  if (failed && !configs.length) {
+    console.error(red("could not read the trusted publisher configuration."))
+    console.error(dim("  npm answered with something that is not a configuration list."))
+    console.error(dim(`  run \`npm trust list ${name}\` to see the raw answer.`))
+    return 1
+  }
 
   if (!configs.length) {
     console.log(yellow("  no trusted publisher is configured for this package."))
@@ -155,18 +244,26 @@ export function main(argv = []) {
       return 1
     }
     console.log(`  creating it: ${file}, no environment, publish and stage\n`)
-    npm([
-      "trust",
-      "github",
-      name,
-      "--file",
-      file,
-      "--repo",
-      repo,
-      "--allow-publish",
-      "--allow-stage-publish",
-      "-y",
-    ])
+    const out = await npmWithOtp(
+      [
+        "trust",
+        "github",
+        name,
+        "--file",
+        file,
+        "--repo",
+        repo,
+        "--allow-publish",
+        "--allow-stage-publish",
+        "-y",
+      ],
+      state,
+    )
+    if (/one-time password|EOTP/i.test(out)) {
+      console.error(red("npm still wants a one-time password."))
+      console.error(dim("  run it again with --otp=<the code from your authenticator app>"))
+      return 1
+    }
     console.log(`\n  ${green("✓")} the trusted publisher is configured\n`)
     return 0
   }
@@ -217,19 +314,22 @@ export function main(argv = []) {
       console.error("  revoke it on npmjs.com and run this again.")
       return 1
     }
-    npm(["trust", "revoke", name, "--id", id, "-y"])
-    npm([
-      "trust",
-      "github",
-      name,
-      "--file",
-      file,
-      "--repo",
-      repo,
-      "--allow-publish",
-      "--allow-stage-publish",
-      "-y",
-    ])
+    await npmWithOtp(["trust", "revoke", name, "--id", id, "-y"], state)
+    await npmWithOtp(
+      [
+        "trust",
+        "github",
+        name,
+        "--file",
+        file,
+        "--repo",
+        repo,
+        "--allow-publish",
+        "--allow-stage-publish",
+        "-y",
+      ],
+      state,
+    )
     console.log(`\n  ${green("✓")} the trusted publisher is configured\n`)
   }
   return 0
