@@ -17,6 +17,7 @@ const fieldRe = new RegExp(`^\\s+-\\s+(${TASK_FIELDS.join("|")})\\s*:\\s*(.*)$`)
 /**
  * @typedef {object} Task
  * @property {number} index      position in the file, zero based
+ * @property {number} ordinal    position among the tasks with the same title
  * @property {boolean} checked   the checkbox was ticked
  * @property {string} title      the task on one line
  * @property {string} files      which files it is allowed to touch
@@ -75,17 +76,26 @@ export function parseTasks(text) {
 
   /** @type {Task[]} */
   const tasks = []
+  // How many tasks with the same title have been seen. A driver that has to
+  // find its task again after the file changed underneath it needs a way to
+  // tell two identically-named tasks apart.
+  const titleCounts = new Map()
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(taskRe)
     if (!m) continue
     // A checkbox outside the Tasks section is prose, not a task.
     if (!inSection(lines, i, "Tasks")) continue
 
+    const title = m[2].trim()
+    const ordinal = titleCounts.get(title) ?? 0
+    titleCounts.set(title, ordinal + 1)
+
     /** @type {Record<string, any> & Task} */
     const t = {
       index: tasks.length,
+      ordinal,
       checked: m[1].toLowerCase() === "x",
-      title: m[2].trim(),
+      title,
       files: "",
       change: "",
       verify: "",

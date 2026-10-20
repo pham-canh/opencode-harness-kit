@@ -134,6 +134,105 @@ test("the loop hands the verify COMMAND to the shell, not the command and its ou
   rmSync(dir, { recursive: true, force: true })
 })
 
+test("what the agent wrote to the task file survives the loop's own write", () => {
+  // The file was read once at the start and every write used that copy, so
+  // anything the agent wrote - a new task, a corrected verify command, a note
+  // about a blocker - was silently erased by the loop's own write. A human
+  // editing the file while the loop ran lost the same way.
+  const dir = scratch(oneTask())
+  try {
+    let appended = false
+    runLoop({
+      cwd: dir,
+      runAgent: () => {
+        // The agent records a follow-up task in the file while it works.
+        if (appended) return { ok: true, status: 0, output: "" }
+        appended = true
+        const path = join(dir, ".space", "tasks.md")
+        const current = readFileSync(path, "utf8")
+        writeFileSync(
+          path,
+          current +
+            "\n- [ ] follow-up the agent wrote\n  - verify: check-b\n  - status: pending\n",
+        )
+        return { ok: true, status: 0, output: "" }
+      },
+      runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 1 }),
+    })
+    const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+    assert.equal(after.tasks.length, 2, `the agent's task was erased:\n${JSON.stringify(after.tasks)}`)
+    assert.equal(after.tasks[1].title, "follow-up the agent wrote")
+    assert.equal(after.tasks[0].status, "done", "the loop's own change still landed")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("the verify command is the only thing the loop runs", () => {
+  // The output of the verify command lives in its own field, so the command
+  // cannot be the output. This is the test that would have caught the bug
+  // where the two were one string.
+  const dir = scratch(oneTask())
+  try {
+    const commands = []
+    runLoop({
+      cwd: dir,
+      runAgent: () => ({ ok: true, status: 0, output: "" }),
+      runVerify: (cmd) => {
+        commands.push(cmd)
+        return { ok: true, status: 0, output: "exit 0 in 1s\n# pass 3", seconds: 1 }
+      },
+    })
+    assert.deepEqual(commands, ["npm test"])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("the verify timeout is clamped to what is left of the budget", () => {
+  // The verify used to get a fixed 30 minutes, so a run capped at 2 hours
+  // could overrun by half an hour - and the command with the most authority,
+  // because it is the one handed to a shell, had the longest leash.
+  const dir = scratch(oneTask())
+  try {
+    const timeouts = []
+    runLoop({
+      cwd: dir,
+      budgetMinutes: 5,
+      runAgent: () => ({ ok: true, status: 0, output: "" }),
+      runVerify: (cmd, opts) => {
+        timeouts.push(opts.timeoutMs)
+        return { ok: true, status: 0, output: "ok", seconds: 1 }
+      },
+    })
+    assert.equal(timeouts.length, 1)
+    assert.ok(
+      timeouts[0] <= 5 * 60_000,
+      `the verify timeout ${timeouts[0]} exceeds the whole budget`,
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a run that stopped early says how many rounds it ran", () => {
+  // The log only gets an entry after a verify that PASSED, so a run whose
+  // agent died on the first round reported zero rounds - which reads as "it
+  // did nothing" when it did one.
+  const dir = scratch(oneTask())
+  try {
+    const r = runLoop({
+      cwd: dir,
+      runAgent: () => ({ ok: false, status: 1, output: "the agent died" }),
+      runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 1 }),
+    })
+    assert.equal(r.code, 3)
+    assert.equal(r.rounds, 1, "one round ran, even though it failed")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("a task with no verify command is blocked rather than run", () => {
   const dir = scratch(oneTask(""))
   let agentCalls = 0

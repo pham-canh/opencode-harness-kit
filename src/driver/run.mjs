@@ -75,14 +75,22 @@ export function tail(text, n = 12) {
  * the agent actually did rather than being told about it.
  */
 export function invokeAgent(role, prompt, { cwd, timeoutMs }) {
+  // `--dir` is not optional, and neither is PWD.
+  //
+  // `spawnSync`'s `cwd` sets the child's working directory but does NOT update
+  // the inherited `PWD`, and opencode resolves its project directory from
+  // `process.env.PWD ?? process.cwd()`. So the agent was handed the right
+  // directory and worked in the wrong repository - the one the shell happened
+  // to be in. `eval/ab.mjs` documents the same trap and fixes it the same way.
   const res = spawnSync(
     "opencode",
-    ["run", "--agent", role, "--format", "json", prompt],
+    ["run", "--agent", role, "--dir", cwd, "--format", "json", prompt],
     {
       cwd,
       encoding: "utf8",
       timeout: timeoutMs,
       maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, PWD: cwd },
     },
   )
   return {
@@ -117,6 +125,11 @@ export function buildPrompt(task) {
  * Stops at the first of: nothing pending, nothing verifiable, a blocked task, a
  * failing verify, the round cap, or the time budget. Whichever it was gets
  * printed, so a run that stops early always says why.
+ *
+ * The budget is checked BETWEEN rounds. The agent and the verify each get the
+ * time that is left, with a floor of half a minute - so a run can overrun the
+ * budget by that floor plus the time between the check and the call, and not
+ * by the thirty minutes the verify used to be allowed.
  */
 export function runLoop({
   cwd = process.cwd(),
@@ -140,6 +153,31 @@ export function runLoop({
   let text = readFileSync(join(cwd, TASKS_PATH), "utf8")
   let rounds = 0
 
+  /**
+   * The task file, read fresh, and the task we were working on inside it.
+   *
+   * The file is read once at the start and every write used that copy, so
+   * anything the agent wrote - a new task, a corrected verify command, a note
+   * about a blocker - was silently erased by the loop's own write. A human
+   * editing the file while the loop ran lost the same way.
+   *
+   * So the file is read again before every write, and the change is applied to
+   * the CURRENT text. The task is matched by its title, because a line number
+   * from the old copy means nothing in the new one.
+   */
+  const reload = (task) => {
+    let fresh = ""
+    try {
+      fresh = readFileSync(join(cwd, TASKS_PATH), "utf8")
+    } catch {
+      return { text, task }
+    }
+    const parsed = parseTasks(fresh)
+    const same = parsed.tasks.filter((t) => t.title === task.title)[task.ordinal ?? 0]
+    if (!same) return { text, task }
+    return { text: fresh, task: same }
+  }
+
   for (;;) {
     const parsed = parseTasks(text)
     const task = nextPending(parsed)
@@ -153,15 +191,17 @@ export function runLoop({
             : `every task is done (${s.done}/${s.total}).`,
         code: s.blocked > 0 ? 2 : 0,
         summary: s,
+        rounds,
       })
     }
 
     if (isBlocked(task)) {
-      return stop(log, { reason: `task is blocked and needs a person: ${task.title}`, code: 2 })
+      return stop(log, { reason: `task is blocked and needs a person: ${task.title}`, code: 2, rounds })
     }
 
     if (!task.verify) {
-      text = markTask(text, task, {
+      const fresh = reload(task)
+      text = markTask(fresh.text, fresh.task, {
         status: "blocked",
         verifyOutput: "blocked by the loop: this task has no verify command, so nothing could prove it finished.",
       })
@@ -169,29 +209,35 @@ export function runLoop({
       return stop(log, {
         reason: `"${task.title}" has no verify command. It cannot be checked, so it cannot be run unattended. Add one, or do it yourself.`,
         code: 2,
+        rounds,
       })
     }
 
-    rounds++
-    if (rounds > maxRounds) {
-      return stop(log, { reason: `stopped at the round cap (${maxRounds}). Raise it with --max-rounds, or run fewer tasks.`, code: 2 })
+    if (rounds >= maxRounds) {
+      return stop(log, { reason: `stopped at the round cap (${maxRounds}). Raise it with --max-rounds, or run fewer tasks.`, code: 2, rounds })
     }
 
     const elapsed = Date.now() - started
     if (elapsed >= budgetMs) {
-      return stop(log, { reason: `stopped at the time budget (${budgetMinutes} min, ${Math.round(elapsed / 60000)} min used).`, code: 2 })
+      return stop(log, { reason: `stopped at the time budget (${budgetMinutes} min, ${Math.round(elapsed / 60000)} min used).`, code: 2, rounds })
     }
 
+    // The time that is left, with a floor so a nearly-spent budget still gets
+    // a command that can actually finish.
+    const remaining = () => Math.max(30_000, budgetMs - (Date.now() - started))
+
+    rounds++
     console.log(`\n  ${bold(`[${rounds}]`)} ${task.title}`)
     if (task.files) console.log(`      ${stamp(task.files)}`)
 
     const agent = runAgent(role, buildPrompt(task), {
       cwd,
-      timeoutMs: Math.max(60_000, budgetMs - (Date.now() - started)),
+      timeoutMs: remaining(),
     })
     if (!agent.ok) {
       const why = agent.error || agent.output || `exit ${agent.status}`
-      text = markTask(text, task, {
+      const fresh = reload(task)
+      text = markTask(fresh.text, fresh.task, {
         status: "blocked",
         verifyOutput: `blocked by the loop: the ${role} agent failed.\n${tail(why)}`,
       })
@@ -199,6 +245,7 @@ export function runLoop({
       return stop(log, {
         reason: `the ${role} agent failed on "${task.title}": ${tail(why, 3).split("\n")[0]}`,
         code: 3,
+        rounds,
       })
     }
 
@@ -206,11 +253,12 @@ export function runLoop({
     // loop that trusts the agent's own word about whether it passed is a loop
     // that reports success it never checked.
     console.log(`      ${stamp(`verify: ${task.verify}`)}`)
-    const check = runVerify(task.verify, { cwd, timeoutMs: 1800_000 })
+    const check = runVerify(task.verify, { cwd, timeoutMs: remaining() })
     log.push({ round: rounds, task: task.title, ok: check.ok, seconds: check.seconds })
 
     if (!check.ok) {
-      text = markTask(text, task, {
+      const fresh = reload(task)
+      text = markTask(fresh.text, fresh.task, {
         status: "blocked",
         verifyOutput: `verify failed (exit ${check.status}, ${check.seconds}s)\n${tail(check.output)}`,
       })
@@ -218,10 +266,12 @@ export function runLoop({
       return stop(log, {
         reason: `verify failed on "${task.title}". Marked blocked -- the real output is in ${TASKS_PATH}.`,
         code: 4,
+        rounds,
       })
     }
 
-    text = markTask(text, task, {
+    const fresh = reload(task)
+    text = markTask(fresh.text, fresh.task, {
       status: "done",
       verifyOutput: `exit ${check.status} in ${check.seconds}s\n${tail(check.output)}`,
     })
@@ -230,8 +280,12 @@ export function runLoop({
   }
 }
 
-function stop(log, { reason, code, summary }) {
-  return { reason, code: code ?? 0, rounds: log.length, log, summary }
+function stop(log, { reason, code, summary, rounds }) {
+  // `rounds` is the number of rounds the loop RAN, not the number of
+  // entries in the log. The log only gets an entry after a verify that
+  // passed, so a run whose agent died on the first round reported zero
+  // rounds - which reads as "it did nothing" when it did one.
+  return { reason, code: code ?? 0, rounds: rounds ?? log.length, log, summary }
 }
 
 export { TASKS_PATH }
