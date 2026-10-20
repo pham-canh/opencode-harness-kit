@@ -20,14 +20,21 @@ has been pruned. Never keep it in your head.
 - [ ] <task, small enough to finish in a few minutes>
   - files: <exact paths to change>
   - change: <what the change is, concretely, not "handle errors">
-  - verify: <the exact command, and what passing looks like>
+  - verify: <the exact command that proves it, and nothing else>
   - status: pending | done | blocked
 - [x] <finished task>
   - files: <paths>
   - change: <what was done, including anything the original task did not name>
-  - verify: <the command that was actually run, and its verbatim final lines>
+  - verify: <the command that was actually run>
+  - output: <the command's verbatim final lines>
   - status: done
 ```
+
+`verify:` is a command and nothing else, because the driver runs it. The
+output of that command goes on the `output:` line under it, never on the
+`verify:` line and never appended to it: a `verify:` that reads
+`npm test - 3 passed` is a command that does not exist, and the loop would
+fail on the command rather than on the work.
 
 How the loop uses it:
 
@@ -41,7 +48,7 @@ How the loop uses it:
 Rules:
 
 - One file per body of work. Start a new one only when the goal changes.
-- A task is `done` only with the verify command's real output pasted into its
-  `verify:` line. A task marked done without it has not been verified.
+- A task is `done` only with the verify command's real output in its `output:`
+  line. A task marked done without it has not been verified.
 - Add a Decisions line the moment something was chosen rather than asked. That
   is the line that stops the next session re-litigating it.

@@ -6,7 +6,7 @@
 // the goal, the constraints, the decisions, any prose a human added -- survives
 // a rewrite untouched.
 
-export const TASK_FIELDS = ["files", "change", "verify", "status"]
+export const TASK_FIELDS = ["files", "change", "verify", "status", "output"]
 
 const SECTIONS = ["Constraints", "Decisions", "Risks", "Tasks"]
 
@@ -23,6 +23,7 @@ const fieldRe = new RegExp(`^\\s+-\\s+(${TASK_FIELDS.join("|")})\\s*:\\s*(.*)$`)
  * @property {string} change     what it is supposed to change
  * @property {string} verify     the command that proves it
  * @property {string} status     pending | done | blocked
+ * @property {string} output     the output that command actually produced
  * @property {number} start      first line of the task block
  * @property {number} end        last line of the task block
  * @property {string} [key]      indexed by field name when a block is written
@@ -89,6 +90,7 @@ export function parseTasks(text) {
       change: "",
       verify: "",
       status: "",
+      output: "",
       start: i,
       end: i,
     }
@@ -104,8 +106,17 @@ export function parseTasks(text) {
         continue
       }
       // A wrapped value continues the field above it, indented deeper.
+      //
+      // Under `verify` it cannot be the command. A continuation of the
+      // verify line is the output of that command, and folding it back into
+      // the field made the driver hand "npm test exit 0 in 3s" to a shell.
+      // It is collected as output instead, where it cannot be executed.
       if (last && lines[j].trim() && /^\s{4,}\S/.test(lines[j])) {
-        t[last] = `${t[last]} ${lines[j].trim()}`.trim()
+        if (last === "verify") {
+          t.output = t.output ? `${t.output} ${lines[j].trim()}` : lines[j].trim()
+        } else {
+          t[last] = `${t[last]} ${lines[j].trim()}`.trim()
+        }
         continue
       }
       if (!lines[j].trim()) continue
@@ -165,11 +176,14 @@ export const isDone = (t) => t.checked || t.status === "done"
 export const isBlocked = (t) => t.status === "blocked"
 
 /**
- * Record the outcome of a task: flip the checkbox, set the status, and paste the
- * verify output that was actually observed.
+ * Record the outcome of a task: flip the checkbox, set the status, and record
+ * the verify output that was actually observed.
  *
- * The verify text is written under the `verify:` line rather than replacing it,
- * because the contract asks for the command and the real output together.
+ * The output goes into its own `output:` field rather than under the `verify:`
+ * line. It used to be written as continuation lines under `verify:`, and the
+ * parser folded a continuation back into the field above it - so the command
+ * and its output became one string, and the driver handed that string to a
+ * shell. A separate field cannot be mistaken for a command.
  *
  * @param {string} text
  * @param {Task} task
@@ -179,9 +193,11 @@ export const isBlocked = (t) => t.status === "blocked"
 export function markTask(text, task, { status, verifyOutput }) {
   const lines = String(text).split("\n")
   const boxLine = lines[task.start] ?? ""
+  // The indentation is part of the document: a task nested under a heading
+  // keeps its nesting when it is marked.
   lines[task.start] = boxLine.replace(
-    /^\s*-\s*\[[ xX]\]/,
-    status === "done" ? "- [x]" : "- [ ]",
+    /^(\s*)-\s*\[[ xX]\]/,
+    (_match, indent) => `${indent}- ${status === "done" ? "[x]" : "[ ]"}`,
   )
 
   let statusLine = -1
@@ -198,26 +214,71 @@ export function markTask(text, task, { status, verifyOutput }) {
   )
 
   if (verifyOutput) {
-    let verifyLine = -1
-    for (let i = task.start; i <= task.end + 1 && i < lines.length; i++) {
-      const f = lines[i]?.match(fieldRe)
-      if (f && f[1] === "verify") {
-        verifyLine = i
-        break
-      }
-    }
-    const verifySource = verifyLine >= 0 ? lines[verifyLine] : undefined
-    if (verifySource) {
-      const indent = (verifySource.match(/^\s*/) ?? [""])[0] + "  "
-      const quoted = String(verifyOutput)
-        .trimEnd()
-        .split("\n")
-        .map((l) => `${indent}${l}`)
-      lines.splice(verifyLine + 1, 0, ...quoted)
-    }
+    // A task that is marked twice keeps one output block, not two.
+    const previous = outputBlock(lines, task)
+    if (previous) lines.splice(previous.start, previous.end - previous.start + 1)
+
+    const verifyLine = fieldLine(lines, task, "verify")
+    const anchor = verifyLine >= 0 ? verifyLine : lastFieldLine(lines, task)
+    const source = lines[anchor] ?? lines[task.start] ?? ""
+    const indent = `${(source.match(/^\s*/) ?? [""])[0]}  `
+    const quoted = String(verifyOutput)
+      .trimEnd()
+      .split("\n")
+      .map((l) => `${indent}${l}`)
+    // The first line rides on the field, the rest are continuations of it.
+    const block = [`${indent}- output: ${quoted[0].trim()}`, ...quoted.slice(1)]
+    lines.splice(anchor + 1, 0, ...block)
   }
 
   return lines.join("\n")
+}
+
+/**
+ * The line a named field sits on, or -1.
+ * @param {string[]} lines
+ * @param {Task} task
+ * @param {string} name
+ * @returns {number}
+ */
+function fieldLine(lines, task, name) {
+  for (let i = task.start; i <= task.end + 1 && i < lines.length; i++) {
+    const f = lines[i]?.match(fieldRe)
+    if (f && f[1] === name) return i
+  }
+  return -1
+}
+
+/**
+ * The last field line of a task, or the task's own line when it has none.
+ * @param {string[]} lines
+ * @param {Task} task
+ * @returns {number}
+ */
+function lastFieldLine(lines, task) {
+  let last = task.start
+  for (let i = task.start; i <= task.end + 1 && i < lines.length; i++) {
+    if (fieldRe.test(lines[i] ?? "")) last = i
+  }
+  return last
+}
+
+/**
+ * The lines a task's `output:` field occupies, or null when it has none.
+ * @param {string[]} lines
+ * @param {Task} task
+ * @returns {{ start: number, end: number } | null}
+ */
+function outputBlock(lines, task) {
+  const start = fieldLine(lines, task, "output")
+  if (start < 0) return null
+  let end = start
+  for (let i = start + 1; i <= task.end + 1 && i < lines.length; i++) {
+    if (fieldRe.test(lines[i] ?? "")) break
+    if (lines[i].trim() && !/^\s{4,}\S/.test(lines[i])) break
+    end = i
+  }
+  return { start, end }
 }
 
 /**
@@ -237,12 +298,21 @@ export function taskPrompt(task) {
 /**
  * The summary the driver prints when it stops, whatever stopped it.
  *
+ * Every task is counted exactly once. A task that is ticked and also marked
+ * blocked is a contradiction a human can leave in the file, and counting it
+ * in both buckets made the three counters add up to more than the file holds.
+ *
  * @param {TaskFile} parsed
  * @returns {{ done: number, blocked: number, pending: number, total: number }}
  */
 export function summarize(parsed) {
-  const done = parsed.tasks.filter(isDone).length
-  const blocked = parsed.tasks.filter(isBlocked).length
-  const pending = parsed.tasks.filter((t) => !isDone(t) && !isBlocked(t)).length
+  let done = 0
+  let blocked = 0
+  let pending = 0
+  for (const t of parsed.tasks) {
+    if (isDone(t)) done++
+    else if (isBlocked(t)) blocked++
+    else pending++
+  }
   return { done, blocked, pending, total: parsed.tasks.length }
 }

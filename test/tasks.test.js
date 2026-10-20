@@ -81,6 +81,27 @@ test("wrapped field values stay attached to their field", () => {
   const text = `# g
 
 ## Tasks
+- [ ] long fields
+  - files: a.js
+    and src/b.js
+  - change: do the thing
+    and the other thing
+  - verify: npm run check
+  - status: pending
+`
+  const t = parseTasks(text).tasks[0]
+  assert.equal(t.files, "a.js and src/b.js")
+  assert.equal(t.change, "do the thing and the other thing")
+  assert.equal(t.verify, "npm run check")
+})
+
+test("a wrapped verify line is output, not part of the command", () => {
+  // The command is what the driver hands to a shell. A continuation of the
+  // verify line is the output of that command, and folding it back into the
+  // field made the driver run "npm test exit 0 in 3s" as one command.
+  const text = `# g
+
+## Tasks
 - [ ] long verify
   - files: a.js
   - change: do the thing
@@ -88,10 +109,9 @@ test("wrapped field values stay attached to their field", () => {
     and the last line is pass 131
   - status: pending
 `
-  assert.equal(
-    parseTasks(text).tasks[0].verify,
-    "npm run check and the last line is pass 131",
-  )
+  const t = parseTasks(text).tasks[0]
+  assert.equal(t.verify, "npm run check")
+  assert.equal(t.output, "and the last line is pass 131")
 })
 
 test("a checkbox outside the Tasks section is prose", () => {
@@ -109,7 +129,7 @@ test("a checkbox outside the Tasks section is prose", () => {
   assert.equal(tasks[0].title, "the real task")
 })
 
-test("marking done ticks the box and keeps the verify command", () => {
+test("marking done ticks the box and keeps the verify command runnable", () => {
   const parsed = parseTasks(DOC)
   const out = markTask(DOC, parsed.tasks[0], {
     status: "done",
@@ -118,9 +138,36 @@ test("marking done ticks the box and keeps the verify command", () => {
   const after = parseTasks(out)
   assert.equal(after.tasks[0].status, "done")
   assert.ok(isDone(after.tasks[0]))
-  // The command and the real output have to live together.
-  assert.ok(after.tasks[0].verify.includes("npm test"))
-  assert.ok(after.tasks[0].verify.includes("# pass 3"))
+  // The command and the real output live together, and they are not the same
+  // string: the driver runs the command, so the command has to stay a command.
+  assert.equal(after.tasks[0].verify, "npm test")
+  assert.equal(after.tasks[0].output, "# pass 3")
+})
+
+test("marking twice replaces the output instead of stacking it", () => {
+  const first = markTask(DOC, parseTasks(DOC).tasks[0], {
+    status: "done",
+    verifyOutput: "# pass 3",
+  })
+  const second = markTask(first, parseTasks(first).tasks[0], {
+    status: "done",
+    verifyOutput: "# pass 4",
+  })
+  const after = parseTasks(second)
+  assert.equal(after.tasks[0].verify, "npm test")
+  assert.equal(after.tasks[0].output, "# pass 4")
+  assert.equal(after.tasks.length, 3)
+})
+
+test("marking keeps the indentation of a nested task", () => {
+  const text = `# g
+
+## Tasks
+  - [ ] nested
+    - status: pending
+`
+  const out = markTask(text, parseTasks(text).tasks[0], { status: "done" })
+  assert.ok(out.includes("  - [x] nested"), out)
 })
 
 test("marking blocked leaves the box unticked", () => {
@@ -161,6 +208,22 @@ test("the prompt names the files, the change and the verify command", () => {
 test("summarize counts each task exactly once", () => {
   const s = summarize(parseTasks(DOC))
   assert.deepEqual(s, { done: 1, blocked: 1, pending: 1, total: 3 })
+})
+
+test("a task that is ticked and blocked is still counted once", () => {
+  // A human can leave a contradiction in the file. Counting it in both
+  // buckets made the three counters add up to more than the file holds.
+  const text = `# g
+
+## Tasks
+- [x] contradiction
+  - status: blocked
+- [ ] waiting
+  - status: pending
+`
+  const s = summarize(parseTasks(text))
+  assert.equal(s.done + s.blocked + s.pending, s.total)
+  assert.deepEqual(s, { done: 1, blocked: 0, pending: 1, total: 2 })
 })
 
 test("an empty task file parses to nothing rather than throwing", () => {
