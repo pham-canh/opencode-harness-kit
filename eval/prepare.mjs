@@ -18,10 +18,10 @@
 // Either way the subject lands somewhere stable under the scratch root rather
 // than a fresh mktemp, so a run can be pointed at the same bytes twice.
 
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, isAbsolute, join, relative, resolve } from "node:path"
 
 const args = process.argv.slice(2)
 const flag = (...n) => {
@@ -83,10 +83,47 @@ function findLeakedPaths(dir, depth = 0) {
   return found.filter((f) => (seen.has(f.path) ? false : seen.add(f.path)))
 }
 
-const scratch = process.env.SPACE_HARNESS_SCRATCH ?? join(tmpdir(), "space-harness-subjects")
+const scratch = resolve(process.env.SPACE_HARNESS_SCRATCH ?? join(tmpdir(), "space-harness-subjects"))
 mkdirSync(scratch, { recursive: true })
-const label = name ?? (from ? from.split("/").pop() : `${(repo.split("/").pop() ?? "repo")}-${ref}`)
+
+/**
+ * The directory NAME of a subject.
+ *
+ * A name, not a path. `--name ../..` used to resolve outside the scratch
+ * root, and the `rmSync` below then deleted whatever was there - a subject
+ * label is a command-line argument, and the command below it removes a
+ * directory tree recursively.
+ *
+ * The check is made twice on purpose: once here, on the text, and once on
+ * the resolved path, below. Either alone would be enough; both together mean
+ * a mistake in either cannot delete anything.
+ *
+ * @param {string | undefined} raw
+ * @returns {string | null}
+ */
+function safeLabel(raw) {
+  if (!raw) return null
+  if (/[\\/]/.test(raw)) return null
+  if (raw === "." || raw === "..") return null
+  if (raw.includes("..")) return null
+  if (raw.length === 0) return null
+  return raw
+}
+
+const requested = name ?? (from ? basename(from) : `${basename(repo ?? "repo")}-${ref}`)
+const label = safeLabel(requested)
+if (!label) {
+  console.error(`--name must be a single directory name, not a path: ${requested}`)
+  process.exit(1)
+}
 const out = join(scratch, label)
+
+// Belt and braces: the resolved path has to still be inside the scratch root.
+const rel = relative(scratch, resolve(out))
+if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+  console.error(`refusing to write outside the scratch root: ${out}`)
+  process.exit(1)
+}
 
 if (existsSync(out)) rmSync(out, { recursive: true, force: true })
 mkdirSync(out, { recursive: true })
@@ -113,9 +150,31 @@ if (from) {
     console.error(`cannot resolve ref ${ref} in ${repo}`)
     process.exit(1)
   }
-  // git archive writes a tar to stdout. Piping through tar keeps this in one
+  // git archive writes a tar to stdout. Piping it into tar keeps this in one
   // process rather than leaving a tarball behind for someone to trip over.
-  execFileSync("sh", ["-c", `git -C ${JSON.stringify(repo)} archive --format=tar ${sha} | tar -x -C ${JSON.stringify(out)}`])
+  //
+  // No shell. The previous version built one `sh -c` string and quoted the
+  // paths with `JSON.stringify`, which is not shell quoting: it escapes `"` and
+  // `\` and leaves `$`, backticks and `!` alone, so a path containing `$(...)`
+  // was executed by the shell. `git` and `tar` are called with argument arrays
+  // and the tar goes through a pipe, so nothing is ever parsed as a command.
+  const archive = spawnSync("git", ["-C", repo, "archive", "--format=tar", sha], {
+    maxBuffer: 512 * 1024 * 1024,
+  })
+  if (archive.status !== 0 || archive.error) {
+    console.error(`cannot archive ${repo} at ${sha}`)
+    if (archive.stderr?.length) console.error(archive.stderr.toString().trimEnd())
+    process.exit(1)
+  }
+  const untar = spawnSync("tar", ["-x", "-C", out], {
+    input: archive.stdout,
+    maxBuffer: 512 * 1024 * 1024,
+  })
+  if (untar.status !== 0 || untar.error) {
+    console.error(`cannot unpack the archive into ${out}`)
+    if (untar.stderr?.length) console.error(untar.stderr.toString().trimEnd())
+    process.exit(1)
+  }
   source = repo
   pinned = sha.slice(0, 12)
 }
