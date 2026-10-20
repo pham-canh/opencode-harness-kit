@@ -473,7 +473,41 @@ test("prune survives a malformed message without throwing", async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("telemetry records a denial and never throws on odd input", async () => {
+test("a denial is recorded, and it is the guard that records it", async () => {
+  // A denial never reaches `tool.execute.after`: the guard throws in
+  // `tool.execute.before`, and opencode calls `after` only after the tool has
+  // run. The old test drove `after` with a hand-written "blocked:" string,
+  // which is not how a denial arrives - and the old implementation scraped
+  // the word "blocked:" out of any tool's OUTPUT, so a `read` of a file
+  // containing the word produced a record claiming a rule had fired.
+  const dir = workspace()
+  const hooks = await harness(dir)
+
+  // A real denial, through the hook that actually makes it.
+  await assert.rejects(
+    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "s", callID: "c" }, { args: { command: "rm -rf /" } }),
+    /blocked: recursive delete/,
+  )
+
+  // A tool whose output happens to contain the word must not be filed as a
+  // denial.
+  await hooks["tool.execute.after"](
+    { ...hookInput, args: { filePath: "src/a.ts" } },
+    { title: "read", output: "const re = /blocked:\\s*([^\\n]+)/", metadata: {} },
+  )
+
+  const log = join(dir, ".space", "telemetry.jsonl")
+  assert.ok(existsSync(log), "telemetry should have been written")
+  const records = readLines(log)
+    .map((l) => JSON.parse(l))
+    .filter((r) => r.kind === "guard")
+  assert.equal(records.length, 1, `expected exactly one denial record, got ${JSON.stringify(records)}`)
+  assert.equal(records[0].rule, "recursive delete")
+  assert.equal(records[0].tool, "bash")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("telemetry never throws on odd input", async () => {
   const dir = workspace()
   const hooks = await harness(dir)
   await hooks["tool.execute.after"](
@@ -486,10 +520,35 @@ test("telemetry records a denial and never throws on odd input", async () => {
   )
   await hooks.event({ event: { type: "something.unknown" } })
   await hooks.event({ event: undefined })
+  // A cyclic event must not throw out of the hook.
+  const cyclic = { type: "error.boom" }
+  cyclic.self = cyclic
+  await hooks.event({ event: cyclic })
   const log = join(dir, ".space", "telemetry.jsonl")
   assert.ok(existsSync(log), "telemetry should have been written")
-  const lines = readLines(log)
-  assert.ok(lines.some((l) => l.includes("guard")), "the denial should be recorded")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a command the guard asks about but allows is recorded as allowed, not as a denial", async () => {
+  // `git push` is ask-gated through opencode's permission rules rather than
+  // guard-blocked, so it reaches `tool.execute.after`. The record used to be
+  // called "guard-attempt" and only ever contained ALLOWED commands.
+  const dir = workspace()
+  const hooks = await harness(dir)
+  await hooks["tool.execute.after"](
+    { ...hookInput, args: { command: "git push origin main" } },
+    { title: "bash", output: "done", metadata: {} },
+  )
+  const records = readLines(join(dir, ".space", "telemetry.jsonl"))
+    .map((l) => JSON.parse(l))
+  const allowed = records.filter((r) => r.kind === "guard-allowed")
+  assert.equal(allowed.length, 1, JSON.stringify(records))
+  assert.match(allowed[0].command, /git push/)
+  assert.equal(
+    records.filter((r) => r.kind === "guard").length,
+    0,
+    "an allowed command is not a denial",
+  )
   rmSync(dir, { recursive: true, force: true })
 })
 

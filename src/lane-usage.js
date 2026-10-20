@@ -29,21 +29,44 @@ import { dirname, join, resolve } from "node:path"
  */
 
 /**
+ * The telemetry files for the project containing `startDir`.
+ *
+ * ALL of them, oldest first. The plugin rotates the file when it passes 4 MB
+ * and renames the old one to `telemetry.jsonl.1` - and the reader used to
+ * look at `telemetry.jsonl` alone, so a rotation silently threw away the
+ * history and every lane reported "never used". The number that decides
+ * whether the fleet stays at ten lanes was disappearing on a schedule.
+ *
+ * @param {string} startDir
+ * @returns {string[]} the paths, or an empty array when the project has none
+ */
+export function findTelemetryFiles(startDir) {
+  let dir = resolve(startDir)
+  for (let i = 0; i < 12; i++) {
+    const space = join(dir, ".space")
+    const files = []
+    for (const suffix of [".2", ".1", ""]) {
+      const f = join(space, `telemetry.jsonl${suffix}`)
+      if (existsSync(f)) files.push(f)
+    }
+    // Oldest first: `.2` was rotated twice, `.1` once, and the plain file is
+    // the newest.
+    if (files.length) return files
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return []
+}
+
+/**
  * The telemetry file for the project containing `startDir`.
  *
  * @param {string} startDir
  * @returns {string | null} the path, or null when the project has no telemetry
  */
 export function findTelemetryFile(startDir) {
-  let dir = resolve(startDir)
-  for (let i = 0; i < 12; i++) {
-    const file = join(dir, ".space", "telemetry.jsonl")
-    if (existsSync(file)) return file
-    const parent = dirname(dir)
-    if (parent === dir) break
-    dir = parent
-  }
-  return null
+  return findTelemetryFiles(startDir)[0] ?? null
 }
 
 /**
@@ -63,7 +86,7 @@ export function findTelemetryFile(startDir) {
  * three, so counting them would put a known-wrong figure next a known-right
  * one.
  *
- * @param {string | null} file
+ * @param {string | string[] | null} file one file, or several oldest first
  * @returns {{ lanes: Record<string, LaneUsage>, records: number, requests: number, ignored: number }}
  */
 export function readLaneUsage(file) {
@@ -74,13 +97,23 @@ export function readLaneUsage(file) {
   let records = 0
   let ignored = 0
 
-  if (!file || !existsSync(file)) return { lanes, records, requests: 0, ignored }
+  const files = Array.isArray(file) ? file : file ? [file] : []
+  const readable = files.filter((f) => existsSync(f))
+  if (!readable.length) return { lanes, records, requests: 0, ignored }
 
   let text = ""
-  try {
-    text = readFileSync(file, "utf8")
-  } catch {
-    return { lanes, records, requests: 0, ignored }
+  for (const f of readable) {
+    try {
+      const chunk = readFileSync(f, "utf8")
+      // A file that does not end in a newline would otherwise be glued to
+      // the next one, and the two records that meet in the middle would
+      // parse as neither.
+      if (text && !text.endsWith("\n")) text += "\n"
+      text += chunk
+    } catch {
+      // A file we cannot read is a file we cannot count. The rest of the
+      // history is still worth reading.
+    }
   }
 
   for (const line of text.split("\n")) {

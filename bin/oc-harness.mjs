@@ -46,7 +46,7 @@ import {
 import { generateConfig, globalInstructionsPath } from "../src/config.js"
 import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
 import { planEffort } from "../src/effort.js"
-import { findTelemetryFile, readLaneUsage, averageMs } from "../src/lane-usage.js"
+import { findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
 import { main as trustMain } from "../src/trust.js"
 
 const CONFIG_DIR =
@@ -1357,8 +1357,11 @@ function cmdLanes() {
   // The plugin writes to the project root, so the file is found by walking up
   // from here. Reading `process.cwd()` alone reported "never called" for every
   // lane whenever the command was run from a subdirectory.
-  const file = findTelemetryFile(process.cwd())
-  const { lanes: stats, requests, ignored } = readLaneUsage(file)
+  // ALL the telemetry files, oldest first. The plugin rotates the file at
+  // 4 MB, and reading only the newest one made every lane report "never
+  // used" the moment a rotation happened.
+  const files = findTelemetryFiles(process.cwd())
+  const { lanes: stats, requests, ignored } = readLaneUsage(files)
 
   console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${requests} lane request(s)`)}\n`)
   const lanes = Object.keys(profile.roles ?? {})
@@ -1414,7 +1417,11 @@ function cmdLanes() {
     `  ${stamp("one request is one assistant message; avg ms covers the requests that finished")}`,
   )
   console.log(
-    `  ${stamp(`telemetry is read from ${file ?? "no .space/telemetry.jsonl found by walking up from here"}`)}\n`,
+    `  ${stamp(
+      files.length
+        ? `telemetry is read from ${files.join(", ")}`
+        : "no .space/telemetry.jsonl found by walking up from here",
+    )}\n`,
   )
   if (ignored) {
     console.log(

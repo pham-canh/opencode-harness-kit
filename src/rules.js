@@ -342,6 +342,19 @@ export function shellPayload(segment) {
   return tokens.slice(c + 1).join(" ") || null
 }
 
+/**
+ * Commands the guard deliberately does NOT block.
+ *
+ * `git push` is ask-gated through opencode's permission rules rather than
+ * guard-blocked, so it is the one command the agent reaches for that the
+ * guard has a policy about and lets through. It lives here, beside the rules,
+ * so there is ONE place that says what the guard's policy is - a keyword list
+ * in the telemetry was a second copy of it, and it drifted.
+ *
+ * @type {RegExp[]}
+ */
+export const ASK_GATED = [/^\s*git\s+push\b/]
+
 /** @type {Rule[]} */
 export const BASH_RULES = [
   {

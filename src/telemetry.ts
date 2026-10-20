@@ -31,38 +31,24 @@
 // OpenCode 1.19, its `agent` field is undefined, so it cannot attribute a
 // call to a lane; and a second counter that cannot be correlated with the
 // first would double-count every call.
+//
+// WHAT A DENIAL LOOKS LIKE HERE
+//
+// A denial does NOT reach this plugin. The guard denies by throwing in
+// `tool.execute.before`, and opencode calls `tool.execute.after` only after
+// the tool has run - so a blocked command produces no `after` event. The
+// record of a denial is written by the guard itself, into the same file.
+//
+// The `kind: "guard"` record that used to live here was a false positive: it
+// scraped the word "blocked:" out of the OUTPUT of whatever tool ran, so a
+// `read` of a source file that happened to contain the word produced a record
+// claiming a rule had fired.
 
 import type { Plugin } from "@opencode-ai/plugin"
-import { appendFileSync, mkdirSync, existsSync, statSync, renameSync } from "node:fs"
 import { join } from "node:path"
-
-const MAX_BYTES = 4 * 1024 * 1024
-
-function logPath(dir: string): string {
-  return join(dir, "telemetry.jsonl")
-}
-
-/** Rotate by size so a long-running project cannot fill its disk. */
-function rotate(file: string) {
-  try {
-    if (existsSync(file) && statSync(file).size > MAX_BYTES) {
-      renameSync(file, `${file}.1`)
-    }
-  } catch {
-    // Best effort.
-  }
-}
-
-function write(dir: string, record: Record<string, unknown>) {
-  try {
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    const file = logPath(dir)
-    rotate(file)
-    appendFileSync(file, JSON.stringify({ t: new Date().toISOString(), ...record }) + "\n")
-  } catch {
-    // Telemetry must never be load-bearing.
-  }
-}
+import { write } from "./telemetry-store.js"
+import { safeStringify } from "./safe.js"
+import { ASK_GATED } from "./rules.js"
 
 export const TelemetryPlugin: Plugin = async ({ worktree }) => {
   const dir = join(worktree, ".space")
@@ -88,7 +74,11 @@ export const TelemetryPlugin: Plugin = async ({ worktree }) => {
 
       // Provider rate limits are the one signal that changes behaviour, so
       // they get logged even though the event shape is provider-specific.
-      if (/error|rate|limit|quota/i.test(type)) {
+      //
+      // The match is on whole tokens rather than on substrings, so an
+      // opencode event whose name happens to contain a letter of "rate" is
+      // not filed as a provider event and drowns the real ones.
+      if (/(^|[._-])(error|errors|rate|limit|limits|quota)([._-]|$)/i.test(type)) {
         write(dir, { kind: "provider-event", type, detail: truncate(safeStringify(event)) })
         return
       }
@@ -118,14 +108,18 @@ export const TelemetryPlugin: Plugin = async ({ worktree }) => {
     },
 
     "tool.execute.after": async (input, output) => {
-      const text = typeof output?.output === "string" ? output.output : ""
-      if (text.includes("[opencode-harness-kit] blocked")) {
-        write(dir, { kind: "guard", tool: input.tool, rule: extractRule(text) })
-        return
-      }
+      // A command the guard has a rule about, and that the guard let through.
+      //
+      // The list is `ASK_GATED` in rules.js, not a keyword list here: the
+      // guard's policy about what it does not block lives in one place, and a
+      // second copy of it would drift.
+      //
+      // This is the opposite of a denial, and the name says so. A record
+      // called "guard-attempt" that only ever contained ALLOWED commands was
+      // describing the wrong thing entirely.
       const command = String((input.args as { command?: unknown })?.command ?? "")
-      if (input.tool === "bash" && /git push|rm -rf|chmod 777/.test(command)) {
-        write(dir, { kind: "guard-attempt", tool: input.tool, command: truncate(command) })
+      if (input.tool === "bash" && ASK_GATED.some((p) => p.test(command))) {
+        write(dir, { kind: "guard-allowed", tool: input.tool, command: truncate(command) })
       }
     },
 
@@ -175,22 +169,8 @@ function laneOf(event: unknown): {
   }
 }
 
-function extractRule(output: string): string {
-  const m = output.match(/blocked:\s*([^\n]+)/)
-  return m ? m[1].trim() : "unknown"
-}
-
 function truncate(s: string, n = 300): string {
   return s.length > n ? `${s.slice(0, n)}...` : s
-}
-
-/** Stringify without throwing on a cycle or a BigInt. */
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? String(value)
-  } catch {
-    return String(value)
-  }
 }
 
 export default TelemetryPlugin
