@@ -47,8 +47,8 @@ test("one assistant message is one call, however many events it produced", () =>
     const { lanes, records, ignored } = readLaneUsage(file)
     assert.equal(records, 4, "four records were read")
     assert.equal(ignored, 0)
-    assert.equal(lanes.build.calls, 1, "three events are one call")
-    assert.equal(lanes.locate.calls, 1)
+    assert.equal(lanes.build.requests, 1, "three events are one request")
+    assert.equal(lanes.locate.requests, 1)
     assert.equal(averageMs(lanes.build.ms), 4200)
     assert.equal(averageMs(lanes.locate.ms), 900)
   } finally {
@@ -64,7 +64,7 @@ test("a call that never completed still counts as called", () => {
   )
   try {
     const { lanes } = readLaneUsage(findTelemetryFile(dir))
-    assert.equal(lanes.sweep.calls, 1, "an unanswered lane was called")
+    assert.equal(lanes.sweep.requests, 1, "an unanswered lane was still used")
     assert.equal(averageMs(lanes.sweep.ms), null, "and has no duration to average")
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -83,7 +83,7 @@ test("records with no message id are ignored rather than counted", () => {
   )
   try {
     const { lanes, ignored } = readLaneUsage(findTelemetryFile(dir))
-    assert.equal(lanes.build.calls, 1)
+    assert.equal(lanes.build.requests, 1)
     assert.equal(ignored, 2, "the two id-less records were reported, not counted")
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -141,7 +141,7 @@ test("`oc-harness lanes` counts a call once, from a subdirectory", () => {
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
     assert.match(out, /build\s+1\s+4200/, `expected build=1 call at 4200ms:\n${out}`)
     assert.match(out, /locate\s+1\s+900/, `expected locate=1 call at 900ms:\n${out}`)
-    assert.match(out, /8 lane\(s\) were never called/, out)
+    assert.match(out, /8 lane\(s\) were never used/, out)
     assert.match(out, /\.space\/telemetry\.jsonl/, "the command says which file it read")
   } finally {
     rmSync(dir, { recursive: true, force: true })
