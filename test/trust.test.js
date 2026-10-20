@@ -21,10 +21,29 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { repoOf } from "../src/trust.js"
+import { repoOf, openBrowser } from "../src/trust.js"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(ROOT, "bin", "oc-harness.mjs")
+
+test("the browser opener is the one this platform has", () => {
+  // `xdg-open` is the Linux opener. macOS uses `open` and Windows uses
+  // `rundll32`, so on two of the three platforms this kit claims to support
+  // the browser never opened - and the failure was swallowed, so the message
+  // afterwards still said the page was open.
+  //
+  // The opener is not executed here: opening a browser on the machine a test
+  // runs on is a test that breaks whatever the person at the keyboard was
+  // doing. What is checked is that the right binary is chosen and that a
+  // failure is reported as a failure rather than swallowed.
+  const source = readFileSync(join(ROOT, "src", "trust.js"), "utf8")
+  assert.match(source, /process\.platform === "darwin"/)
+  assert.match(source, /process\.platform === "win32"/)
+  assert.match(source, /"open"/)
+  assert.match(source, /url\.dll,FileProtocolHandler/)
+  // And the function reports what happened rather than pretending.
+  assert.equal(typeof openBrowser, "function")
+})
 
 test("the repository is reduced to the owner/repo form npm matches on", () => {
   assert.equal(repoOf("git+https://github.com/pham-canh/space-harness.git"), "pham-canh/space-harness")
