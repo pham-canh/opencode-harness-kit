@@ -496,8 +496,8 @@ the number that is.
 parts unpruned — the pruner rewrites the outgoing request, not the history —
 so the stored parts of a real session are exactly what the pruner was given,
 and replaying the real pruner over them measures exactly what it removed, on
-the same messages with and without. On one install: **82% of the context
-across 289 real sessions**.
+the same messages with and without. On one install: **80.5% of the context
+across 60 real sessions**.
 
 ## Memory
 

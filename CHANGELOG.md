@@ -41,6 +41,65 @@ The project root is now resolved from the session's own DIRECTORY, walking up
 to the git root when there is one. A subdirectory of a monorepo is still that
 repository, and a directory that is not a repository is its own project.
 
+### Fixed (found by a review of this release)
+
+**The project-root fix was incomplete.** Two call sites still read the
+worktree: the effort hook looked for the spent-route file under it, and the
+router wrote the spent-route file under it. So the router recorded a spent
+route where the effort hook was not looking, and a lane the router had
+already given up on was put back onto it.
+
+**The documented profile override had never worked.**
+`OPENCODE_HARNESS_PROFILE` is a profile ID, and it was being checked with
+`existsSync`, like the marker file beside it. It never matched a file, so
+the override that the docs and the measurement scripts both rely on was
+inert - and the measurement it gates reported 0% removed and failed.
+
+**The measurement depended on the developer's local state.** The pruner
+finds its profile from `.space/active` in the project, and that file is
+gitignored, so on a fresh clone there is none, the pruner does nothing, and
+the gate says the kit removes nothing. The environment override is set for
+the measurement now, and the measurement runs against a scratch directory
+rather than writing into the repository it is measuring.
+
+**A gate that could be switched off by a typo.** `--min-saved abc` became
+NaN, and `NaN` compares false against everything, so the gate never failed.
+The script uses the shared flag parser, which throws.
+
+**The A/B stopped the whole experiment twice, both times wrongly.** Once on a
+scratch file in the temp directory, which is the one place GLOBAL.md tells an
+agent to put scratch files and the one place the guard's scope rule allows;
+and once on an agent that grepped the filesystem root. A READ outside the
+subject is wasteful and sometimes a privacy leak, but it damages nothing - the
+pilot that mattered WROTE to the real repository. A write outside the target
+stops the experiment; a read outside it is counted and reported.
+
+**A citation to the suite's own file was accepted as evidence.** The self
+suite's subject is a copy of this repository, so the answer key is inside
+it, and an agent that greps for the symbol could cite the suite and pass
+without reading the source. The suite files are excluded from the citations.
+
+**The failover threw away the utility route.** `applySessionModel` set
+`small_model` to the fallback profile's session model, so the fleet's cheap
+route was replaced exactly when the fleet failed over - and `verify` then
+called the difference between the file on disk and the running session a
+drift.
+
+Also: the python fallback ran every query twice, the CLI check spawned a
+process per query, the database path was not URI-escaped, `--since` was
+ignored as the last argument, `--interval abc` became a 1ms loop, a failed
+catalogue fetch in watch mode announced every missing model as "is back", a
+non-list `plugin` value was replaced instead of kept, the `why` in
+fleet-all's utility route claimed the model was in every chain when it is in
+seven of ten, and the install-wide measurement could report a 100% context
+improvement from a NULL average.
+
+### Added (found by a review of this release)
+
+- Tests for the pieces the suite never reached: the python fallback, the
+  project root for a project that is not a git repository, the escape rule,
+  and the flag parser.
+
 ### Changed
 
 - **The install-wide measurement is an observation, and there is a controlled
@@ -61,8 +120,9 @@ repository, and a directory that is not a repository is its own project.
   parts UNPRUNED - the pruner rewrites the outgoing request, not the history
   - so the stored parts of a real session are exactly what the pruner was
   given, and replaying the real pruner over them measures exactly what it
-  removed, on the same messages with and without. On this install: **82% of
-  the context across 289 real sessions**, 11,242 parts stubbed.
+  removed, on the same messages with and without. On this install: **80.5% of
+  the context across 60 real sessions**, 6,608 parts stubbed - the number
+  `npm run measure:prune` prints.
 
   The measurement scripts also run without the sqlite3 CLI now. python3's
   built-in sqlite3 module does the same job, and python3 is on more machines

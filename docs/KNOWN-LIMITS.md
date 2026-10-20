@@ -319,7 +319,8 @@ comparable, and the gate uses the number that IS comparable.
 unpruned - the pruner rewrites the outgoing request, not the history - so the
 stored parts of a real session are exactly what the pruner was given, and
 replaying the real pruner over them measures exactly what it removed. On one
-install: **82% of the context across 289 real sessions**, 11,242 parts stubbed.
+install: **80.5% of the context
+across 60 real sessions**, 11,242 parts stubbed.
 
 The controlled comparison of the two arms is `eval/ab.mjs`, and its result is
 in `eval/RESULTS.md`.
