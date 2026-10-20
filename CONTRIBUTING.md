@@ -95,6 +95,12 @@ if it is absent the job uses OIDC.
 gh secret set NPM_TOKEN --repo pham-canh/space-harness
 ```
 
+> **`gh secret set` takes the secret NAME as its first argument**, and the
+> value is pasted at the prompt. `gh secret set <the-token-value>` creates a
+> secret whose *name* is the token - and the name of a secret is visible to
+> everyone who can read the repository's Actions secrets list. If a secret
+> ever shows up named like `npm_...`, delete it and set it again properly.
+
 A token needs write access *on the package*, not on the account. npm answers
 **404** for a package the token cannot touch, which reads like a missing
 package rather than a missing permission.
