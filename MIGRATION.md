@@ -83,7 +83,22 @@ and the override never took effect. It names a profile id:
 export OPENCODE_HARNESS_PROFILE=fleet-safe
 ```
 
-## 6. New commands
+## 6. The guard reads the whole command line
+
+The denylist used to be matched against the raw command, so the commands it
+names could be reached through a wrapper. They cannot any more:
+
+```
+cd /tmp && npm publish     blocked
+sudo npm publish           blocked
+sh -c "npm publish"        blocked
+```
+
+The rules the kit already had - matched per segment, with the wrappers
+stripped and the payload of a `bash -c` followed - are the ones the denylist
+uses now.
+
+## 7. New commands
 
 None of these replace anything. `oc-harness help` lists all of them.
 
@@ -94,8 +109,15 @@ None of these replace anything. `oc-harness help` lists all of them.
 | `oc-harness cost` | What the kit is doing on THIS project, in numbers: bytes pruned, tool outputs stubbed, lanes sorted by cost. |
 | `oc-harness backups`, `oc-harness restore` | The old config is now kept as a dated copy with the profile id in it, and it can be put back. |
 | `oc-harness uninstall` | Remove the symlinks the install created. `npm uninstall` leaves them behind, and opencode then loads neither the rules nor the guard. |
+| `oc-harness doctor --json` | The same report, machine-readable. |
+| `oc-harness show <id> --json` | The resolved profile, machine-readable. |
 
-## 7. The effort tier `"none"` means what it says
+Every command that can fail says so in its exit code, and
+[`docs/EXIT-CODES.md`](docs/EXIT-CODES.md) lists them. The four that matter
+most: `run` exits 1 when there is no task file, 2 when the work needs a
+person, 3 when the agent failed and 4 when the verify failed.
+
+## 8. The effort tier `"none"` means what it says
 
 A model that does not publish a `"none"` effort variant no longer gets one
 invented for it. It runs on its own default effort, and the config says
