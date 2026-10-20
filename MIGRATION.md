@@ -1,3 +1,129 @@
+# Migrating
+
+Two upgrades change what a user has to do. The most recent one first.
+
+- [0.3.x → 0.4.x](#migrating-from-03x-to-04x) — the kit starts enforcing
+  things it used to only suggest, and the config says which kit wrote it.
+- [0.2.x → 0.3.0](#migrating-from-02x-to-030) — the single-model profile
+  became a fleet.
+
+---
+
+# Migrating from 0.3.x to 0.4.x
+
+**Nothing you have breaks.** No profile id changed, no file moved, and no
+config field was removed. What changed is that the kit started enforcing
+things it used to only suggest, and it started saying which version wrote
+your config.
+
+## 1. The guard now blocks what it used to allow
+
+The denylist was a list of patterns the rules asked the agent to respect.
+It is now checked in the code, before the command runs:
+
+| Command | 0.3.x | 0.4.x |
+|---|---|---|
+| `npm publish` | allowed, with a warning in the rules | **refused** |
+| `npm install`, `npm ci` | allowed | **asks first** |
+| `git push` | allowed | **asks first** |
+| `gh pr create`, `gh pr merge` | allowed | **refused** |
+
+If one of those was load-bearing in your workflow, the honest answer is
+that it was never going to be the kit's call. Nothing is refused silently:
+the reason is printed, and the command is not run.
+
+## 2. Your config records the kit that wrote it
+
+```jsonc
+"harness": {
+  "profile": "fleet-safe",
+  "kit": "0.4.4"
+}
+```
+
+Without it, a config from three releases ago and one from today are the same
+file to `verify`, and the only way to tell them apart is to remember. If
+`kit` is missing, your config was written before 0.4.0 and is still valid —
+re-run `oc-harness use <profile>` to bring it up to date.
+
+## 3. The pre-commit hook runs your project's tests, not the kit's
+
+This is the change most likely to surprise you. The hook used to run the
+kit's own test suite against the kit's own repository. In a project of
+yours, that suite passed or failed for reasons that had nothing to do with
+you — and it blocked every commit in the process.
+
+The hook is now installed only where it belongs:
+
+- in the kit's own repository, and
+- in a project of yours, if you ask for it with `oc-harness install --hook`.
+
+Where it is installed, it runs **your** project's test script, and only that.
+
+```bash
+oc-harness install --hook
+```
+
+## 4. The kit works in a directory that is not a git repository
+
+The kit used to find the project root through the git worktree. In a
+directory that is not a repository, that lookup returned the filesystem root
+- so the kit found no project, enabled nothing, and reported itself healthy
+while doing nothing at all.
+
+The project root is now the directory you are in. If you want it to find
+the repository above you, run the kit from inside it.
+
+## 5. `OPENCODE_HARNESS_PROFILE` names a profile, not a path
+
+The variable was checked as if it were a file path, so it never resolved
+and the override never took effect. It names a profile id:
+
+```bash
+export OPENCODE_HARNESS_PROFILE=fleet-safe
+```
+
+## 6. New commands
+
+None of these replace anything. `oc-harness help` lists all of them.
+
+| Command | What it is for |
+|---|---|
+| `oc-harness doctor --watch` | Poll the catalogue and report only what changed. Free models are withdrawn in days, and a weekly check is the right rhythm. |
+| `oc-harness upgrade` | Check for a newer kit, refresh the profiles, and write the config again. |
+| `oc-harness cost` | What the kit is doing on THIS project, in numbers: bytes pruned, tool outputs stubbed, lanes sorted by cost. |
+| `oc-harness backups`, `oc-harness restore` | The old config is now kept as a dated copy with the profile id in it, and it can be put back. |
+| `oc-harness uninstall` | Remove the symlinks the install created. `npm uninstall` leaves them behind, and opencode then loads neither the rules nor the guard. |
+
+## 7. The effort tier `"none"` means what it says
+
+A model that does not publish a `"none"` effort variant no longer gets one
+invented for it. It runs on its own default effort, and the config says
+which model served the request.
+
+## What did not change
+
+- The profile ids, the lane table, the plugin hook names (`guard`, `prune`,
+  `router`, `telemetry`), and the shape of `retention.yml`.
+- `oc-harness list`, `show`, `install`, `use`, `verify`, `refresh`, `baseline`,
+  `lanes` and `trust` keep their arguments.
+- The config format is unchanged. A config written by 0.3.x is read
+  correctly by 0.4.x; it is only missing the `kit` field.
+
+## If something looks wrong
+
+```bash
+oc-harness doctor      # what the kit sees, and what it would fix
+oc-harness verify      # whether the install matches the profile
+oc-harness use fleet-safe && oc-harness install && oc-harness verify
+```
+
+The last line rewrites the config from the profile and checks it. It is
+safe: the old config is written to `~/.config/opencode/backups/` first, and
+`oc-harness restore` puts it back.
+
+---
+
 # Migrating from 0.2.x to 0.3.0
 
 0.3.0 replaces the single-model profile with a **fleet**: ten jobs, ten free
