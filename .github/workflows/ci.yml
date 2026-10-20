@@ -71,12 +71,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '22.x'
+          # Node 24 ships an npm that already speaks trusted publishing. A
+          # `npm install -g npm@latest` self-upgrade also works, and is
+          # documented elsewhere as intermittently corrupting the install.
+          node-version: '24.x'
           # Never cache the package manager in a release build: the cache is
           # keyed on the lockfile, and a stale one is a mystery in a publish.
           package-manager-cache: false
-      # Trusted publishing needs npm 11.5.1 or later. Node 22 ships npm 10.
-      - run: npm install -g npm@latest
       - name: configure the registry
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -101,6 +102,37 @@ jobs:
       # `registry-url`, because that helper always writes an auth line. An
       # empty auth line makes npm think it is authenticated and skip the OIDC
       # exchange entirely.
+      # npm reports a failed OIDC exchange as "package not found", which is
+      # what a MISSING or MISMATCHED trusted publisher looks like from here -
+      # and it does not say which field was wrong. The claims are what the
+      # registry compares the configuration against, so they are printed here
+      # and can be read next to the entry on npmjs.com.
+      #
+      # The id token is fetched with a plain GET. The exchange is not made
+      # here: the publish below does that, through npm's own client, so the
+      # provenance attestation is still generated.
+      - name: print the OIDC claims npm matches against
+        if: ${{ env.NODE_AUTH_TOKEN == '' }}
+        run: |
+          set -uo pipefail
+          echo "npm version: $(npm --version)"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::The runner did not provide ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN. The publish job needs the id-token: write permission."
+            exit 1
+          fi
+          curl -sS -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
+            -H "Accept: application/json" > /tmp/idtoken.json
+          node -e '
+            const fs = require("fs")
+            let t = ""
+            try { t = JSON.parse(fs.readFileSync("/tmp/idtoken.json", "utf8")).value || "" } catch {}
+            if (!t) { console.log("  the runner issued no id token"); process.exit(0) }
+            const c = JSON.parse(Buffer.from(t.split(".")[1], "base64url").toString())
+            for (const k of ["aud", "sub", "repository", "repository_owner", "workflow", "workflow_ref", "job_workflow_ref", "ref", "event_name", "environment"]) {
+              console.log("  " + k + ": " + (c[k] === undefined ? "(absent)" : c[k]))
+            }
+          '
       - name: check the publish credentials
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
