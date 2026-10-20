@@ -47,13 +47,18 @@ ceiling that a normal session never reaches.
 
 5,239 historical `bash` commands were replayed against the allowlist shapes:
 
-| allowlist | prompts | share |
+| allowlist | prompts | share of 5,239 |
 |---|---|---|
 | the narrow one in use | 4,994 | 95.3% |
 | this kit's, first version | 1,204 | 23.0% |
-| this kit's, current | 1,002 | 18.5% |
+| this kit's, current | 1,002 | 19.1% |
 
-The remaining 18.5% is the deliberately gated set, ranked by how often it
+The three rows share the denominator, and the arithmetic is theirs to be
+checked: 4,994/5,239 is 95.3%, 1,204/5,239 is 23.0%, and 1,002/5,239 is
+19.1%. The last figure was quoted as 18.5% in two places, which is a
+different number for the same count.
+
+The remaining 19.1% is the deliberately gated set, ranked by how often it
 actually came up:
 
 ```

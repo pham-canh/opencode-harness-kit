@@ -409,3 +409,30 @@ test("the doctor records a withdrawal, so the day it broke is known", () => {
     box.cleanup()
   }
 })
+
+test("cost reports what the kit is doing on this project", () => {
+  // The kit's claim is a trade: a fixed overhead per request, and the
+  // context it prunes back. Both numbers are already being written - the
+  // prune log and the telemetry - and nothing read them together.
+  const box = sandbox()
+  try {
+    const project = join(box.dir, "project")
+    mkdirSync(join(project, ".space"), { recursive: true })
+    writeFileSync(
+      join(project, ".space", "prune.jsonl"),
+      [
+        JSON.stringify({ t: "1", profile: "fleet-safe", stubbed: 3, kept: 9, savedBytes: 4096, threshold: 176000 }),
+        JSON.stringify({ t: "2", profile: "fleet-safe", stubbed: 2, kept: 8, savedBytes: 2048, threshold: 176000 }),
+      ].join("\n"),
+    )
+    const r = run(box, ["cost"], { cwd: project })
+    assert.equal(r.code, 0, r.out)
+    // The output is styled, so the ANSI codes are stripped before matching.
+    const plain = r.out.replace(/\x1b\[[0-9;]*m/g, "")
+    assert.match(plain, /pruned/)
+    assert.match(plain, /6,144/, "the bytes removed are summed: 4096 + 2048")
+    assert.match(plain, /5 tool outputs stubbed/, "the stubbed parts are summed")
+  } finally {
+    box.cleanup()
+  }
+})

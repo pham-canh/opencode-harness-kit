@@ -35,6 +35,13 @@ ceiling, and it is worth paying only when the model that takes over is the
 best one available *for that job*, which is why the two fleets order their
 chains differently (see below).
 
+The `sweep` lane is the one that was worth changing rather than accepting.
+A bulk mechanical search is the one job where reasoning is pure waste, and
+the model it ran on reasoned 420 tokens a message at 16.6 seconds - the
+most expensive way to ask a model to grep. It runs on DeepSeek now, which is
+zero-retention, publishes a `low` level, and measures 19 reasoning tokens at
+3.4 seconds.
+
 Under that ceiling every lane that asks for a tier GETS one. The safe fleet
 has no lane with a dropped tier request; the unrestricted fleet has three, and
 the measurement says they are the three cheapest reasoners on the tier.
@@ -200,14 +207,22 @@ base profile would reveal.
 
 ### What the safe fleet gives up
 
-`sweep` is the one lane that loses its reason to exist under the ceiling.
+`sweep` was the one lane that lost its reason to exist under the ceiling.
 Super VL is the only model on the tier that publishes a `none` effort level,
-so "reasoning off" is a job of its own; and Super VL is a may-train provider,
-so the ceiling excludes it. Under `fleet-safe` the lane falls back to
-LongCat, which publishes no effort levels at all, and it is a second `locate`
-with a 1M context window. The lane is kept, because `oc-harness lanes` should
-decide that from measurements rather than from a guess - but the docs say out
-loud that the capability is gone.
+so "reasoning off" is a job of its own; and Super VL is a may-train
+provider, so the ceiling excludes it. Under `fleet-safe` the lane ran on
+LongCat, which publishes no effort levels at all, and it was a second
+`locate` with a 1M context window.
+
+It runs on DeepSeek now. Not LongCat: LongCat measured 420 reasoning tokens
+a message at 16.6 seconds, which is the most expensive way to ask a model to
+grep, and DeepSeek publishes a `low` level and measures 19 reasoning tokens
+at 3.4. The lane is still not the unrestricted fleet's lane, and the
+reasoning-off capability is still out of reach under a zero-retention
+ceiling - but the cost of the substitute is no longer the whole story.
+
+The lane is kept, because `oc-harness lanes` should decide that from
+measurements rather than from a guess.
 
 ## Measuring, and cutting
 
