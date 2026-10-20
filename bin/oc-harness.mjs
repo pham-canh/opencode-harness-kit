@@ -12,7 +12,7 @@
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
 
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync } from "node:fs"
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -1210,7 +1210,155 @@ function diffProfile(p, live) {
  * the fallback queue are human judgements and are never touched by a script:
  * losing a privacy verdict to an automated rewrite would be worse than drift.
  */
+/**
+ * Refresh every shipped profile against the live catalogue.
+ *
+ * A free model is withdrawn in days, so a profile file goes stale in days
+ * too, and there is no way to notice except by looking. This does the
+ * looking for every profile at once and reports what changed.
+ */
+async function cmdRefreshAll() {
+  const catalog = await fetchCatalog()
+  const ids = listProfileIds()
+  const changed = []
+  const gone = []
+  const same = []
+  for (const id of ids) {
+    const path = profilePath(id)
+    if (!path) continue
+    let p
+    try {
+      p = JSON.parse(readFileSync(path, "utf8"))
+    } catch {
+      continue
+    }
+    const live = catalog?.[p.provider]?.models?.[p.model]
+    if (!live) {
+      gone.push(`${id} (${p.provider}/${p.model})`)
+      continue
+    }
+    const before = diffProfile(p, live)
+    if (!before.length) {
+      same.push(id)
+      continue
+    }
+    applyLiveMetadata(p, live)
+    writeFileSync(path, `${JSON.stringify(p, null, 2)}\n`)
+    changed.push(`${id}: ${before.join(", ")}`)
+  }
+  console.log(`\n${bold("refreshed")}  ${stamp(`${ids.length} profile(s) against the live catalogue`)}\n`)
+  for (const c of changed) console.log(`  ${green("~")} ${c}`)
+  for (const g of gone) console.log(`  ${red("!")} ${g} is no longer in the catalogue`)
+  for (const id of same) console.log(`  ${green("✓")} ${id} already matches`)
+  if (gone.length) {
+    console.log("")
+    console.log(
+      stamp(
+        "A withdrawn model leaves its lane with one fewer rung. Check the chain, and the retention.",
+      ),
+    )
+  }
+  console.log("")
+}
+
+/**
+ * Copy the machine-derived fields of a live catalogue entry into a profile.
+ *
+ * Only the fields a machine can know: the ceilings, the effort levels and the
+ * capability flags. `retention`, `notes`, `roles` and the fallback queue are
+ * human judgements and are never touched.
+ *
+ * @param {any} p the profile, mutated in place
+ * @param {any} live the catalogue entry
+ */
+function applyLiveMetadata(p, live) {
+  p.limits = {
+    ...p.limits,
+    context: live.limit?.context ?? p.limits.context,
+    output: live.limit?.output ?? p.limits.output,
+  }
+  // Many providers publish no separate input ceiling; drop ours so the loader
+  // derives it from the context rather than pinning a stale number.
+  if (live.limit?.input) p.limits.input = live.limit.input
+  else delete p.limits.input
+  const levels = live.reasoning_options?.find((r) => r.type === "effort")?.values ?? []
+  p.effort = {
+    ...p.effort,
+    levels,
+    default: levels.includes(p.effort?.default) ? p.effort.default : levels[levels.length - 1] ?? null,
+  }
+  p.supports = {
+    ...p.supports,
+    reasoning: Boolean(live.reasoning),
+    temperature: Boolean(live.temperature),
+    toolCall: Boolean(live.tool_call),
+    structuredOutput: Boolean(live.structured_output),
+    attachment: Boolean(live.attachment),
+  }
+}
+
+/**
+ * Bring an install up to date.
+ *
+ * Three things go stale on their own, and all three are invisible:
+ *
+ *   - the KIT. A new release can change the config it writes, and the old
+ *     config stays in place until something rewrites it.
+ *   - the PROFILES. A free model is withdrawn in days, and a profile file
+ *     that names a withdrawn model is a lane with one fewer rung.
+ *   - the CONFIG. A profile that changed does not change the config until
+ *     the config is written again.
+ *
+ * So: check the registry for a newer kit, refresh every profile against the
+ * live catalogue, and write the config again.
+ */
+async function cmdUpgrade() {
+  console.log(`\n${bold("upgrade")}\n`)
+
+  // 1. The kit.
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"))
+  let latest = null
+  try {
+    const out = execFileSync(
+      "npm",
+      ["view", `${pkg.name}@latest`, "version"],
+      { encoding: "utf8", timeout: 30_000 },
+    )
+    latest = out.trim()
+  } catch {
+    console.log(`  ${yellow("!")} could not reach the registry to check for a newer kit`)
+  }
+  if (latest && latest !== pkg.version) {
+    console.log(
+      `  ${yellow("!")} ${pkg.name} ${pkg.version} is installed; ${latest} is published.`,
+    )
+    console.log(stamp(`    update with: npm install -g ${pkg.name}@latest`))
+  } else if (latest) {
+    console.log(`  ${green("✓")} ${pkg.name} ${pkg.version} is the published version`)
+  }
+
+  // 2. The profiles.
+  await cmdRefreshAll()
+
+  // 3. The config.
+  const activeId = profileIdFromConfig() ?? index().default
+  try {
+    loadProfile(activeId)
+  } catch (err) {
+    fail(`the active profile cannot be loaded: ${err.message}`)
+  }
+  await cmdUse(activeId)
+  console.log(`  ${green("✓")} the config was written from ${activeId}`)
+  console.log("")
+  console.log(stamp("verify with: oc-harness verify"))
+  console.log("")
+}
+
 async function cmdRefresh(id) {
+  if (!id || id === "--all") {
+    await cmdRefreshAll()
+    return
+  }
   const path = profilePath(id)
   if (!path) fail(`no profile named "${id}"`)
   const catalog = await fetchCatalog()
@@ -1280,6 +1428,37 @@ function chainOf(p) {
 }
 
 /**
+ * The history of what the catalogue lost.
+ *
+ * A model is withdrawn without a rename and without a notice, so the only
+ * way to know WHEN a lane started failing is to have been looking. The
+ * history is a JSONL file in the config directory, one line per withdrawal.
+ */
+const WITHDRAWN_LOG = "withdrawn.jsonl"
+
+/**
+ * Record that a model left the catalogue.
+ *
+ * @param {string} model
+ * @param {string} profile
+ */
+function recordWithdrawal(model, profiles) {
+  try {
+    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true })
+    appendFileSync(
+      join(CONFIG_DIR, WITHDRAWN_LOG),
+      JSON.stringify({
+        t: new Date().toISOString(),
+        model,
+        profiles: String(profiles ?? "").split(",").filter(Boolean),
+      }) + "\n",
+    )
+  } catch {
+    // A history that cannot be written is not worth failing over.
+  }
+}
+
+/**
  * Which shipped models are no longer in the live catalogue.
  *
  * This is the question a free-tier user actually has to ask, and the answer
@@ -1291,7 +1470,8 @@ function chainOf(p) {
  * @returns {string[]} the model ids that are gone
  */
 function withdrawnModels(catalog) {
-  const gone = []
+  /** @type {Map<string, string[]>} the model, and the profiles that use it */
+  const gone = new Map()
   for (const id of listProfileIds()) {
     let p
     try {
@@ -1307,9 +1487,10 @@ function withdrawnModels(catalog) {
       ...Object.values(p.roleModels ?? {}).flatMap((r) => r?.chain ?? []),
     ])) {
       if (!model) continue
-      if (!catalog?.[p.provider]?.models?.[model]) {
-        if (!gone.includes(model)) gone.push(model)
-      }
+      if (catalog?.[p.provider]?.models?.[model]) continue
+      const users = gone.get(model) ?? []
+      if (!users.includes(id)) users.push(id)
+      gone.set(model, users)
     }
   }
   return gone
@@ -1335,8 +1516,8 @@ async function cmdDoctorWatch() {
   const seen = new Set()
   let first = true
   for (;;) {
-    /** @type {string[]} */
-    let gone = []
+    /** @type {Map<string, string[]>} */
+    let gone = new Map()
     try {
       const catalog = await fetchCatalog()
       gone = withdrawnModels(catalog)
@@ -1349,11 +1530,14 @@ async function cmdDoctorWatch() {
       await new Promise((r) => setTimeout(r, interval * 1000))
       continue
     }
-    const current = new Set(gone)
-    const fresh = gone.filter((m) => !seen.has(m))
+    const current = new Set(gone.keys())
+    const fresh = [...gone.keys()].filter((m) => !seen.has(m))
     for (const m of fresh) {
+      const users = gone.get(m) ?? []
       console.log(red(`  ${new Date().toISOString()}  ${m} is no longer in the catalogue`))
+      if (users.length) console.log(stamp(`    used by: ${users.join(", ")}`))
       console.log(stamp(`    fix: oc-harness doctor && oc-harness refresh <profile>`))
+      recordWithdrawal(m, users.join(","))
     }
     if (!first) {
       for (const m of seen) {
@@ -1365,8 +1549,11 @@ async function cmdDoctorWatch() {
     seen.clear()
     for (const m of current) seen.add(m)
     if (!watch) {
-      if (gone.length) {
-        console.error(red(`  ${gone.length} shipped model(s) are gone: ${gone.join(", ")}`))
+      if (gone.size) {
+        console.error(
+          red(`  ${gone.size} shipped model(s) are gone: ${[...gone.keys()].join(", ")}`),
+        )
+        console.error(stamp(`  recorded in ${join(CONFIG_DIR, WITHDRAWN_LOG)}`))
         process.exit(1)
       }
       console.log(green("  every shipped model is still in the catalogue"))
@@ -1790,6 +1977,9 @@ try {
     case "refresh":
       await cmdRefresh(args[1])
       break
+    case "upgrade":
+      await cmdUpgrade()
+      break
     case "link":
       cmdLink()
       break
@@ -1838,6 +2028,7 @@ try {
     lanes         report which lanes the fleet actually used
     trust         set up npm trusted publishing for this package
     doctor    re-check profiles against models.dev and the installed config
+    upgrade   check for a newer kit, refresh the profiles, rewrite the config
     baseline  measure the current opencode install
     run       drive .space/tasks.md to done with the build agent
 

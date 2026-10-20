@@ -136,7 +136,11 @@ export function retentionSeverity(level) {
  * profiles.
  */
 export function profileDirs() {
-  return [join(ROOT, "profiles")]
+  // The profiles can live somewhere else. A test that refreshes a profile
+  // would otherwise rewrite the kit's own data - which is what happened the
+  // first time this was tried - and a user who keeps profiles in their own
+  // tree cannot use the kit at all.
+  return [process.env.OPENCODE_HARNESS_PROFILES ?? join(ROOT, "profiles")]
 }
 
 /** @param {string} id @returns {string | null} */
