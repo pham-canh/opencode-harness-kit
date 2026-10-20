@@ -189,14 +189,13 @@ jobs:
           # idiom is what keeps the reason available.
           code=0
           npm publish "${args[@]}" > /tmp/publish.log 2>&1 || code=$?
-          # The whole log, not a filtered selection. A filter that misses the
-          # actual error is worse than no filter: it turns "npm exited 1" into
-          # "npm said nothing", which is a dead end.
-          if [ $code -ne 0 ]; then
-            echo "--- the last 40 lines npm printed ---"
-            tail -40 /tmp/publish.log
-            echo "--- end ---"
-          fi
+          # The log is printed whether the publish succeeded or not. A
+          # successful publish that published nothing looks exactly like a
+          # successful one that did, and the only place the difference shows
+          # is in what npm printed.
+          echo "--- what npm printed ---"
+          tail -30 /tmp/publish.log
+          echo "--- end ---"
           if [ $code -ne 0 ]; then
             # npm reports a refused OIDC exchange as "package not found", which
             # is what a missing or mismatched trusted publisher looks like
