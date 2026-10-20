@@ -62,6 +62,33 @@ export function globalInstructionsPath() {
 export const GLOBAL_INSTRUCTIONS = "~/.config/opencode/GLOBAL.md"
 
 /**
+ * The instruction list a generated config carries.
+ *
+ * The kit's own file is always in it. A config that already had an
+ * `instructions` array used to replace it wholesale, which unloaded the
+ * whole behavioural layer while everything still looked correct.
+ *
+ * The user's own files keep their order and come first; the kit's is
+ * appended. Duplicates are dropped, so re-running `use` does not grow the
+ * list.
+ *
+ * @param {string[] | string | undefined} base
+ * @param {string} kitPath
+ * @returns {string[]}
+ */
+export function mergeInstructions(base, kitPath) {
+  const list = Array.isArray(base) ? base.filter((x) => typeof x === "string") : []
+  /** @type {string[]} */
+  const out = []
+  for (const entry of [...list, kitPath]) {
+    if (!entry) continue
+    if (out.includes(entry)) continue
+    out.push(entry)
+  }
+  return out
+}
+
+/**
  * Read-only and verification commands.
  *
  * Measured against 5,239 real bash calls from one install: 95.3% would prompt
@@ -231,7 +258,17 @@ export function generateConfig(p, opts = {}) {
     subagent_depth: base.subagent_depth ?? 2,
     // Omitting `lsp` disables it entirely, so this must be set explicitly.
     lsp: base.lsp ?? true,
-    instructions: base.instructions ?? [instructionsPath],
+    // The kit's own instruction file is always in the list.
+    //
+    // It used to be `base.instructions ?? [instructionsPath]`, so a config
+    // that already had an `instructions` array never referenced GLOBAL.md at
+    // all: the whole behavioural layer - the lane table, the rules, the
+    // read-pressure guidance - was silently unloaded, and `verify` still
+    // passed because it only checked the paths the config did name. The
+    // user's own files keep their order and come first; the kit's is
+    // appended, because it is the layer that has to hold when the others
+    // do not.
+    instructions: mergeInstructions(base.instructions, instructionsPath),
 
     compaction,
     // OpenCode's own default (2000 lines / 51200 bytes), reached back from an
