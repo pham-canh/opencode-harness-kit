@@ -1,12 +1,16 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/anomalyco/opencode-harness-kit/profiles/schema.json",
+  "$id": "https://github.com/pham-canh/space-harness/profiles/schema.json",
   "title": "OpenCode harness profile",
   "description": "Everything that changes when you change model. Plugins read this file and contain no model names of their own.",
   "type": "object",
   "required": ["id", "provider", "model", "retention", "limits", "effort", "roles"],
   "additionalProperties": false,
   "properties": {
+    "$comment": {
+      "type": "string",
+      "description": "Free text for a human. Allowed here because every shipped profile carries one, and lanes.schema.json declares it too."
+    },
     "id": {
       "type": "string",
       "description": "Slug used as the profile filename and the oc-harness use argument."
@@ -72,7 +76,7 @@
           "items": { "type": "string" },
           "examples": [["low", "medium", "high", "xhigh", "max"]]
         },
-        "default": { "type": "string" },
+        "default": { "type": ["string", "null"], "description": "The level the session runs at by default. Null means the model has no tunable effort and no variant is emitted." },
         "reserveShare": {
           "type": "number",
           "minimum": 0,
@@ -84,7 +88,7 @@
     },
     "roles": {
       "type": "object",
-      "description": "Requested effort per lane. Resolved against effort.levels, never emitted raw. A lane listed here is enabled; a lane absent from here is not installed.",
+      "description": "Requested effort per lane, never emitted raw. A lane listed here is enabled; a lane absent from here is not installed. It is resolved against the levels of the model the lane actually runs on, which is the profile's own effort.levels for a single-model profile and the lane model's levels for a fleet. `none` means reasoning off: a model that does not publish it gets no variant at all.",
       "additionalProperties": false,
       "properties": {
         "build": { "$ref": "#/definitions/effortRequest" },
@@ -157,11 +161,6 @@
         "model": {
           "type": "string",
           "description": "Model id without the provider prefix. Must resolve to a profile in this directory, so its limits and retention are known."
-        },
-        "levels": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Effort levels this role's model offers. Omitted means the role emits no variant at all, which is the right reading for a model with no tunable effort."
         },
         "chain": {
           "type": "array",

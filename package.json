@@ -79,6 +79,7 @@
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.31",
     "@types/node": "^26.6.5",
+    "ajv": "^8.20.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   }
