@@ -101,6 +101,14 @@ gh secret set NPM_TOKEN --repo pham-canh/space-harness
 > everyone who can read the repository's Actions secrets list. If a secret
 > ever shows up named like `npm_...`, delete it and set it again properly.
 
+> **A token that can read the package is not necessarily a token that can
+> publish it.** With two-factor authentication on the account, a granular
+> token has to be created with **Bypass two-factor authentication** ticked or
+> the publish is refused with `EOTP - This operation requires a one-time
+> password`, and the status is a plain **401**. `npm whoami` passes, because
+> reading needs no second factor. A 401 on the publish with a working
+> `npm whoami` means the token needs the box ticked, not more permissions.
+
 A token needs write access *on the package*, not on the account. npm answers
 **404** for a package the token cannot touch, which reads like a missing
 package rather than a missing permission.
