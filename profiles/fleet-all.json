@@ -1,5 +1,5 @@
 {
-  "$comment": "A fleet is ten jobs with ten models. `roleModels.<lane>.chain` is the ordered list of models that can serve that lane; the first rung the profile's `maxRetention` ceiling allows is the one that runs it, and the router walks the same chain when a route is spent. No model name in a lane is a promise that it will still exist next month, which is why every lane has a chain.",
+  "$comment": "A fleet is ten jobs with ten models. `roleModels.<lane>.chain` is the ordered list of models that can serve that lane, best first, and the first rung the profile's `maxRetention` ceiling allows is the one that runs it. A chain is therefore ordered WITHIN this profile's ceiling, not globally: this profile's ceiling is may-train, so every rung is allowed and the chain starts with the model built for the job. The router walks the same chain when a route is spent. No model name in a lane is a promise that it will still exist next month, which is why every lane has a chain.",
   "id": "fleet-all",
   "title": "Ten jobs, every free model, one of them may train",
   "provider": "opencode",
