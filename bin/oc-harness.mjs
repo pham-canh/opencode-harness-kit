@@ -25,6 +25,7 @@ import {
   listProfileIds,
   profileIdFromConfig,
   profilePath,
+  inputCap,
   pruneThreshold,
   reservedTokens,
   effectiveRetention,
@@ -43,6 +44,7 @@ import {
 } from "../src/profile.js"
 import { generateConfig, globalInstructionsPath } from "../src/config.js"
 import { planEffort } from "../src/effort.js"
+import { findTelemetryFile, readLaneUsage, averageMs } from "../src/lane-usage.js"
 
 const CONFIG_DIR =
   process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config/opencode")
@@ -92,7 +94,7 @@ async function cmdList() {
   console.log(`\n${bold("opencode-harness-kit")} ${stamp("profiles")}\n`)
   const head = [
     "  " + "profile".padEnd(30),
-    "ctx".padStart(9),
+    "input".padStart(9),
     "top".padStart(7),
     "lanes".padStart(6),
     "retention".padEnd(15),
@@ -109,6 +111,11 @@ async function cmdList() {
     let model = entry.id
     let lanes = 0
     let effective = entry.retention
+    // The number that matters is the input cap the config can actually use:
+    // the narrowest lane model's on a fleet, the model's own on a
+    // single-model profile. The base model's context is a different number
+    // and it is printed by `show` and by the generated header.
+    let cap = entry.context ?? 0
     try {
       const loaded = loadProfile(entry.id)
       model = loaded.model
@@ -117,6 +124,7 @@ async function cmdList() {
       // base model's. Comparing the base would report every fleet as
       // disagreeing with retention.yml, which records the base model's terms.
       effective = effectiveRetention(loaded).retention
+      cap = inputCap(loaded)
     } catch {
       model = entry.id
     }
@@ -135,7 +143,7 @@ async function cmdList() {
     console.log(
       [
         "  " + name.padEnd(32),
-        (entry.context ?? 0).toLocaleString("en-US").padStart(9),
+        cap.toLocaleString("en-US").padStart(9),
         String(top).padStart(7),
         String(lanes).padStart(6),
         ret.padEnd(15),
@@ -167,7 +175,11 @@ function cmdShow(id) {
   const row = (k, v) => console.log(`  ${k.padEnd(20)} ${v}`)
   row("provider/model", `${p.provider}/${p.model}`)
   row("context", p.limits.context.toLocaleString("en-US"))
-  row("input cap", (p.limits.input ?? p.limits.context).toLocaleString("en-US"))
+  // The cap that actually governs: the narrowest lane model's on a fleet, the
+  // model's own on a single-model profile. Printing the base model's number
+  // next to a prune threshold derived from another one made the two
+  // irreconcilable on the screen.
+  row("input cap", inputCap(p).toLocaleString("en-US"))
   row("output cap", p.limits.output.toLocaleString("en-US"))
   row("effort levels", p.effort?.levels?.length ? p.effort.levels.join(" < ") : "(not tunable)")
   row("default variant", resolveDefaultVariant(p) ?? "(none)")
@@ -267,6 +279,30 @@ function installTargets() {
 }
 
 /**
+ * The directories opencode loads agent markdown files from.
+ *
+ * Measured on OpenCode 1.19, not read off the docs:
+ *
+ *   - `$CONFIG_DIR/agents/` and `$CONFIG_DIR/agent/` are both read, and when
+ *     the same name is in both the plural directory wins.
+ *   - `<project>/.opencode/agents/` and `<project>/.opencode/agent/` are both
+ *     read. A `./agent/` in the project root is not.
+ *
+ * A file in any of them replaces the config entry of the same name
+ * wholesale, so a shadow in the singular directory is exactly as dangerous as
+ * one in the plural one, and a checker that only looks at `agents/` misses
+ * half of them.
+ */
+function agentDirs() {
+  return [
+    { dir: join(CONFIG_DIR, "agents"), scope: "config" },
+    { dir: join(CONFIG_DIR, "agent"), scope: "config" },
+    { dir: join(process.cwd(), ".opencode", "agents"), scope: "project" },
+    { dir: join(process.cwd(), ".opencode", "agent"), scope: "project" },
+  ]
+}
+
+/**
  * Remove the agent files an earlier version of this kit installed.
  *
  * They used to carry the model in their frontmatter, and an agent file of the
@@ -277,23 +313,24 @@ function installTargets() {
  * where a file cannot shadow a config entry.
  */
 function removeLegacyAgentFiles() {
-  const dir = join(CONFIG_DIR, "agents")
-  if (!existsSync(dir)) return []
   const removed = []
-  for (const name of readdirSync(dir)) {
-    if (!name.endsWith(".md")) continue
-    const full = join(dir, name)
-    let ours = false
-    try {
-      ours = readlinkSync(full).includes(join("space-harness", "agents"))
-    } catch {
-      ours = false
+  for (const { dir } of agentDirs()) {
+    if (!existsSync(dir)) continue
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".md")) continue
+      const full = join(dir, name)
+      let ours = false
+      try {
+        ours = readlinkSync(full).includes(join("space-harness", "agents"))
+      } catch {
+        ours = false
+      }
+      if (!ours) continue
+      try {
+        rmSync(full, { force: true })
+        removed.push(name)
+      } catch {}
     }
-    if (!ours) continue
-    try {
-      rmSync(full, { force: true })
-      removed.push(name)
-    } catch {}
   }
   return removed
 }
@@ -579,21 +616,26 @@ function cmdVerify() {
   //    line makes the agent inherit the caller's model. Either way the lane
   //    stops running on the model the profile resolved for it, and the config
   //    keeps looking correct. Verified against OpenCode 1.19.
-  const agentsDir = join(CONFIG_DIR, "agents")
-  if (existsSync(agentsDir)) {
-    for (const name of readdirSync(agentsDir).filter((f) => f.endsWith(".md"))) {
+  //
+  //    The file's `model:` wins when the plugin is not there to re-pin it, and
+  //    its `prompt` and `description` win even when it is. So a shadow is
+  //    worth reporting wherever opencode would read one from.
+  for (const { dir, scope } of agentDirs()) {
+    if (!existsSync(dir)) continue
+    for (const name of readdirSync(dir).filter((f) => f.endsWith(".md"))) {
+      const where = `${scope}:${dir.replace(`${homedir()}/`, "~/")}`
       const lane = name.replace(/\.md$/, "")
       if (lane in (actual?.agent ?? {})) {
         problems.push(
-          `agents/${name} shadows the ${lane} lane: an agent file replaces the config entry, so the lane would not run on its own model. Run: oc-harness install`,
+          `agent file ${where}/${name} shadows the ${lane} lane: an agent file replaces the config entry, so the lane would not run on its own model. Run: oc-harness install`,
         )
         continue
       }
-      const text = readFileSync(join(agentsDir, name), "utf8")
+      const text = readFileSync(join(dir, name), "utf8")
       const named = text.match(/opencode\/([a-z0-9.\-]+)/i)
       if (named && !modelsInPlay(p).includes(named[1])) {
         problems.push(
-          `agents/${name} mentions opencode/${named[1]}, which is not in the active profile`,
+          `agent file ${where}/${name} mentions opencode/${named[1]}, which is not in the active profile`,
         )
       }
     }
@@ -1058,31 +1100,13 @@ function cmdLanes() {
     fail(`active profile "${activeId}" cannot be loaded: ${err.message}`)
   }
 
-  const file = join(process.cwd(), ".space", "telemetry.jsonl")
-  /** @type {Record<string, {calls: number, ms: number[], models: Set<string>}>} */
-  const stats = {}
-  let records = 0
-  if (existsSync(file)) {
-    for (const line of readFileSync(file, "utf8").split("\n")) {
-      if (!line.trim()) continue
-      let rec
-      try {
-        rec = JSON.parse(line)
-      } catch {
-        continue
-      }
-      if (rec.kind !== "lane-call" && rec.kind !== "lane") continue
-      const lane = rec.agent
-      if (typeof lane !== "string" || !lane) continue
-      records++
-      const s = stats[lane] ?? (stats[lane] = { calls: 0, ms: [], models: new Set() })
-      s.calls++
-      if (typeof rec.ms === "number") s.ms.push(rec.ms)
-      if (rec.model) s.models.add(rec.model)
-    }
-  }
+  // The plugin writes to the project root, so the file is found by walking up
+  // from here. Reading `process.cwd()` alone reported "never called" for every
+  // lane whenever the command was run from a subdirectory.
+  const file = findTelemetryFile(process.cwd())
+  const { lanes: stats, records, ignored } = readLaneUsage(file)
 
-  console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${records} lane record(s)`)}\n`)
+  console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${records} lane call(s)`)}\n`)
   const lanes = Object.keys(profile.roles ?? {})
   if (!lanes.length) {
     console.log(`  ${stamp("this profile enables no lanes")}\n`)
@@ -1113,9 +1137,7 @@ function cmdLanes() {
       )
       continue
     }
-    const avg = s.ms.length
-      ? Math.round(s.ms.reduce((a, b) => a + b, 0) / s.ms.length)
-      : null
+    const avg = averageMs(s.ms)
     console.log(
       [
         "  " + lane.padEnd(12),
@@ -1135,8 +1157,16 @@ function cmdLanes() {
     console.log(`  ${green("every lane was called at least once")}`)
   }
   console.log(
-    `  ${stamp("telemetry is read from .space/telemetry.jsonl in this project")}\n`,
+    `  ${stamp("one call is one assistant message; avg ms covers the calls that finished")}`,
   )
+  console.log(
+    `  ${stamp(`telemetry is read from ${file ?? "no .space/telemetry.jsonl found by walking up from here"}`)}\n`,
+  )
+  if (ignored) {
+    console.log(
+      `  ${yellow(`${ignored} record(s) had no message id and were not counted`)} ${stamp("written by a kit version before the counter was fixed")}\n`,
+    )
+  }
 }
 
 /**
@@ -1151,13 +1181,16 @@ function cmdAgents() {
   // The global dir is where `oc-harness install` puts the kit's own agents, so
   // scanning only the project reported "no project agents found" forever and hid
   // the fact that none of them were installed at all.
-  const dirs = [
-    join(CONFIG_DIR, "agents"),
-    join(process.cwd(), ".opencode", "agents"),
-    join(process.cwd(), ".opencode", "agent"),
-  ]
-  const files = dirs.flatMap((d) =>
-    existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md")).map((f) => join(d, f)) : [],
+  //
+  // opencode reads `agent/` and `agents/` alike, in the config dir and in
+  // `.opencode/`, so all four are scanned. A file in the singular directory
+  // shadows a lane exactly as one in the plural one does.
+  const files = agentDirs().flatMap(({ dir }) =>
+    existsSync(dir)
+      ? readdirSync(dir)
+          .filter((f) => f.endsWith(".md"))
+          .map((f) => join(dir, f))
+      : [],
   )
 
   // Never hardcode a profile here: the whole point is to check the one that is

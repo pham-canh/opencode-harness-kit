@@ -82,6 +82,33 @@ test("verify still catches a hand-edited lane", () => {
   }
 })
 
+test("verify catches a shadowing agent file in either directory", () => {
+  // opencode reads `agent/` and `agents/` alike, and a file in either one
+  // replaces the config entry of the same name. A checker that only looked at
+  // the plural directory would miss half of them, and the lane would quietly
+  // run on the wrong model with the wrong instructions.
+  for (const dir of ["agents", "agent"]) {
+    const box = sandbox()
+    try {
+      run(box, ["use", "fleet-safe", "--yes"])
+      const shadowDir = join(box.dir, dir)
+      mkdirSync(shadowDir, { recursive: true })
+      writeFileSync(
+        join(shadowDir, "build.md"),
+        "---\ndescription: a hand-written agent\nmodel: opencode/beam-free\n---\nbody\n",
+      )
+      const out = run(box, ["verify"])
+      assert.match(
+        out,
+        /shadows the build lane/,
+        `a shadow in ${dir}/ was not reported:\n${out}`,
+      )
+    } finally {
+      box.cleanup()
+    }
+  }
+})
+
 test("use reports the lane models and the retention that actually applies", () => {
   const box = sandbox()
   try {
