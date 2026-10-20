@@ -14,6 +14,16 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-10-20
+
+### Changed
+
+- **The repository holds no npm secret.** The `NPM_TOKEN` secret is gone, and
+  the release is published entirely through trusted publishing: the tag
+  triggers the workflow, the tests run, and the publish job exchanges the
+  runner's OIDC identity for a short-lived publish token scoped to the
+  workflow. There is nothing to leak, rotate or expire.
+
 ## [0.4.1] — 2026-10-20
 
 ### Added
@@ -423,7 +433,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/pham-canh/space-harness/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/pham-canh/space-harness/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/pham-canh/space-harness/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/pham-canh/space-harness/compare/v0.3.8...v0.3.9
