@@ -148,6 +148,10 @@ function laneOf(event: unknown): {
   model?: string
   provider?: string
   ms?: number
+  /** The context that request carried, in tokens. */
+  ctx?: number
+  /** The reasoning that request spent, in tokens. */
+  reasoning?: number
 } | null {
   const e = event as { properties?: any } | undefined
   const info = e?.properties?.info ?? e?.properties
@@ -164,12 +168,27 @@ function laneOf(event: unknown): {
   const ms = created !== undefined && completed !== undefined ? completed - created : undefined
 
   if (!id || !agent) return null
+  // The context the request carried, and the reasoning it spent.
+  //
+  // Without these, "which lanes are worth keeping" can only be answered on
+  // FREQUENCY - a lane used once a week looks the same as a lane used once a
+  // week that costs a million tokens. The two answers are different questions
+  // and the second one is the expensive one.
+  const tokens = (info as any).tokens ?? {}
+  const ctx =
+    typeof tokens.input === "number"
+      ? tokens.input + (typeof tokens.cache?.read === "number" ? tokens.cache.read : 0)
+      : undefined
+  const reasoning = typeof tokens.reasoning === "number" ? tokens.reasoning : undefined
+
   return {
     id,
     agent,
     model: typeof modelId === "string" ? modelId : undefined,
     provider: typeof providerId === "string" ? providerId : undefined,
     ms: typeof ms === "number" && ms >= 0 ? ms : undefined,
+    ctx: typeof ctx === "number" ? ctx : undefined,
+    reasoning,
   }
 }
 

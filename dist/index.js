@@ -1557,12 +1557,17 @@ function laneOf(event) {
   const completed = typeof time.completed === "number" ? time.completed : void 0;
   const ms = created !== void 0 && completed !== void 0 ? completed - created : void 0;
   if (!id || !agent) return null;
+  const tokens = info.tokens ?? {};
+  const ctx = typeof tokens.input === "number" ? tokens.input + (typeof tokens.cache?.read === "number" ? tokens.cache.read : 0) : void 0;
+  const reasoning = typeof tokens.reasoning === "number" ? tokens.reasoning : void 0;
   return {
     id,
     agent,
     model: typeof modelId === "string" ? modelId : void 0,
     provider: typeof providerId === "string" ? providerId : void 0,
-    ms: typeof ms === "number" && ms >= 0 ? ms : void 0
+    ms: typeof ms === "number" && ms >= 0 ? ms : void 0,
+    ctx: typeof ctx === "number" ? ctx : void 0,
+    reasoning
   };
 }
 function truncate2(s, n = 300) {

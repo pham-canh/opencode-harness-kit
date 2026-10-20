@@ -30,6 +30,7 @@ import {
 } from "./profile.js"
 
 import { join } from "node:path"
+import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { BASH_DENYLIST } from "./denylist.js"
 
@@ -61,6 +62,22 @@ export function globalInstructionsPath() {
  * harness a no-op.
  */
 export const GLOBAL_INSTRUCTIONS = "~/.config/opencode/GLOBAL.md"
+
+/**
+ * The kit's own version, read from its package.json.
+ *
+ * @returns {string}
+ */
+export function kitVersion() {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    )
+    return String(pkg.version ?? "unknown")
+  } catch {
+    return "unknown"
+  }
+}
 
 /**
  * The memory plugin this kit can turn on.
@@ -399,6 +416,10 @@ export function generateConfig(p, opts = {}) {
     harness: {
       profile: p.id,
       threshold: pruneThreshold(p, { unhealthy }),
+      // Which kit wrote this. Without it, a config from three releases ago
+      // and one from today are the same file to `verify`, and the only way
+      // to tell them apart is to remember.
+      kit: kitVersion(),
     },
   }
 

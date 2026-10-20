@@ -1,12 +1,23 @@
 #!/bin/sh
 # Installed by `oc-harness install`. Remove with: rm .git/hooks/pre-commit
 #
-# Runs the offline gate on every commit. The live-install half is deliberately
-# left out: measure and attribute read ~/.local/share/opencode, which is slow,
-# machine-specific, and irrelevant to whether a commit broke the kit.
+# It runs the PROJECT's own checks, and only if the project has any.
 #
-# On a machine that has never run OpenCode, test:install cannot run at all, so
-# this hook uses the subset that needs nothing but the repository.
+# The previous version ran `npm run test:all`, which is a script of THIS KIT,
+# not of the project the hook was installed into. So in every project that
+# installed the kit, every commit failed with:
+#
+#     npm error Missing script: "test:all"
+#
+# until the author reached for --no-verify. A gate that blocks every commit
+# is not a gate.
+#
+# The kit's own repository is the exception, and it is handled by the script
+# list below: `test:all` is there, so the kit gates itself.
+#
+# The live-install half is deliberately left out: measure and attribute read
+# ~/.local/share/opencode, which is slow, machine-specific, and irrelevant to
+# whether a commit broke anything.
 
 set -e
 
@@ -18,10 +29,31 @@ if [ -n "$SKIP_SPACE_HARNESS_HOOK" ]; then
   exit 0
 fi
 
-echo "pre-commit: npm run test:all"
-if ! npm run test:all >/tmp/space-harness-hook.log 2>&1; then
+# No package.json, no JavaScript project, no gate.
+if [ ! -f package.json ]; then
+  exit 0
+fi
+
+# The gate is the project's own test script, if it has one. The kit's own
+# repository has `test:all`, which is the offline half of its gate.
+gate=""
+if node -e "process.exit(require('./package.json').scripts?.['test:all'] ? 0 : 1)" 2>/dev/null; then
+  gate="test:all"
+elif node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
+  gate="test"
+fi
+
+if [ -z "$gate" ]; then
+  # Nothing to run. A hook that blocks every commit because the project has
+  # no test script is worse than no hook.
+  exit 0
+fi
+
+log="${TMPDIR:-/tmp}/space-harness-hook.log"
+echo "pre-commit: npm run $gate"
+if ! npm run "$gate" >"$log" 2>&1; then
   echo "pre-commit: FAILED. Last lines:"
-  tail -30 /tmp/space-harness-hook.log
+  tail -30 "$log"
   echo ""
   echo "Fix it, or commit with --no-verify if you are certain it is not yours."
   exit 1

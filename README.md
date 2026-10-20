@@ -350,6 +350,8 @@ oc-harness trust      set up npm trusted publishing for this package
 oc-harness doctor     re-check profiles against models.dev and the live config
 oc-harness refresh --all   re-derive every shipped profile against the live catalogue
 oc-harness upgrade    check for a newer kit, refresh the profiles, rewrite the config
+oc-harness backups   the configs that were replaced, newest first
+oc-harness restore <file>  put one back
 oc-harness baseline   measure the current install
 oc-harness run        drive .space/tasks.md to done with the build agent
 ```

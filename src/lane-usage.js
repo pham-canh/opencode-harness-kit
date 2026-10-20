@@ -25,6 +25,8 @@ import { dirname, join, resolve } from "node:path"
  * @typedef {object} LaneUsage
  * @property {number} requests  distinct assistant messages that used the lane
  * @property {number[]} ms       durations of the requests that completed
+ * @property {number[]} ctx      the context each request carried, in tokens
+ * @property {number[]} reasoning the reasoning each request spent, in tokens
  * @property {Set<string>} models the models the lane was seen on
  */
 
@@ -92,7 +94,7 @@ export function findTelemetryFile(startDir) {
 export function readLaneUsage(file) {
   /** @type {Record<string, LaneUsage>} */
   const lanes = {}
-  /** @type {Map<string, { lane: string, ms?: number, model?: string }>} */
+  /** @type {Map<string, { lane: string, ms?: number, model?: string, ctx?: number, reasoning?: number }>} */
   const byId = new Map()
   let records = 0
   let ignored = 0
@@ -156,14 +158,24 @@ export function readLaneUsage(file) {
       lane,
       ms: typeof rec.ms === "number" ? rec.ms : prev?.ms,
       model: typeof rec.model === "string" ? rec.model : prev?.model,
+      ctx: typeof rec.ctx === "number" ? rec.ctx : prev?.ctx,
+      reasoning: typeof rec.reasoning === "number" ? rec.reasoning : prev?.reasoning,
     })
   }
 
   for (const rec of byId.values()) {
     const usage =
-      lanes[rec.lane] ?? (lanes[rec.lane] = { requests: 0, ms: [], models: new Set() })
+      lanes[rec.lane] ?? (lanes[rec.lane] = {
+      requests: 0,
+      ms: [],
+      ctx: [],
+      reasoning: [],
+      models: new Set(),
+    })
     usage.requests++
     if (typeof rec.ms === "number") usage.ms.push(rec.ms)
+    if (typeof rec.ctx === "number") usage.ctx.push(rec.ctx)
+    if (typeof rec.reasoning === "number") usage.reasoning.push(rec.reasoning)
     if (rec.model) usage.models.add(rec.model)
   }
 
