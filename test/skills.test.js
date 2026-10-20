@@ -102,3 +102,41 @@ test("the lane prompts point at their loop skill", () => {
     )
   }
 })
+
+test("every file that says what to do about a push says the same thing", () => {
+  // The push boundary was defined three different ways at once: GLOBAL.md
+  // said push and report, the build prompt said ask first, and the finish
+  // skill said ask first. The `build` agent receives GLOBAL.md AND the build
+  // prompt, so it was being told two opposite things.
+  //
+  // The policy: pushing the branch you were asked to finish is not a
+  // decision that needs a human. Everything outward-facing past the push is.
+  const files = [
+    ["GLOBAL.md", join(ROOT, "GLOBAL.md")],
+    ["prompts/build.md", join(ROOT, "prompts", "build.md")],
+    ["skills/space-finish/SKILL.md", join(ROOT, "skills", "space-finish", "SKILL.md")],
+  ]
+  for (const [name, path] of files) {
+    const text = readFileSync(path, "utf8")
+    assert.ok(
+      !/ask before `?git push/i.test(text),
+      `${name} still says to ask before a push. The policy is: push, then say what you pushed.`,
+    )
+    assert.ok(
+      /push/i.test(text),
+      `${name} does not mention the push at all`,
+    )
+  }
+  // And the things that DO need a human are named in each of them.
+  for (const [name, path] of files) {
+    const text = readFileSync(path, "utf8")
+    assert.ok(
+      /publish/i.test(text),
+      `${name} does not say that publishing needs a human`,
+    )
+    assert.ok(
+      /pull\s+request/i.test(text),
+      `${name} does not say that opening a pull request needs a human`,
+    )
+  }
+})

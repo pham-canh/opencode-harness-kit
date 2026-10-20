@@ -106,7 +106,7 @@ export function buildPrompt(task) {
     ``,
     `Rules for this run:`,
     `  - Change only the files named above. If the task is wrong or blocked, say so and stop.`,
-    `  - Never run git push, never create a PR, never publish. A human does that.`,
+    `  - Never run git push, never create a PR, never publish. This loop runs unattended, so there is nobody to ask - a human pushes.`,
     `  - Report the real output of the verify command. Never invent a passing result.`,
   ].join("\n")
 }
