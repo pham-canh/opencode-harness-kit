@@ -179,6 +179,28 @@ jobs:
           npm publish "${args[@]}" > /tmp/publish.log 2>&1 || code=$?
           grep -E "oidc|oidc/token|trust|ENOENT|E401|E403|E404|ENEEDAUTH|not authorized" /tmp/publish.log || true
           if [ $code -ne 0 ]; then
-            echo "::error::npm publish failed (exit $code). With no NPM_TOKEN this is trusted publishing: check that npmjs.com lists this repository and workflow (ci.yml) as a trusted publisher, that the workflow name matches exactly, that the repository matches, and that the configuration has had its first successful publish within 2 days. With a token it is usually a token without WRITE access to the opencode-harness-kit package - npm answers 404 for a package the token cannot touch, which reads like a missing package."
+            # npm reports a refused OIDC exchange as "package not found", which
+            # is what a missing or mismatched trusted publisher looks like
+            # from here, and it does not say which field was wrong.
+            #
+            # `npm stage publish` is the other way in: a trusted publisher
+            # created after 2026-09-03 allows staging by default and only
+            # permits a direct publish if it was ticked. Staging separates the
+            # two causes - a stage that gets through means the configuration
+            # is right and only the direct publish was not allowed; a stage
+            # that fails the same way means the configuration is missing.
+            if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+              echo "::error::npm publish was refused. Trying the staged path to tell a refused direct publish from a missing trusted publisher."
+              stage_code=0
+              npm stage publish > /tmp/stage.log 2>&1 || stage_code=$?
+              grep -iE "oidc|not found|ENEEDAUTH|error|staged|approval" /tmp/stage.log | head -20 || true
+              if [ $stage_code -eq 0 ]; then
+                echo "::error::the staged publish was ACCEPTED, so the trusted publisher is configured correctly and only the direct publish was not allowed. Tick 'npm publish' under Allowed actions for this trusted publisher on npmjs.com, then publish again. The staged version is waiting for approval there."
+                exit 1
+              fi
+              echo "::error::the staged publish was refused the same way, so the trusted publisher configuration itself does not match. Check that npmjs.com lists this PACKAGE (not the account) with: Organization or user = pham-canh, Repository = space-harness, Workflow filename = ci.yml, Environment name = EMPTY (the workflow declares no environment, so an environment on npmjs.com can never match), and Allowed actions includes npm publish."
+            else
+              echo "::error::npm publish failed (exit $code). With a token it is usually a token without WRITE access to the opencode-harness-kit package - npm answers 404 for a package the token cannot touch, which reads like a missing package."
+            fi
             exit $code
           fi
