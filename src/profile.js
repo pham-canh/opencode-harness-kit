@@ -730,6 +730,30 @@ export function validate(p, path = "<memory>") {
       )
     }
   }
+  // The utility route has to be a model this profile can actually run, or a
+  // failover leaves opencode's short auxiliary calls pointing at a model that
+  // is not in the fleet.
+  //
+  // The check is STATIC - the union of the profile's own model and every
+  // model its chains name. Asking `modelsInPlay` would be the obvious way,
+  // and it is a loop: resolving a lane reads the levels of a model, which
+  // loads that model's profile, which validates it, which resolves a lane.
+  if (p.utility) {
+    if (typeof p.utility.model !== "string" || !p.utility.model) {
+      throw new ProfileError(`${where}: utility.model must be a model id`)
+    }
+    const reachable = new Set([p.model])
+    for (const rm of Object.values(p.roleModels ?? {})) {
+      if (rm?.model) reachable.add(rm.model)
+      for (const rung of rm?.chain ?? []) reachable.add(rung)
+    }
+    if (!reachable.has(p.utility.model)) {
+      throw new ProfileError(
+        `${where}: utility.model is ${p.utility.model}, which this profile does not resolve to (it has ${[...reachable].join(", ")})`,
+      )
+    }
+  }
+
   // The fallback queue is walked at startup, and an id that does not resolve
   // is skipped without a word - so the queue quietly shortens and the
   // session stays on a route that is already spent.

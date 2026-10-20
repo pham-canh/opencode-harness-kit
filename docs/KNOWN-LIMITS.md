@@ -344,7 +344,7 @@ compressor, or a session UI. Those exist and are good:
 |---|---|
 | model-driven compression | `@tarquinen/opencode-dcp` |
 | cross-harness context proxy | `sleev.ai` |
-| persistent memory | `opencode-supermemory` |
+| persistent memory | [`opencode-mem`](https://github.com/tickernelz/opencode-mem), which `oc-harness use --memory` turns on |
 | git worktrees | `kdcokenny/opencode-worktree` |
 | memory in git markdown | `code-yeongyu/oh-my-opencode` (now `omo`) |
 | agent DAGs | `spoons-and-mirrors/subtask2` |

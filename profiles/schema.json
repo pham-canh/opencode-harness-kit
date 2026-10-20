@@ -4,7 +4,15 @@
   "title": "OpenCode harness profile",
   "description": "Everything that changes when you change model. Plugins read this file and contain no model names of their own.",
   "type": "object",
-  "required": ["id", "provider", "model", "retention", "limits", "effort", "roles"],
+  "required": [
+    "id",
+    "provider",
+    "model",
+    "retention",
+    "limits",
+    "effort",
+    "roles"
+  ],
   "additionalProperties": false,
   "properties": {
     "$comment": {
@@ -15,7 +23,9 @@
       "type": "string",
       "description": "Slug used as the profile filename and the oc-harness use argument."
     },
-    "title": { "type": "string" },
+    "title": {
+      "type": "string"
+    },
     "provider": {
       "type": "string",
       "description": "opencode provider id, e.g. opencode, opencode-go, anthropic."
@@ -25,7 +35,10 @@
       "description": "Model id without the provider prefix, e.g. beam-free."
     },
     "family": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Model family for grouping. Stealth models report null upstream, so this may be set by hand."
     },
     "verified": {
@@ -33,23 +46,46 @@
       "description": "ISO date a human checked this profile against live metadata."
     },
     "retention": {
-      "enum": ["zero-retention", "retained", "may-train", "unknown"],
+      "enum": [
+        "zero-retention",
+        "retained",
+        "may-train",
+        "unknown"
+      ],
       "description": "Must match an entry in retention.yml. A profile whose model is unknown there cannot become the default."
     },
     "maxRetention": {
-      "enum": ["zero-retention", "retained", "may-train"],
+      "enum": [
+        "zero-retention",
+        "retained",
+        "may-train"
+      ],
       "description": "The worst retention a lane in this profile is allowed to resolve to. A lane walks its model chain and takes the first rung at or below this ceiling, so one profile can serve a fleet without sending a prompt to a provider that trains on it. Defaults to the profile's own retention."
     },
-    "notes": { "type": "string" },
+    "notes": {
+      "type": "string"
+    },
     "limits": {
       "type": "object",
-      "required": ["context", "output"],
+      "required": [
+        "context",
+        "output"
+      ],
       "additionalProperties": false,
       "description": "Token ceilings from the provider catalog. `input` is absent for several free models, in which case the loader derives it from `context`.",
       "properties": {
-        "context": { "type": "integer", "minimum": 1 },
-        "input": { "type": "integer", "minimum": 1 },
-        "output": { "type": "integer", "minimum": 1 }
+        "context": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "input": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "output": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "supports": {
@@ -57,10 +93,18 @@
       "additionalProperties": false,
       "description": "Capability flags. Missing or false means do not emit the related config.",
       "properties": {
-        "reasoning": { "type": "boolean" },
-        "temperature": { "type": "boolean" },
-        "toolCall": { "type": "boolean" },
-        "structuredOutput": { "type": "boolean" },
+        "reasoning": {
+          "type": "boolean"
+        },
+        "temperature": {
+          "type": "boolean"
+        },
+        "toolCall": {
+          "type": "boolean"
+        },
+        "structuredOutput": {
+          "type": "boolean"
+        },
         "attachment": {
           "type": "boolean",
           "description": "Accepts image or video input. Gates screenshot-based verification."
@@ -73,10 +117,26 @@
       "properties": {
         "levels": {
           "type": "array",
-          "items": { "type": "string" },
-          "examples": [["low", "medium", "high", "xhigh", "max"]]
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          ]
         },
-        "default": { "type": ["string", "null"], "description": "The level the session runs at by default. Null means the model has no tunable effort and no variant is emitted." },
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The level the session runs at by default. Null means the model has no tunable effort and no variant is emitted."
+        },
         "reserveShare": {
           "type": "number",
           "minimum": 0,
@@ -91,16 +151,54 @@
       "description": "Requested effort per lane, never emitted raw. A lane listed here is enabled; a lane absent from here is not installed. It is resolved against the levels of the model the lane actually runs on, which is the profile's own effort.levels for a single-model profile and the lane model's levels for a fleet. `none` means reasoning off: a model that does not publish it gets no variant at all.",
       "additionalProperties": false,
       "properties": {
-        "build": { "$ref": "#/definitions/effortRequest" },
-        "plan": { "$ref": "#/definitions/effortRequest" },
-        "reviewer": { "$ref": "#/definitions/effortRequest" },
-        "locate": { "$ref": "#/definitions/effortRequest" },
-        "verify": { "$ref": "#/definitions/effortRequest" },
-        "vision": { "$ref": "#/definitions/effortRequest" },
-        "doc": { "$ref": "#/definitions/effortRequest" },
-        "schema": { "$ref": "#/definitions/effortRequest" },
-        "sweep": { "$ref": "#/definitions/effortRequest" },
-        "longform": { "$ref": "#/definitions/effortRequest" }
+        "build": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "plan": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "reviewer": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "locate": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "verify": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "vision": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "doc": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "schema": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "sweep": {
+          "$ref": "#/definitions/effortRequest"
+        },
+        "longform": {
+          "$ref": "#/definitions/effortRequest"
+        }
+      }
+    },
+    "utility": {
+      "type": "object",
+      "description": "The route opencode uses for its short auxiliary calls - a title, a one-line summary. Optional: a profile without one keeps the session model, which is what a single-model profile wants, because 'one route, and it is the one you asked for' is a promise those profiles make.",
+      "additionalProperties": false,
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model id without the provider prefix. Must be a model this profile already resolves to, so a failover cannot leave the utility route pointing at a model that is not in the fleet."
+        },
+        "why": {
+          "type": "string",
+          "description": "The measurement that chose it. A route chosen by taste is a route that drifts."
+        }
       }
     },
     "roleModels": {
@@ -108,16 +206,36 @@
       "description": "Model per lane. A lane absent from `roles` is not enabled. A lane absent from `roleModels` runs on the profile's base model.",
       "additionalProperties": false,
       "properties": {
-        "build": { "$ref": "#/definitions/roleModel" },
-        "plan": { "$ref": "#/definitions/roleModel" },
-        "reviewer": { "$ref": "#/definitions/roleModel" },
-        "locate": { "$ref": "#/definitions/roleModel" },
-        "verify": { "$ref": "#/definitions/roleModel" },
-        "vision": { "$ref": "#/definitions/roleModel" },
-        "doc": { "$ref": "#/definitions/roleModel" },
-        "schema": { "$ref": "#/definitions/roleModel" },
-        "sweep": { "$ref": "#/definitions/roleModel" },
-        "longform": { "$ref": "#/definitions/roleModel" }
+        "build": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "plan": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "reviewer": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "locate": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "verify": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "vision": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "doc": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "schema": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "sweep": {
+          "$ref": "#/definitions/roleModel"
+        },
+        "longform": {
+          "$ref": "#/definitions/roleModel"
+        }
       }
     },
     "prune": {
@@ -125,7 +243,9 @@
       "additionalProperties": false,
       "description": "Deterministic context pruning. Only used when a model-driven compressor is unavailable or unproven.",
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "keepRecentToolCalls": {
           "type": "integer",
           "minimum": 1,
@@ -148,7 +268,9 @@
     "fallback": {
       "type": "array",
       "description": "Ordered profile ids to fall back to. Selection happens at session start, not mid-session: no opencode plugin hook can change a live session's model.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     }
   },
   "definitions": {
@@ -156,7 +278,9 @@
       "type": "object",
       "description": "A model for one lane, plus the effort levels that model actually offers, plus the ordered list of models that may serve the lane when the first one is spent or too private.",
       "additionalProperties": false,
-      "required": ["model"],
+      "required": [
+        "model"
+      ],
       "properties": {
         "model": {
           "type": "string",
@@ -164,15 +288,23 @@
         },
         "chain": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Ordered models that may serve this lane, best first. The first rung the profile's maxRetention ceiling allows is the one that runs it, and the router walks the same chain when a route is spent."
         }
       }
     },
     "effortRequest": {
       "oneOf": [
-        { "type": "string", "description": "Desired level, resolved to the nearest available one." },
-        { "type": "null", "description": "This role should not set a variant at all." }
+        {
+          "type": "string",
+          "description": "Desired level, resolved to the nearest available one."
+        },
+        {
+          "type": "null",
+          "description": "This role should not set a variant at all."
+        }
       ]
     }
   }

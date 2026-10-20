@@ -12,7 +12,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { parseJsonc } from "../src/profile.js"
+import { parseJsonc, listProfileIds, loadProfile } from "../src/profile.js"
 import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -263,6 +263,99 @@ test("a broken symlink in the agents directory does not abort verify", () => {
     const r = run(box, ["verify"])
     assert.match(r.out, /verify/)
     assert.doesNotMatch(r.out, /ENOENT/)
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("--memory turns on the memory plugin without touching the user's own plugins", () => {
+  // The kit does not implement memory. A local vector store with embeddings,
+  // a web UI and auto-capture is a large thing to build badly, and
+  // `opencode-mem` already is one. What the kit does is make it one flag
+  // away - and keep the config honest about it.
+  const box = sandbox()
+  try {
+    writeFileSync(box.config, JSON.stringify({ plugin: ["my-own-plugin"] }))
+    const r = run(box, ["use", "fleet-safe", "--memory", "--yes"])
+    assert.equal(r.code, 0, r.out)
+    const parsed = parseJsonc(readFileSync(box.config, "utf8"))
+    assert.deepEqual(parsed.plugin, ["my-own-plugin", "opencode-mem@latest"])
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("--memory is idempotent, and the user's plugin list is never replaced", () => {
+  const box = sandbox()
+  try {
+    writeFileSync(box.config, JSON.stringify({ plugin: ["my-own-plugin"] }))
+    run(box, ["use", "fleet-safe", "--memory", "--yes"])
+    run(box, ["use", "fleet-safe", "--memory", "--yes"])
+    const parsed = parseJsonc(readFileSync(box.config, "utf8"))
+    assert.deepEqual(parsed.plugin, ["my-own-plugin", "opencode-mem@latest"])
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("--memory=<id> picks a specific memory plugin", () => {
+  const box = sandbox()
+  try {
+    const r = run(box, ["use", "fleet-safe", "--memory=opencode-mem@2.32.0", "--yes"])
+    assert.equal(r.code, 0, r.out)
+    const parsed = parseJsonc(readFileSync(box.config, "utf8"))
+    assert.deepEqual(parsed.plugin, ["opencode-mem@2.32.0"])
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("without --memory the plugin list is left exactly as it was", () => {
+  const box = sandbox()
+  try {
+    writeFileSync(box.config, JSON.stringify({ plugin: ["my-own-plugin"] }))
+    const r = run(box, ["use", "fleet-safe", "--yes"])
+    assert.equal(r.code, 0, r.out)
+    const parsed = parseJsonc(readFileSync(box.config, "utf8"))
+    assert.deepEqual(parsed.plugin, ["my-own-plugin"])
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("doctor --check-models fails when a shipped model is gone", () => {
+  // The question a free-tier user actually has to ask is "is one of my
+  // routes gone", and it is not the same question as "has a profile
+  // drifted". A model that has left the catalogue is a lane whose chain has
+  // one fewer rung, and nobody was told.
+  const box = sandbox()
+  try {
+    const empty = join(box.dir, "empty-catalog.json")
+    writeFileSync(empty, JSON.stringify({ opencode: { models: {} } }))
+    const env = { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${empty}` }
+
+    const gone = run(box, ["doctor", "--check-models"], { env })
+    assert.notEqual(gone.code, 0, "a gone model must fail the check")
+    assert.match(gone.out, /no longer in the catalogue/)
+
+    // A catalogue that still has every shipped model passes.
+    const full = join(box.dir, "full-catalog.json")
+    const models = {}
+    for (const id of listProfileIds()) {
+      const p = loadProfile(id)
+      models[p.model] = {
+        limit: { context: p.limits.context, output: p.limits.output, input: p.limits.input },
+        reasoning_options: [{ type: "effort", values: p.effort.levels }],
+        temperature: Boolean(p.supports?.temperature),
+        attachment: Boolean(p.supports?.attachment),
+      }
+    }
+    writeFileSync(full, JSON.stringify({ opencode: { models } }))
+    const ok = run(box, ["doctor", "--check-models"], {
+      env: { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${full}` },
+    })
+    assert.equal(ok.code, 0, ok.out)
+    assert.match(ok.out, /still in the catalogue/)
   } finally {
     box.cleanup()
   }

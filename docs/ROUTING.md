@@ -23,7 +23,7 @@ models. A profile says which lanes it enables and which model serves each one.
 | `vision` | read an image or a screenshot | mimo-v2.6-flash-free | minimax-m3.1-flash-free |
 | `doc` | read a long document or a spec | glm-5.3-flash-free | glm-5.3-flash-free |
 | `schema` | produce JSON or a JSON schema | deepseek-v4.1-flash-free | deepseek-v4.1-flash-free |
-| `sweep` | sweep a lot of code mechanically | nemotron-3.5-super-vl-free | longcat-2.5-preview-free |
+| `sweep` | sweep a lot of code mechanically | nemotron-3.5-super-vl-free | deepseek-v4.1-flash-free |
 | `longform` | read a megabyte, or write alternatives | longcat-2.5-preview-free | longcat-2.5-preview-free |
 
 `fleet-all` gives every lane the model built for it: ten jobs, ten models,
@@ -34,6 +34,10 @@ plan, reviewer, locate, verify, vision and sweep. That is the price of the
 ceiling, and it is worth paying only when the model that takes over is the
 best one available *for that job*, which is why the two fleets order their
 chains differently (see below).
+
+Under that ceiling every lane that asks for a tier GETS one. The safe fleet
+has no lane with a dropped tier request; the unrestricted fleet has three, and
+the measurement says they are the three cheapest reasoners on the tier.
 
 ## Measured, per lane
 
@@ -82,6 +86,27 @@ lane that pays: 2624 ms on Beam against 5106 ms on DeepSeek, about twice the
 wait. Reviewing barely pays at all: 4716 ms on Nemotron 3 Ultra against 5757
 ms on GLM. Locating and verifying get *faster*, because DeepSeek publishes a
 `low` effort level and Big Pickle publishes none at all.
+
+**What a tier is worth, measured on this install rather than assumed.** The
+effort level is the cheapest lever there is: DeepSeek measures 320 reasoning
+tokens a message at `max` and 19 at `low`, a factor of 17, and a lane that
+asks for a tier and lands on a model that publishes none runs at that model's
+NATURAL rate instead. So the tier request is worth protecting.
+
+The three lanes in `fleet-all` whose model cannot serve the tier - `reviewer`
+on Nemotron 3 Ultra, `locate` on Nemotron 3.5 Lightning, `verify` on Big
+Pickle - are the fleet's CHEAPEST reasoners: 116, 59 and 18 reasoning tokens a
+message, against 289 for `build` and 198 for `plan`, which keep their tier on
+purpose. The tier is the lever, and it is not where the tokens are. The
+config header says so where it happens, in the form `locate=unset(asked low)`.
+
+One lane was not cheap, and it was fixed. `sweep` is a bulk mechanical
+search, so reasoning on it is pure waste, and it ran on LongCat: 420 reasoning
+tokens a message at 16.6 s, the most expensive way to ask a model to grep. No
+zero-retention model publishes a `none` level, so the lane could not even turn
+reasoning off when it asked to. It runs on DeepSeek now, which is
+zero-retention, publishes a `low` level, and measures 19 reasoning tokens at
+3.4 s.
 
 And one lane gets faster rather than slower. MiMo reads an image in 19.2 s;
 MiniMax reads the same image in 7.7 s. The unrestricted fleet put `vision` on
@@ -147,6 +172,11 @@ mis-served by that:
 - `locate` asked for `low` effort and landed on a model that publishes no
   effort levels at all, so the request was dropped on the floor. It now lands
   on DeepSeek, which publishes `low`, and measures 3612 ms.
+- `sweep` is a bulk mechanical search, so reasoning on it is pure waste. It
+  ran on LongCat at 420 reasoning tokens a message and 16.6 s - and no
+  zero-retention model publishes a `none` level, so the lane could not turn
+  reasoning off even when it asked to. It runs on DeepSeek now: 19 reasoning
+  tokens at 3.4 s.
 - `vision` landed on the same model, at 9-13 s, when MiniMax reads the same
   image in 7.7 s.
 

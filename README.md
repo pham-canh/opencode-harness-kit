@@ -165,7 +165,7 @@ $ oc-harness show fleet-safe
   lane effort
     plan       max
     locate     low
-    sweep      (unset)    (requested none)
+    sweep      low
 ```
 
 A model with no tunable effort at all gets **no** `variant` written, rather
@@ -253,8 +253,17 @@ The full list, with a reason for each, is in
 |---|---|---|
 | `oc-harness list` | the profiles this kit ships, with retention and caveats | offline, any time |
 | `oc-harness doctor` | every profile against the live model catalogue, and the installed config against the active profile | **before every release**, and whenever a lane starts failing with a 429 or a "model not found" |
+| `oc-harness doctor --check-models` | one run, non-zero when a shipped model is no longer in the catalogue | from cron: the shape a scheduler wants |
+| `oc-harness doctor --watch` | keeps watching, and reports only what **changed** | leave it in a terminal for a week |
 | `oc-harness refresh <id>` | re-derives a profile's machine-derived fields from live metadata | when `doctor` reports drift |
 | `oc-harness verify` | the installed config still matches the profile, and the kit's own files are still installed | after every `use` / `install` |
+
+A cron line that tells you the moment a route disappears, rather than the
+moment a lane starts failing:
+
+```cron
+0 9 * * * cd ~/.config/opencode && oc-harness doctor --check-models
+```
 
 `doctor` separates the two kinds of finding, because they are not the same
 kind of finding:
@@ -478,6 +487,33 @@ reads exceed 51,200 bytes, so that ceiling is not what limits context.
 
 Your numbers stay on your machine; only the script is in the repo.
 
+## Memory
+
+The kit does not implement memory. A local vector store with embeddings, a
+web UI, auto-capture and a user profile is a large thing to build badly, and
+[`opencode-mem`](https://github.com/tickernelz/opencode-mem) already is one.
+
+What the kit does is make it one flag away and keep the config honest about
+it:
+
+```bash
+oc-harness use fleet-safe --memory        # adds opencode-mem to the plugin list
+oc-harness use fleet-safe --memory=opencode-mem@2.32.0   # a pinned version
+```
+
+Your own plugins are never touched — the entry is **added**, so a config that
+already has it does not grow a second copy, and a config that already has
+other plugins keeps them.
+
+The memory plugin keeps its own configuration in
+`~/.config/opencode/opencode-mem.jsonc`. It stores and searches without one,
+but **auto-capture needs a provider** to summarise a session into a memory, so
+give it one:
+
+```jsonc
+{ "opencodeProvider": "openai", "opencodeModel": "inherit" }
+```
+
 ## The plugins
 
 | module | hook | job |
@@ -490,6 +526,16 @@ Your numbers stay on your machine; only the script is in the repo.
 Both `.space/telemetry.jsonl` and `.space/prune.jsonl` are written in the
 **project**, not wherever opencode was started from. The prune log used to
 land in the process's working directory, which is often your home directory.
+
+**The utility route.** `small_model` is what opencode uses for its short
+auxiliary calls — a title, a one-line summary, a question rewritten. It used
+to be the session model, so every one of those calls paid the session model's
+*reasoning*, and reasoning, not output, is what a short call costs. Measured
+on this tier, a title costs **49 reasoning tokens on DeepSeek and 332 on
+Nemotron 3.5 Super VL**, and DeepSeek answers in 7.2 s against 22.7 s for
+GLM. A fleet now names a cheaper route; a single-model profile keeps its one
+route, because "one route, and it is the one you asked for" is a promise those
+profiles make. The generated file says which route it chose.
 
 `guard.ts` matches against the command a shell would actually run, not the text
 it was handed. It splits on shell separators, honours quotes so that a `;`
@@ -630,7 +676,7 @@ Writes outside the project still ask, via `external_directory`.
 | `vision` | subagent | reads an image or a screenshot | model's |
 | `doc` | subagent | reads a long document or a spec | model's |
 | `schema` | subagent | produces JSON a program can parse | `max` |
-| `sweep` | subagent | bulk mechanical sweep, no judgement | `none` (reasoning off) |
+| `sweep` | subagent | bulk mechanical sweep, no judgement | `low` / `none` |
 | `longform` | subagent | very long context, or several answers | model's |
 
 The effort column is the request in the profile, resolved against the levels
@@ -639,6 +685,19 @@ publishes it and the nearest level that does exist where it does not, and
 `none` is no variant at all on a model that cannot turn reasoning off. Run
 `oc-harness show <profile>` for the resolved values and the note explaining
 any difference.
+
+The tier is worth protecting: measured on one install, DeepSeek spends **320
+reasoning tokens a message at `max` and 19 at `low`**, so the lever is a
+factor of 17. A lane that asks for a tier and lands on a model that publishes
+none runs at that model's natural rate instead, and the generated config says
+so in the form `locate=unset(asked low)`.
+
+Three lanes in the unrestricted fleet cannot get their tier, and the
+measurement says they are the three cheapest reasoners on the tier — 116, 59
+and 18 reasoning tokens a message, against 289 for `build` and 198 for
+`plan`, which keep their tier on purpose. The one lane that was genuinely
+expensive was `sweep`, running on a model that reasons 420 tokens a message
+for what is supposed to be a mechanical grep. It does not any more.
 
 `locate` is deliberately *not* called `scout`: OpenCode ships a built-in `scout`
 subagent for dependency and external-docs research, and shipping our own file
