@@ -21,6 +21,78 @@ publish job watches for. Until that happens, the latest PUBLISHED version is
 
 ### Fixed
 
+**The denylist was matched against the raw command string, so a wrapper got
+past it.**
+
+`cd /tmp && npm publish`, `sudo npm publish` and `sh -c "npm publish"` all
+went through. The patterns are `npm publish*`, and the command does not
+start with them. The kit already had the machinery for exactly this - the
+rules are matched per segment, with the wrappers stripped and the payload of
+a `bash -c` followed - and the denylist now uses it. One list, read one way.
+
+**The grader paired a path with a line number that belonged to something
+else.**
+
+A gap that could cross a sentence turned "the answer is in src/a.js.
+Unrelated note: see line 2 of the report" into a claim about line 2. The
+bare path was then dropped, because the file had been cited with a line, and
+a right file was graded against a line the agent never claimed. The gap may
+no longer contain a full stop, and a number on the next line has to be
+introduced by a label - which is the shape `**File:**` / `**Line:**` takes.
+
+**A citation to the build output was graded as evidence about the source.**
+
+`dist/`, `eval/` and `test/` are in the exclusion list, and the test was
+`endsWith` - which never matches a directory, because a file path does not
+end with a directory name. The exclusion now matches a directory prefix and
+a file name, wherever the file is.
+
+**The A/B compared two different models and called the difference the kit's
+cost.**
+
+The kit-off arm ran with an empty config, so opencode picked its own default
+model; the kit-on arm ran on the model in the installed kit's config. The
+default it picked did not answer either - four kit-off runs hit the
+600-second ceiling with no output at all, and a timed-out run has zero tools
+and zero context, so it entered the medians as a fast, empty, wrong answer.
+
+The model is now pinned in the kit-off home, read from the config the same
+way the kit reads it: the lane model of the default agent, which is the
+model opencode actually runs and the one the router moves when a route is
+spent. The report prints it, so a reader can check that both arms ran on
+the same one.
+
+**The published type declarations did not resolve for a consumer.**
+
+They import a type from `@opencode-ai/plugin`, which was a devDependency, so
+a consumer that installed the package type-checked against a type it did
+not have. The subpath exports - `opencode-harness-kit/profile` and the rest
+- declared no types at all, even though the declarations were built and
+shipped. The plugin is now an optional peer dependency and every subpath
+declares its types.
+
+**`oc-harness cost` reported characters as bytes.**
+
+The pruner counts characters, and the number it printed said "bytes", which
+is wrong by a factor on any text that is not ASCII.
+
+**`refresh --all` wrote its backups into `profiles/`.**
+
+That directory is published to npm, so every refresh added a file to the
+tarball, and nothing ever pruned them. The backups go to the config
+directory now, with the other backups.
+
+**`uninstall` deleted the user's own symlinks.**
+
+It removed every symlink in `prompts/` and `skills/`, on the grounds that a
+directory of symlinks is the kit's. A user with their own symlink in that
+directory lost it. A link is the kit's when it points inside the kit.
+
+**`doctor --json` put colour codes inside the messages**, and the exit code
+for a missing config or a missing profile changed without the change being
+said out loud. The codes are out now, and an error in JSON mode is a JSON
+object.
+
 **In a project that is not a git repository, the kit did nothing at all.**
 
 `ctx.worktree` is opencode's worktree: the git root of the project. For a
@@ -244,6 +316,27 @@ improvement from a NULL average.
   project. The prune log used to land in the process's working directory,
   which is often your home directory.
 ### Added
+
+- **`doctor --json` and `show --json`.** "Is the install healthy" and "what
+  does this profile resolve to" are questions a CI job and a dashboard ask,
+  and the answers were tables of padded columns with colour codes in them.
+  Both now print the machine-readable form and nothing else - not the human
+  report first and the JSON after it, which is not machine-readable. An
+  error in JSON mode is a JSON object, so a script that pipes the output
+  into a parser gets something it can read either way. `lanes --json` used
+  the key `lanes` for the USAGE of each lane, and `show --json` uses it for
+  the lane TABLE; the usage one is now `usage`, so one name does not mean
+  two shapes.
+
+- **`docs/EXIT-CODES.md`**, because a command that can fail should say how,
+  and "non-zero" does not tell a script whether the work landed or there was
+  no task file. Four codes for the loop, two for the doctor, and the rule
+  that a measurement which could not be compared is reported and NOT gated.
+
+- **`MIGRATION.md` covers 0.3 to 0.4.** The upgrade asks something of the
+  user - the guard now refuses in code what it used to only suggest, and the
+  pre-commit hook runs the project's own tests instead of the kit's - so it
+  is written down, with the command to check it and the command to undo it.
 
 - **`oc-harness cost`** — what the kit is doing on THIS project, in numbers.
   The kit's claim is a trade: a fixed overhead on every request, and the

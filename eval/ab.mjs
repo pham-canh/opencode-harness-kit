@@ -410,6 +410,10 @@ function makeNokitHome(model) {
   const home = mkdtempSync(join(tmpdir(), "opencode-ab-"))
   mkdirSync(join(home, ".config/opencode"), { recursive: true })
   mkdirSync(join(home, ".local/share"), { recursive: true })
+  // Typed, because the loose script config does not catch a property added
+  // to an object literal: `noImplicitAny: false` turns "this property does
+  // not exist" off for exactly that case.
+  /** @type {Record<string, string>} */
   const config = { $schema: "https://opencode.ai/config.json" }
   if (model) config.model = model
   writeFileSync(join(home, ".config/opencode/opencode.json"), JSON.stringify(config, null, 2))
