@@ -117,8 +117,9 @@ OIDC token exchange error - package not found
 which reads like a missing package. The package is there; the configuration
 is not matching, and npm does not say which field.
 
-So the configuration is set from the command line instead, where it is
-compared against what the workflow will actually present:
+npm ships `npm trust` for exactly this, and it can also read what is stored.
+So the configuration is set from the command line, where it is compared
+against the identity the workflow will actually present:
 
 ```bash
 npm install -g npm@latest      # npm trust needs 11.15.0 or later
@@ -130,6 +131,15 @@ npm run release:trust           # check, and replace it if it is wrong
 workflow's own identity, and replaces it when it differs. npm allows exactly
 one configuration per package and cannot edit it, so replacing means revoking
 first — the script does that.
+
+To set it without the script, the command is:
+
+```bash
+npm trust github opencode-harness-kit \
+  --file ci.yml \
+  --repo pham-canh/space-harness \
+  --allow-publish --allow-stage-publish -y
+```
 
 The configuration it writes is:
 
@@ -158,6 +168,10 @@ owner         pham-canh
 
 A newly created trusted publisher has to complete its first successful
 publish **within 2 days**, or it expires and has to be created again.
+
+> **Both `npm trust` and `npm publish` need a one-time password**, and the
+> web URL they print is masked in the log — so run them in a terminal, where
+> npm prompts for the code. The token path below needs none of that.
 
 The GitHub release is written by hand from the CHANGELOG entry:
 
