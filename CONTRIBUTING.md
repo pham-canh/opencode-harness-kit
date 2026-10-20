@@ -76,18 +76,43 @@ git push origin main v<version>
 ```
 
 The tag triggers the workflow, the tests run, and the `publish` job publishes
-the tarball with a provenance statement.
+the tarball.
 
-**The publish needs a token that can publish this package.** The `NPM_TOKEN`
-repo secret must be a granular npm token with write access to
-`opencode-harness-kit` (and the `Read and write` permission on the package, not
-only on the account). A token without it fails with a bare
-`404 Not Found - PUT https://registry.npmjs.org/opencode-harness-kit`, which
-reads like a missing package rather than a missing permission — the registry
-returns 404 for a package the token cannot touch.
+### How the publish authenticates
 
-The `publish` job checks the token's access before it builds a tarball, so the
-failure names the permission rather than the registry.
+Two ways, and the job picks whichever is available:
+
+**Trusted publishing (OIDC)** — the default, and what the repository is set up
+for. There is no npm secret in the repository at all: npm exchanges the
+runner's OIDC identity for a short-lived publish token scoped to the workflow.
+The package names the trusted publisher on npmjs.com:
+
+> npmjs.com → Packages → `opencode-harness-kit` → Settings → Trusted
+> publishing → GitHub Actions
+>
+> | field | value |
+> |---|---|
+> | Organization or user | `pham-canh` |
+> | Repository | `space-harness` |
+> | Workflow filename | `ci.yml` (the filename only, not a path) |
+> | Environment name | *(empty)* |
+> | Allowed actions | `npm publish` |
+
+A newly created trusted publisher has to complete its first successful
+publish **within 2 days**, or it expires and has to be created again.
+
+**A token** — the fallback, for when OIDC is not set up. Set the `NPM_TOKEN`
+repository secret to a granular token scoped to `opencode-harness-kit` with
+**Read and write** on the package. If the secret is present the job uses it;
+if it is absent the job uses OIDC.
+
+```bash
+gh secret set NPM_TOKEN --repo pham-canh/space-harness
+```
+
+A token needs write access *on the package*, not on the account. npm answers
+**404** for a package the token cannot touch, which reads like a missing
+package rather than a missing permission.
 
 The GitHub release is written by hand from the CHANGELOG entry:
 

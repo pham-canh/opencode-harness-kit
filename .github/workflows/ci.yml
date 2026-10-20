@@ -63,41 +63,79 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Required for trusted publishing: npm exchanges the runner's OIDC
+      # identity for a short-lived publish token, so there is no long-lived
+      # secret in the repository to leak, rotate or expire.
       id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
-          registry-url: 'https://registry.npmjs.org'
-      - run: npm ci --no-audit --no-fund
-      # The registry answers 404 for a package the token cannot touch, which
-      # reads like a missing package rather than a missing permission.
-      #
-      # Only `npm whoami` is checked here, and that works with any valid
-      # token. `npm access list packages` is deliberately NOT: it needs
-      # account-level access to list a user's packages, and a granular token
-      # scoped to one package is answered 403 - so asking it would reject a
-      # perfectly good publish token. The write permission is proven by the
-      # publish itself, and the failure message says what was missing.
-      - name: check the publish token
-        run: |
-          set -euo pipefail
-          if ! npm whoami; then
-            echo "::error::NPM_TOKEN is not a valid npm token. The publish job needs a token that can publish opencode-harness-kit."
-            exit 1
-          fi
-          echo "the token is valid"
-      # prepublishOnly rebuilds dist, so the install above is what provides
-      # the esbuild binary it runs with. Auth comes from NPM_TOKEN (a
-      # granular access token stored as a repo secret); without it this step
-      # fails with ENEEDAUTH and the test job above still stays green.
-      - name: publish
-        run: |
-          set -euo pipefail
-          if ! npm publish --provenance --access public; then
-            echo "::error::npm publish failed. The usual cause is a token without WRITE access to the opencode-harness-kit package: npm answers 404 for a package the token cannot touch, which reads like a missing package. Check the token at https://www.npmjs.com/settings/<your-npm-username>/access-tokens - the package needs 'Read and write', and the expiry must not be in the past."
-            exit 1
-          fi
+          # Never cache the package manager in a release build: the cache is
+          # keyed on the lockfile, and a stale one is a mystery in a publish.
+          package-manager-cache: false
+      # Trusted publishing needs npm 11.5.1 or later. Node 22 ships npm 10.
+      - run: npm install -g npm@latest
+      - name: configure the registry
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          {
+            echo "registry=https://registry.npmjs.org/"
+            if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+              echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}"
+              echo "always-auth=true"
+            fi
+          } >> ~/.npmrc
+      - run: npm ci --no-audit --no-fund
+      # Two ways to publish, and the job picks the one that is available.
+      #
+      #   trusted publishing (OIDC)  - no secret at all. The package names
+      #     this workflow on npmjs.com and npm trusts the runner's identity.
+      #   a token                   - a granular token scoped to this one
+      #     package, for the case where OIDC is not set up.
+      #
+      # The registry is configured by hand rather than through setup-node's
+      # `registry-url`, because that helper always writes an auth line. An
+      # empty auth line makes npm think it is authenticated and skip the OIDC
+      # exchange entirely.
+      - name: check the publish credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            # A token is present, so the token path. `npm whoami` is the only
+            # check that works for a token scoped to one package:
+            # `npm access list packages` needs account-level access to list a
+            # user's packages, and a granular token is answered 403 for it.
+            if ! npm whoami; then
+              echo "::error::NPM_TOKEN is not a valid npm token. The publish job needs a token that can publish opencode-harness-kit."
+              exit 1
+            fi
+            echo "publishing with a token"
+          else
+            # No token, so trusted publishing. `npm whoami` does NOT reflect
+            # an OIDC identity - the exchange happens inside the publish - so
+            # asking it here would fail a publish that would have worked.
+            echo "no NPM_TOKEN: publishing through trusted publishing (OIDC)"
+          fi
+      # prepublishOnly rebuilds dist, so the install above is what provides
+      # the esbuild binary it runs with.
+      - name: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Provenance is generated automatically under trusted publishing, so
+          # the flag is only needed on the token path.
+          args=(--access public)
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            args+=(--provenance)
+          fi
+          if ! npm publish "${args[@]}"; then
+            echo "::error::npm publish failed. With no NPM_TOKEN this is trusted publishing: check that npmjs.com lists this repository and workflow (ci.yml) as a trusted publisher, that the workflow name matches exactly, and that the config has had its first successful publish within 2 days. With a token it is usually a token without WRITE access to the opencode-harness-kit package - npm answers 404 for a package the token cannot touch, which reads like a missing package."
+            exit 1
+          fi
