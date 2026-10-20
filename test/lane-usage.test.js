@@ -1,0 +1,149 @@
+// The lane counter decides whether the fleet shrinks, so it has to count
+// things the way they happen.
+//
+// opencode emits `message.updated` several times for one assistant message:
+// created, streamed, completed. A counter that read every event reported
+// three calls for every call made, which is the number the "cut the lanes
+// nobody calls" argument would have been based on. These pin the fix: one
+// assistant message is one call.
+//
+// The second half is where the file is looked for. The plugin writes to the
+// project root; the command used to read `process.cwd()`, so running it from
+// a subdirectory reported "never called" for every lane - a fleet that looked
+// entirely unused.
+
+import { test } from "node:test"
+import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+import { findTelemetryFile, readLaneUsage, averageMs } from "../src/lane-usage.js"
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
+const CLI = join(REPO, "bin", "oc-harness.mjs")
+
+function project(telemetry) {
+  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-"))
+  mkdirSync(join(dir, ".space"), { recursive: true })
+  writeFileSync(join(dir, ".space", "telemetry.jsonl"), telemetry)
+  return dir
+}
+
+test("one assistant message is one call, however many events it produced", () => {
+  const dir = project(
+    [
+      // The same message, seen three times: created, streamed, completed.
+      JSON.stringify({ t: "1", kind: "lane", id: "msg_1", agent: "build", model: "minimax-m3.1-flash-free" }),
+      JSON.stringify({ t: "2", kind: "lane", id: "msg_1", agent: "build", model: "minimax-m3.1-flash-free" }),
+      JSON.stringify({ t: "3", kind: "lane", id: "msg_1", agent: "build", model: "minimax-m3.1-flash-free", ms: 4200 }),
+      // A second, different call on another lane.
+      JSON.stringify({ t: "4", kind: "lane", id: "msg_2", agent: "locate", model: "longcat-2.5-preview-free", ms: 900 }),
+    ].join("\n"),
+  )
+  try {
+    const file = findTelemetryFile(dir)
+    const { lanes, records, ignored } = readLaneUsage(file)
+    assert.equal(records, 4, "four records were read")
+    assert.equal(ignored, 0)
+    assert.equal(lanes.build.calls, 1, "three events are one call")
+    assert.equal(lanes.locate.calls, 1)
+    assert.equal(averageMs(lanes.build.ms), 4200)
+    assert.equal(averageMs(lanes.locate.ms), 900)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a call that never completed still counts as called", () => {
+  const dir = project(
+    [
+      JSON.stringify({ t: "1", kind: "lane", id: "msg_1", agent: "sweep", model: "nemotron-3.5-super-vl-free" }),
+    ].join("\n"),
+  )
+  try {
+    const { lanes } = readLaneUsage(findTelemetryFile(dir))
+    assert.equal(lanes.sweep.calls, 1, "an unanswered lane was called")
+    assert.equal(averageMs(lanes.sweep.ms), null, "and has no duration to average")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("records with no message id are ignored rather than counted", () => {
+  // Written by a kit version whose counter was inflated threefold. Counting
+  // them would put a known-wrong figure next a known-right one.
+  const dir = project(
+    [
+      JSON.stringify({ t: "1", kind: "lane", agent: "build", model: "minimax-m3.1-flash-free", ms: 100 }),
+      JSON.stringify({ t: "2", kind: "lane-call", agent: "build", model: "minimax-m3.1-flash-free" }),
+      JSON.stringify({ t: "3", kind: "lane", id: "msg_1", agent: "build", model: "minimax-m3.1-flash-free", ms: 100 }),
+    ].join("\n"),
+  )
+  try {
+    const { lanes, ignored } = readLaneUsage(findTelemetryFile(dir))
+    assert.equal(lanes.build.calls, 1)
+    assert.equal(ignored, 2, "the two id-less records were reported, not counted")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("the telemetry file is found by walking up from a subdirectory", () => {
+  const dir = project("")
+  try {
+    const nested = join(dir, "src", "deep")
+    mkdirSync(nested, { recursive: true })
+    assert.equal(findTelemetryFile(nested), join(dir, ".space", "telemetry.jsonl"))
+    assert.equal(findTelemetryFile(dir), join(dir, ".space", "telemetry.jsonl"))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a project with no telemetry reports no calls rather than failing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-empty-"))
+  try {
+    assert.equal(findTelemetryFile(dir), null)
+    const { lanes, records } = readLaneUsage(null)
+    assert.deepEqual(lanes, {})
+    assert.equal(records, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("`oc-harness lanes` counts a call once, from a subdirectory", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-cli-"))
+  const configDir = join(dir, "config")
+  try {
+    mkdirSync(join(dir, ".space"), { recursive: true })
+    mkdirSync(configDir, { recursive: true })
+    const nested = join(dir, "src", "deep")
+    mkdirSync(nested, { recursive: true })
+
+    writeFileSync(
+      join(dir, ".space", "telemetry.jsonl"),
+      [
+        JSON.stringify({ t: "1", kind: "lane", id: "m1", agent: "build", model: "minimax-m3.1-flash-free" }),
+        JSON.stringify({ t: "2", kind: "lane", id: "m1", agent: "build", model: "minimax-m3.1-flash-free" }),
+        JSON.stringify({ t: "3", kind: "lane", id: "m1", agent: "build", model: "minimax-m3.1-flash-free", ms: 4200 }),
+        JSON.stringify({ t: "4", kind: "lane", id: "m2", agent: "locate", model: "longcat-2.5-preview-free", ms: 900 }),
+      ].join("\n"),
+    )
+
+    const r = spawnSync("node", [CLI, "lanes"], {
+      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
+      cwd: nested,
+      encoding: "utf8",
+    })
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
+    assert.match(out, /build\s+1\s+4200/, `expected build=1 call at 4200ms:\n${out}`)
+    assert.match(out, /locate\s+1\s+900/, `expected locate=1 call at 900ms:\n${out}`)
+    assert.match(out, /8 lane\(s\) were never called/, out)
+    assert.match(out, /\.space\/telemetry\.jsonl/, "the command says which file it read")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
