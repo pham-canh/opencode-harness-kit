@@ -19,12 +19,25 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./profile": "./src/profile.js",
-    "./config": "./src/config.js",
-    "./rules": "./src/rules.js",
-    "./package.json": "./package.json",
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./src/config.js"
+    },
+    "./denylist": {
+      "types": "./dist/denylist.d.ts",
+      "import": "./src/denylist.js"
+    },
     "./lanes.schema.json": "./lanes.schema.json",
-    "./profiles/schema.json": "./profiles/schema.json"
+    "./package.json": "./package.json",
+    "./profile": {
+      "types": "./dist/profile.d.ts",
+      "import": "./src/profile.js"
+    },
+    "./profiles/schema.json": "./profiles/schema.json",
+    "./rules": {
+      "types": "./dist/rules.d.ts",
+      "import": "./src/rules.js"
+    }
   },
   "bin": {
     "oc-harness": "bin/oc-harness.mjs"
@@ -95,5 +108,13 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "pham-canh"
+  "author": "pham-canh",
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.18.31"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  }
 }

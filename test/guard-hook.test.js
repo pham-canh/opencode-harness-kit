@@ -301,3 +301,43 @@ test("the commands the kit allows are still allowed", async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// The denylist is one list, and it is read the way the rules are read.
+//
+// Matching the raw command string is what lets `cd /tmp && npm publish`
+// through: the pattern is `npm publish*` and the command does not start
+// with it. It also let `sudo npm publish` and `sh -c "npm publish"` through,
+// for exactly the same reason.
+//
+// The guard hook is exercised here through the same path the plugin uses.
+import { checkDenied } from "../src/rules.js"
+
+test("the denylist is checked per segment, not against the raw string", () => {
+  const blocked = [
+    "npm publish",
+    "cd /tmp && npm publish",
+    "sudo npm publish",
+    "env FOO=1 npm publish",
+    "sh -c 'npm publish'",
+    "bash -c \"npm publish\"",
+    "cd /tmp && gh pr create --title x",
+    "sudo rm -rf /",
+  ]
+  for (const command of blocked) {
+    const hit = checkDenied(command)
+    assert.ok(hit, `the guard let this through: ${command}`)
+  }
+})
+
+test("a command that is not on the list is not blocked", () => {
+  const allowed = [
+    "npm test",
+    "npm run build",
+    "git push",
+    "echo npm publish",
+    "ls -la",
+  ]
+  for (const command of allowed) {
+    assert.equal(checkDenied(command), null, `the guard blocked this: ${command}`)
+  }
+})

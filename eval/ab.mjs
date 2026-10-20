@@ -33,7 +33,7 @@ import { elapsedSeconds, median } from "./metrics.js"
 import { countFlag, numberFlag } from "./flags.mjs"
 import { gradeAnswer, gradeMutation } from "./verify.mjs"
 import { checkPremises } from "./premises.mjs"
-import { parseJsonc } from "../src/profile.js"
+import { parseJsonc, configDir } from "../src/profile.js"
 
 /**
  * The message of a caught value, whatever it turned out to be.
@@ -361,16 +361,31 @@ function sanitizeCopy(dir) {
 }
 
 /**
- * The model the kit-on arm will use, read from the live config.
+ * The model the kit-on arm will actually use, read from the live config.
+ *
+ * Not the top-level `model`: `use` writes `default_agent` and a per-lane
+ * `agent.<lane>.model`, and opencode runs the default agent. The router also
+ * moves a lane onto the next rung of its chain when the route is spent, and
+ * it rewrites `agent.<lane>.model` - the top-level `model` stays where it
+ * was. So the top-level field is the model the kit-on arm is NOT on, in
+ * exactly the case the kit exists to handle.
+ *
+ * The config is read from `configDir()`, which honours
+ * `OPENCODE_CONFIG_DIR` - the one env var the kit honours everywhere else.
+ * A hard-coded `~/.config/opencode` is a different file on any machine that
+ * sets it, and the kit-on arm and the pin would then read two configs.
  *
  * @returns {string | null}
  */
 function liveModel() {
+  const dir = configDir()
   for (const name of ["opencode.jsonc", "opencode.json"]) {
-    const p = join(REAL_HOME, ".config/opencode", name)
+    const p = join(dir, name)
     if (!existsSync(p)) continue
     try {
-      const m = parseJsonc(readFileSync(p, "utf8"))?.model
+      const cfg = /** @type {any} */ (parseJsonc(readFileSync(p, "utf8"))) ?? {}
+      const lane = cfg.default_agent ?? "build"
+      const m = cfg.agent?.[lane]?.model ?? cfg.model
       if (typeof m === "string" && m) return m
     } catch {}
   }

@@ -3,6 +3,7 @@
 
 import { homedir, tmpdir } from "node:os"
 import { resolve as resolvePath, sep } from "node:path"
+import { deniedBy } from "./denylist.js"
 
 // Two ideas here:
 //
@@ -442,6 +443,41 @@ function matches(rule, text) {
   if (rule.check) return rule.check(text)
   if (!rule.test?.test(text)) return false
   return !rule.unless?.test(text)
+}
+
+/**
+ * The shared denylist, checked the way the rules are checked.
+ *
+ * The denylist used to be matched against the RAW command string, which is
+ * what lets `cd /tmp && npm publish` through: the pattern is `npm publish*`
+ * and the command does not start with it. It also let `sudo npm publish` and
+ * `sh -c "npm publish"` through, for the same reason.
+ *
+ * So the denylist is checked per SEGMENT, with the wrappers stripped, and
+ * the payload of a `bash -c` is checked too - exactly the way the rules are
+ * checked. One list, one way of reading it.
+ *
+ * @param {string} command
+ * @param {number} [depth]
+ * @returns {{ pattern: string, segment: string } | null}
+ */
+export function checkDenied(command, depth = 0) {
+  if (!command || !command.trim()) return null
+  const parts = segments(command)
+  const normalized = parts.map((seg) => stripPrefixes(seg))
+  for (let i = 0; i < parts.length; i++) {
+    const pattern = deniedBy(normalized[i])
+    if (pattern) return { pattern, segment: parts[i] }
+  }
+  if (depth < MAX_SHELL_DEPTH) {
+    for (const seg of parts) {
+      const payload = shellPayload(seg)
+      if (!payload) continue
+      const hit = checkDenied(payload, depth + 1)
+      if (hit) return hit
+    }
+  }
+  return null
 }
 
 /**

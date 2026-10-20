@@ -421,8 +421,8 @@ test("cost reports what the kit is doing on this project", () => {
     writeFileSync(
       join(project, ".space", "prune.jsonl"),
       [
-        JSON.stringify({ t: "1", profile: "fleet-safe", stubbed: 3, kept: 9, savedBytes: 4096, threshold: 176000 }),
-        JSON.stringify({ t: "2", profile: "fleet-safe", stubbed: 2, kept: 8, savedBytes: 2048, threshold: 176000 }),
+        JSON.stringify({ t: "1", profile: "fleet-safe", stubbed: 3, kept: 9, savedChars: 4096, threshold: 176000 }),
+        JSON.stringify({ t: "2", profile: "fleet-safe", stubbed: 2, kept: 8, savedChars: 2048, threshold: 176000 }),
       ].join("\n"),
     )
     const r = run(box, ["cost"], { cwd: project })
@@ -430,7 +430,7 @@ test("cost reports what the kit is doing on this project", () => {
     // The output is styled, so the ANSI codes are stripped before matching.
     const plain = r.out.replace(/\x1b\[[0-9;]*m/g, "")
     assert.match(plain, /pruned/)
-    assert.match(plain, /6,144/, "the bytes removed are summed: 4096 + 2048")
+    assert.match(plain, /6,144/, "the characters removed are summed: 4096 + 2048")
     assert.match(plain, /5 tool outputs stubbed/, "the stubbed parts are summed")
   } finally {
     box.cleanup()

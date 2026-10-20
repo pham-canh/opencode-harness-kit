@@ -14,19 +14,37 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { writeFileSync } from "node:fs"
 import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
 
 function run(args, opts = {}) {
-  const dir = mkdtemp("ock-json-")
+  const dir = opts.dir ?? mkdtemp("ock-json-")
   const r = spawnSync("node", [CLI, ...args], {
     env: { OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: dir, ...(opts.env ?? {}) },
     encoding: "utf8",
     cwd: opts.cwd ?? dir,
   })
   return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" }
+}
+
+/**
+ * A local model catalogue.
+ *
+ * The suite runs offline, so nothing here reaches models.dev. Two reads of
+ * the live catalogue can also disagree - a model can be withdrawn between
+ * them - and a test that compares the two would be flaky for a reason that
+ * has nothing to do with the code.
+ *
+ * @param {string} dir
+ * @returns {string} the file:// URL
+ */
+function catalogue(dir) {
+  const file = join(dir, "catalog.json")
+  writeFileSync(file, JSON.stringify({ opencode: { models: {} } }))
+  return `file://${file}`
 }
 
 /**
@@ -48,7 +66,8 @@ function parseOnly(stdout) {
 }
 
 test("doctor --json prints the report and nothing else", () => {
-  const r = run(["doctor", "--json"])
+  const dir = mkdtemp("ock-json-")
+  const r = run(["doctor", "--json"], { dir, env: { OPENCODE_HARNESS_CATALOG_URL: catalogue(dir) } })
   const report = parseOnly(r.stdout)
   assert.equal(typeof report.ok, "boolean")
   assert.equal(typeof report.problems, "number")
@@ -59,8 +78,10 @@ test("doctor --json prints the report and nothing else", () => {
 })
 
 test("doctor --json says the same thing as the human report", () => {
-  const j = parseOnly(run(["doctor", "--json"]).stdout)
-  const human = run(["doctor"]).stdout
+  const dir = mkdtemp("ock-json-")
+  const env = { OPENCODE_HARNESS_CATALOG_URL: catalogue(dir) }
+  const j = parseOnly(run(["doctor", "--json"], { dir, env }).stdout)
+  const human = run(["doctor"], { dir, env }).stdout
   assert.match(human, /doctor/)
   // Whatever the human report counts, the JSON counts the same way.
   const drift = Number(/(\d+) profile\(s\) drifted/.exec(human)?.[1] ?? 0)
@@ -89,9 +110,11 @@ test("show --json names every lane, and the same lanes the human report does", (
 
 test("a JSON command that fails still prints JSON", () => {
   // A profile that does not exist is an error, and an error in JSON mode
-  // still has to be JSON: a script that parses the output should not have to
-  // know whether the command succeeded.
+  // still has to be JSON: a script that pipes the output into a parser gets
+  // something it can read, rather than a parse failure.
   const r = run(["show", "no-such-profile", "--json"])
   assert.notEqual(r.code, 0)
-  assert.ok(r.stdout.trim().length === 0 || r.stdout.trim().startsWith("{"))
+  const parsed = parseOnly(r.stdout)
+  assert.equal(parsed.ok, false)
+  assert.match(parsed.error, /no profile named/)
 })

@@ -68,6 +68,10 @@ interface StubStats {
 
 /** Rough size of a part, used only for the stats line. */
 function sizeOf(part: any): number {
+  // CHARACTERS, not bytes. A UTF-8 character is more than one byte, and a
+  // report that says "bytes" and counts characters is off by a factor on
+  // any text that is not ASCII - which is most of the code in a repository.
+  // The field is named for what it measures.
   if (typeof part?.text === "string") return part.text.length
   if (typeof part?.state?.output === "string") return part.state.output.length
   return 0
@@ -319,7 +323,7 @@ async function logPrune(
         profile: profileId,
         stubbed: stats.stubbed,
         kept: stats.kept,
-        savedBytes: stats.saved,
+        savedChars: stats.saved,
         threshold: stats.threshold,
       }) + "\n",
     )
