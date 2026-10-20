@@ -110,10 +110,10 @@ next session more than a small code change.
 
 Per-lane effort and step caps are set in the generated config and enforced by
 the harness, not by anything written here. `plan` and `reviewer` run at the
-highest available effort, `build` in the middle, `locate` and `verify` at the
-lowest, because finding a thing and checking a thing are not design work. If
-you are playing one of the low-effort lanes and feel yourself designing an
-architecture, stop and report the evidence instead.
+highest available effort, `build` runs at the top of the range too, and
+`locate` and `verify` at the lowest, because finding a thing and checking a
+thing are not design work. If you are playing one of the low-effort lanes and
+feel yourself designing an architecture, stop and report the evidence instead.
 
 ## When context grows
 

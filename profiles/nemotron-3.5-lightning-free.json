@@ -7,7 +7,7 @@
   "family": "nemotron-free",
   "verified": "2026-10-19",
   "retention": "may-train",
-  "notes": "Its output cap equals its whole context window, so it is the lane for emitting a file larger than 128k tokens. It publishes no effort level, so it spends nothing on reasoning. One measured call took 114s against a 7s median, so it is not on a latency-sensitive path.",
+  "notes": "Its output cap equals its whole context window, so it is the lane for emitting a file larger than 128k tokens. It publishes no effort level, so it spends nothing on reasoning. It is usually the quickest lane on the tier - 3.7s average over four requests - but one measured call took 114s, so it is not on a latency-sensitive path.",
   "limits": {
     "context": 262144,
     "output": 262144

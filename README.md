@@ -68,18 +68,18 @@ test suite asserts that rather than taking it on faith.
 
 The default profile is a **fleet**: ten jobs, ten free models, one session.
 
-| lane | job | model |
-|---|---|---|
-| `build` | write and verify the change | MiniMax M3.1 Flash |
-| `plan` | turn a request into a plan | Beam |
-| `reviewer` | read a change in two passes | Nemotron 3 Ultra |
-| `locate` | find where something lives | Nemotron 3.5 Lightning |
-| `verify` | run the project's checks | Big Pickle |
-| `vision` | read an image or a screenshot | MiMo-V2.6 Flash |
-| `doc` | read a long document or a spec | GLM 5.3 Flash |
-| `schema` | produce JSON or a JSON schema | DeepSeek V4.1 Flash |
-| `sweep` | sweep a lot of code mechanically | Nemotron 3.5 Super VL |
-| `longform` | read a megabyte, or write alternatives | LongCat 2.5 Preview |
+| lane | job | model | measured |
+|---|---|---|---|
+| `build` | write and verify the change | MiniMax M3.1 Flash | 3.1 s |
+| `plan` | turn a request into a plan | Beam | **2.6 s** |
+| `reviewer` | read a change in two passes | Nemotron 3 Ultra | 4.7 s (34 s cold) |
+| `locate` | find where something lives | Nemotron 3.5 Lightning | 3.7 s |
+| `verify` | run the project's checks | Big Pickle | 6.5 s |
+| `vision` | read an image or a screenshot | MiMo-V2.6 Flash | 19.2 s |
+| `doc` | read a long document or a spec | GLM 5.3 Flash | 5.4 s |
+| `schema` | produce JSON or a JSON schema | DeepSeek V4.1 Flash | 3.4 s |
+| `sweep` | sweep a lot of code mechanically | Nemotron 3.5 Super VL | 4.2 s |
+| `longform` | read a megabyte, or write alternatives | LongCat 2.5 Preview | 9.4 s |
 
 Each lane is an OpenCode agent with its own model, its own context window and
 its own effort level. You do not switch models: you hand the job to the lane
@@ -88,16 +88,21 @@ was measured, not assumed:
 
 ```
 agent=build    modelID=minimax-m3.1-flash-free
-agent=reviewer modelID=glm-5.3-flash-free
+agent=reviewer modelID=nemotron-3-ultra-free
 agent=build    modelID=minimax-m3.1-flash-free
 ```
 
 Why ten lanes and not one model: the free tier is genuinely uneven, and the
-difference is measurable. Beam answers in 4-6 seconds with a 1M window; GLM
-takes 16-27 seconds and is the careful one; Nemotron Super VL is the only
-model on the tier that publishes a `none` effort level, which makes
-"reasoning off" a job of its own. Putting each on the job it is good at is
-worth more than any single "best" model.
+difference is measurable. Beam answers in 2.6 seconds with a 1M window;
+MiMo reads an image in 19 and MiniMax reads the same image in 8; Nemotron
+Super VL is the only model on the tier that publishes a `none` effort level,
+which makes "reasoning off" a job of its own. Putting each on the job it is
+good at is worth more than any single "best" model.
+
+The default is the **safe** fleet, and it is safe by construction rather than
+by label: every lane resolves to a provider with a zero-retention policy, and
+six of the ten lanes run on a second-choice model to stay there. The
+unrestricted fleet gives every lane the model built for it.
 
 The full table, with the measurements behind every choice and the three
 capabilities the tier turns out not to have, is in
@@ -114,8 +119,8 @@ $ oc-harness use fleet-safe --print
 // profile      fleet-safe
 // model        opencode/minimax-m3.1-flash-free
 // lanes        10 enabled, each on the first model its chain allows
-// context      1,000,000 tokens
-// input cap    1,000,000 tokens  (narrowest lane; governs the shared reserve)
+// context      1,000,000 tokens  (base model)
+// input cap    200,000 tokens  (narrowest lane; governs the shared reserve)
 // output cap   512,000 tokens
 // reasoning    low < medium < high < xhigh < max
 // retention    zero-retention
@@ -149,10 +154,13 @@ $ oc-harness show fleet-safe
   lanes
   build                minimax-m3.1-flash-free  out 512,000
   plan                 deepseek-v4.1-flash-free  out 32,000
+  locate               deepseek-v4.1-flash-free  out 32,000
+  vision               minimax-m3.1-flash-free    out 512,000
   ...
   lane effort
     plan       max
-    locate     (unset)    (requested low)
+    locate     low
+    sweep      (unset)    (requested none)
 ```
 
 A model with no tunable effort at all gets **no** `variant` written, rather
@@ -175,7 +183,7 @@ for safety reasons, which is not the same promise, so it gets its own value.
 ```
 $ oc-harness list
   ▸ fleet-safe               200,000      max      10  zero-retention
-    fleet-all                200,000      max      10  may-train
+    fleet-all                160,000      max      10  may-train
     beam-free             1,048,576      max       5  retained
 ```
 
@@ -186,10 +194,10 @@ it. One file covers ten jobs either way.
 
 ## Shipped profiles
 
-| profile | lanes | context | top effort | retention |
+| profile | lanes | input cap | top effort | retention |
 |---|---|---|---|---|
 | `fleet-safe` (default) | 10 | 200,000 | `max` | zero-retention |
-| `fleet-all` | 10 | 200,000 | `max` | **may train** |
+| `fleet-all` | 10 | 160,000 | `max` | **may train** |
 | `minimax-m3.1-flash-free` | 5 | 1,000,000 | `max` | zero-retention |
 | `beam-free` | 5 | 1,048,576 | `max` | retained |
 | `deepseek-v4.1-flash-free` | 5 | 200,000 | `max` | zero-retention |
@@ -199,7 +207,7 @@ it. One file covers ten jobs either way.
 | `nemotron-3-ultra-free` | 5 | 1,000,000 | — | **may train** |
 | `nemotron-3.5-lightning-free` | 5 | 262,144 | — | **may train** |
 | `mimo-v2.6-flash-free` | 5 | 200,000 | — | **may train** |
-| `big-pickle` | 5 | 200,000 | — | **may train** |
+| `big-pickle` | 5 | 160,000 | — | **may train** |
 
 The five-lane profiles run everything on one model, which is the right shape
 when you want one route and want to know exactly which one.
@@ -293,24 +301,34 @@ at all.
 
 ### `lanes` is how the fleet gets smaller
 
-Ten lanes is a hypothesis. `oc-harness lanes` counts the calls:
+Ten lanes is a hypothesis. `oc-harness lanes` counts the requests:
 
 ```
 $ oc-harness lanes
 
-  lane            calls     avg ms  model
+  lane            reqs     avg ms  model
   ----------------------------------------------------------------
-  plan               12       4820  deepseek-v4.1-flash-free
-  build              47       6310  minimax-m3.1-flash-free
-  reviewer            0          -  glm-5.3-flash-free     never called
-  ...
-  1 lane(s) were never called    cut candidates, not defects
+  plan                7       2624  beam-free
+  build              21      10104  minimax-m3.1-flash-free
+  reviewer            2       4716  nemotron-3-ultra-free
+  locate              4       3680  nemotron-3.5-lightning-free
+  verify              2       6546  big-pickle
+  vision              2      19167  mimo-v2.6-flash-free
+  doc                 2       5421  glm-5.3-flash-free
+  schema              1       3390  deepseek-v4.1-flash-free
+  sweep               3       4221  nemotron-3.5-super-vl-free
+  longform            2       9382  longcat-2.5-preview-free
 ```
 
-A lane that is never called is a description the model reads on every turn and
+A lane that is never used is a description the model reads on every turn and
 a free model doing nothing. Cut it from the profile's `roles` and the lane
-leaves the config with it. The counters come from `.space/telemetry.jsonl`,
-written by the plugin, never sent anywhere.
+leaves the config with it.
+
+One request is one assistant message, which is one round trip to the provider:
+a lane that makes three tool calls makes three requests. The counters come
+from `.space/telemetry.jsonl`, written by the plugin, never sent anywhere, and
+the file is found by walking up from the working directory so the command
+works from a subdirectory too.
 
 ## Measuring before tuning
 

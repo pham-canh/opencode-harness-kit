@@ -160,6 +160,17 @@ async function cmdList() {
       console.log(`      ${yellow(entry.reason)}`)
     }
   }
+  // The routes that died. A profile is perishable, and a tier that turns over
+  // in days is the reason the fleet has chains instead of pins - so the ones
+  // that went are named, with what replaced them.
+  const gone = idx.withdrawn ?? []
+  if (gone.length) {
+    console.log("\n  " + stamp("no longer on the tier"))
+    for (const entry of gone) {
+      console.log(`  ${red("✗")} ${entry.id}`)
+      console.log(`      ${stamp(entry.reason)}`)
+    }
+  }
   console.log(
     `\n  ${stamp("install one:")} oc-harness use <profile>\n  ${stamp("inspect:")}   oc-harness show <profile>\n`,
   )
@@ -1106,7 +1117,7 @@ function cmdLanes() {
   const file = findTelemetryFile(process.cwd())
   const { lanes: stats, records, ignored } = readLaneUsage(file)
 
-  console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${records} lane call(s)`)}\n`)
+  console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${records} lane request(s)`)}\n`)
   const lanes = Object.keys(profile.roles ?? {})
   if (!lanes.length) {
     console.log(`  ${stamp("this profile enables no lanes")}\n`)
@@ -1114,7 +1125,7 @@ function cmdLanes() {
   }
   const head = [
     "  " + "lane".padEnd(12),
-    "calls".padStart(7),
+    "reqs".padStart(7),
     "avg ms".padStart(9),
     "model".padEnd(32),
   ].join("  ")
@@ -1133,7 +1144,7 @@ function cmdLanes() {
           String(0).padStart(7),
           "-".padStart(9),
           (model ?? "-").padEnd(32),
-        ].join("  ") + yellow("  never called"),
+        ].join("  ") + yellow("  never used"),
       )
       continue
     }
@@ -1141,7 +1152,7 @@ function cmdLanes() {
     console.log(
       [
         "  " + lane.padEnd(12),
-        String(s.calls).padStart(7),
+        String(s.requests).padStart(7),
         String(avg ?? "-").padStart(9),
         ([...s.models].join(", ") || model || "-").padEnd(32),
       ].join("  "),
@@ -1151,13 +1162,13 @@ function cmdLanes() {
   console.log("")
   if (unused) {
     console.log(
-      `  ${yellow(`${unused} lane(s) were never called`)} ${stamp("cut candidates, not defects")}`,
+      `  ${yellow(`${unused} lane(s) were never used`)} ${stamp("cut candidates, not defects")}`,
     )
   } else {
-    console.log(`  ${green("every lane was called at least once")}`)
+    console.log(`  ${green("every lane was used at least once")}`)
   }
   console.log(
-    `  ${stamp("one call is one assistant message; avg ms covers the calls that finished")}`,
+    `  ${stamp("one request is one assistant message; avg ms covers the requests that finished")}`,
   )
   console.log(
     `  ${stamp(`telemetry is read from ${file ?? "no .space/telemetry.jsonl found by walking up from here"}`)}\n`,

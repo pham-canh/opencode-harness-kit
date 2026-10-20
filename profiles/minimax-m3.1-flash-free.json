@@ -7,7 +7,7 @@
   "family": "minimax",
   "verified": "2026-10-19",
   "retention": "zero-retention",
-  "notes": "Flagship coding and agent model on the free tier: 512k output tokens, the widest of any free route, and the only one that takes video. Tool calls are stable. It does not support temperature, and models.dev publishes no structured_output flag for it, so JSON output is requested in the prompt rather than negotiated with the API. Measured at 6-7s for a one-word reply.",
+  "notes": "Flagship coding and agent model on the free tier: 512k output tokens, the widest of any free route, and the fastest measured image reader at 7.7s. Tool calls are stable. It does not support temperature, and models.dev publishes no structured_output flag for it, so JSON output is requested in the prompt rather than negotiated with the API. Measured at 3.1s for a one-word reply.",
   "limits": {
     "context": 1000000,
     "output": 512000

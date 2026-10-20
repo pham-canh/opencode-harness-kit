@@ -126,14 +126,52 @@ Two behaviours, both silent:
   configured for one model and defined by a file without a model ran on the
   parent's model, and the config still looked correct.
 
+The reproduction needs the plugin out of the way, because the kit's own
+`config` hook re-pins the model:
+
+```
+$ opencode run --pure --agent build "..."
+```
+
+With `--pure`, the file's model wins. Without it, the plugin re-pins the model
+to the lane's own - but the file's `prompt` and `description` still win
+either way, so a shadowing file still takes the lane's instructions away.
+
 So this kit keeps the model in the generated config and the prompt body in
 `prompts/`, referenced with `{file:...}`. `oc-harness verify` fails when an
 installed agent file shadows a lane, and `oc-harness install` removes the agent
 files an earlier version of this kit left behind.
 
+There are **four** directories a shadow can hide in, and opencode reads all
+four: `agent/` and `agents/`, in the config dir and in `.opencode/`. When the
+same name is in both `agent/` and `agents/`, the plural directory wins. A
+checker that only looked at `agents/` missed half of them.
+
 The reference also has to be absolute or start with `~`: a relative
 `{file:./prompts/x.md}` is silently ignored, and a lane with no instructions
 still runs.
+
+## A request is one assistant message, and the counter used to count three
+
+The lane counter decides which of the ten lanes earn their place, so it has to
+count the way the work happens.
+
+`opencode` emits `message.updated` several times for a single assistant
+message: once when the message is created, once per streaming update, and
+once when it completes. A counter that wrote a record per event reported three
+requests for every request made. The record now carries the message id and the
+reader merges on it, so one assistant message is one request.
+
+The `chat.message` hook looked like the natural place to count a request
+before the model answered, so that a call that never came back still counted.
+It cannot: on OpenCode 1.19 its `agent` field is `undefined`, so it cannot
+attribute a request to a lane at all. It is not used for this, because a
+second counter that cannot be correlated with the first double-counts every
+request.
+
+The file is also found by **walking up** from the working directory. The plugin
+writes it to the project root, and reading `process.cwd()` alone reported
+"never used" for every lane whenever the command was run from a subdirectory.
 
 ## The free tier cannot read a PDF, an audio file or a video
 
@@ -151,24 +189,33 @@ So a document is extracted locally and the **text** reaches the `doc` lane.
 MiMo publishes audio input and is in the fleet for its image reading, not its
 audio.
 
-## One model hangs on every file attachment
+## One model hangs on a file attachment, and only on an attachment
 
 `nemotron-3.5-super-vl-free` is the catalogue's vision-language model, and a
 live call with an image never returned: three attempts, 350 seconds, no
-answer. It also hung on a plain `.txt`. The same call on MiniMax answered in
-7 seconds and read the text out of the image correctly.
+answer. It also hung on a plain `.txt` attached to the prompt.
 
-It is in the fleet for the one thing it does that no other model on the tier
-does — publishing a `none` effort level, which makes "reasoning off" a job of
-its own — and never for pictures.
+It does **not** hang on a tool read. The `sweep` lane on Super VL answered a
+`grep` sweep in 4.2 seconds average over three requests, with no trouble at
+all. The rule is therefore narrower than "Super VL is broken": never hand it a
+file as an attachment. On a plain prompt it is the fastest reasoning-off route
+on the tier, and it is the only model that publishes a `none` effort level,
+which makes "reasoning off" a job of its own.
+
+The same call on MiniMax answered in 7 seconds and read the text out of the
+image correctly.
 
 ## One shared reserve, sized by the narrowest lane
 
 `compaction.reserved` is a single number for the whole config, and a fleet
 mixes a 1M model with 200k models. Sizing it by the widest model reserves
 125,829 tokens and leaves every 200k lane with 74,000 usable, which is where
-the lane stops working. It is therefore sized by the **narrowest** lane: 24,000
-tokens for `fleet-safe`.
+the lane stops working. It is therefore sized by the **narrowest** lane:
+
+| profile | narrowest lane | input cap | reserved | prune at |
+|---|---|---|---|---|
+| `fleet-safe` | DeepSeek V4.1 / GLM 5.3 | 200,000 | 24,000 | 176,000 |
+| `fleet-all` | Big Pickle | 160,000 | 19,200 | 140,800 |
 
 The cost is that a lane with a wide window gets a thinner buffer than it would
 like. That is the right direction to be wrong in: a buffer that is too small
@@ -192,8 +239,37 @@ from 79.5% to 88.1% selection accuracy by narrowing the choice to 3-5 options
 Ten lanes sits at the boundary rather than past it, and the reason it is
 tolerable is that the descriptions do not overlap: each lane names a different
 job, and the failure mode of a large catalogue is similar descriptions, not
-many descriptions. `oc-harness lanes` counts the calls so the fleet can be
+many descriptions. `oc-harness lanes` counts the requests so the fleet can be
 cut to what earns its place, rather than defended on principle.
+
+## Measuring a lane takes a delegation, not a flag
+
+`opencode run --agent <lane>` only runs a **primary** agent. Handed a
+subagent lane, it silently falls back to the default agent, and the run
+succeeds - so the measurement appears to work and says nothing.
+
+A subagent lane is exercised by delegating to it from a primary one:
+
+```
+opencode run --agent build "Use the task tool with subagent_type=reviewer to ..."
+```
+
+The `plan` and `build` lanes are primary, so they are run directly with
+`--agent`. The other eight are delegated to.
+
+## A model that inherits the caller's model is not a model at all
+
+A lane whose model is spent should move down its own chain, and a fleet has
+ten models, so one dead route must not take the other nine down with it.
+
+The first version of the router replaced the **whole profile** when the
+session's own model was spent, which set every lane of the fallback profile
+onto one model and left the other five lanes pointing at routes that were also
+spent. The docstring on that function promised the opposite. A fleet now keeps
+its lanes: the session model moves, each lane moves down its own chain, and
+the router publishes the model it chose so the effort hook pins the session to
+that one rather than back to the base model that is spent.
+
 
 ## Retry on 429 is deliberately not attempted
 

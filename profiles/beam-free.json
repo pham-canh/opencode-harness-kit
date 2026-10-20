@@ -7,7 +7,7 @@
   "family": "beam",
   "verified": "2026-10-19",
   "retention": "retained",
-  "notes": "Reflection 501B-A23B, text only, and the freshest knowledge of the free set at 2026-06-30. Measured as the fastest route on the tier at 4-6s. Its provider does not train on prompts but retains them for 30 days, which is why it is `retained` rather than `zero-retention`.",
+  "notes": "Reflection 501B-A23B, text only, and the freshest knowledge of the free set at 2026-06-30. Measured as the fastest route on the tier: 2.6s average over seven requests. Its provider does not train on prompts but retains them for 30 days, which is why it is `retained` rather than `zero-retention`.",
   "limits": {
     "context": 1048576,
     "output": 131072

@@ -175,12 +175,23 @@ judged worth those risks; that judgement is a default, not a fact, and
 **That default did not survive the month.** Four of those five models were
 withdrawn, including the one the default profile named. The tier of
 2026-10-19 has ten free models with ten different strengths, and no single
-one of them is best at everything: Beam answers in 4-6 seconds, GLM takes
-16-27 and is the careful one, Nemotron Super VL is the only model publishing
-a `none` effort level. The default became a **fleet** — ten jobs, ten models,
-one session — with a privacy ceiling rather than a single model. The reasoning
-and the measurements are in [`ROUTING.md`](ROUTING.md); the source study of
-the eleven production harnesses is in the section above.
+one of them is best at everything: on the first pass of measurements Beam
+answered in 4-6 seconds, GLM took 16-27 and was the careful one, and Nemotron
+Super VL was the only model publishing a `none` effort level. The default
+became a **fleet** — ten jobs, ten models, one session — with a privacy
+ceiling rather than a single model. The reasoning and the measurements are in
+[`ROUTING.md`](ROUTING.md); the source study of the eleven production
+harnesses is in the section above.
+
+**The first fleet's numbers were wrong, and measuring it again is what found
+out.** Re-measured on 2026-10-20, lane by lane, over live calls: GLM is
+4.4-5.8 seconds and not 16-27 (the old figure came from a much larger
+prompt); MiMo reads an image in 19.2 seconds and not 8; and Nemotron Super VL
+does **not** hang on a tool read, only on a file attached to the prompt, which
+means the sweep lane is sound. The measurement also showed the safe fleet
+giving up more than it needed to: two lanes were on a model the ceiling had
+forced them onto rather than the best one available for that job. The numbers,
+and what changed because of them, are in [`ROUTING.md`](ROUTING.md).
 
 ## How the privacy list was assembled
 
@@ -190,6 +201,11 @@ retaining data. Two more, `x-preview-f-free` and `deepseek-v4-flash-free`, are
 not named in the exception list and so fall under the general policy. Those two
 are marked in `retention.yml` as inferred rather than quoted, because the
 distinction matters if you are handling someone else's code.
+
+Both of those models have since been withdrawn, and `retention.yml` was
+rewritten against the page on 2026-10-19 to match the tier that exists now:
+seven new entries, four dead models dropped, and every value quoted rather
+than inferred.
 
 The tier of 2026-10-19 needed a third value. `beam-free` does not train on
 prompts but "retains them for 30 days for safety reasons", which is neither
@@ -236,7 +252,7 @@ mode of a large catalogue is similar descriptions, not many descriptions.
 
 So the fleet is built the way `omo` builds it — a job per lane, a chain per
 lane — and the number is treated as a hypothesis rather than a constant.
-`oc-harness lanes` counts the calls, and a lane nobody calls is cut.
+`oc-harness lanes` counts the requests, and a lane nobody uses is cut.
 
 The other thing the sources settled is where the model lives. OpenCode's Task
 tool takes a free-string `subagent_type` and no model parameter, so the only
@@ -260,5 +276,10 @@ and quietly replacing it.
   catalogue size
 - `https://github.com/code-yeongyu/oh-my-openagent` — a fleet of categories
   with per-category model chains, in OpenCode
-- OpenCode 1.19.0, measured: agent-file precedence, `{file:...}` resolution,
-  binary-file refusal, and a two-model delegation inside one session
+- OpenCode 1.19.0, measured: agent-file precedence, the four directories it
+  reads agents from, `{file:...}` resolution, binary-file refusal, the
+  `chat.message` hook's missing `agent` field, how many times
+  `message.updated` fires per message, and a two-model delegation inside one
+  session
+- The live free tier, measured 2026-10-20: one request per lane on both
+  fleets, ten lanes on each, through real delegations

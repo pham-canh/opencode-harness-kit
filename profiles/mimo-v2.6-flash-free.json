@@ -7,7 +7,7 @@
   "family": "mimo",
   "verified": "2026-10-19",
   "retention": "may-train",
-  "notes": "Xiaomi. The only free model that publishes audio input, and it read an image correctly in a live call at 8s. OpenCode 1.19 refuses to read a binary file at all, so the audio path is not reachable through the harness today; the vision path is. No effort levels, so no variant is written.",
+  "notes": "Xiaomi. The only free model that publishes audio input, and it read an image correctly in a live call, at 19.2s average - the slowest lane on the tier, and slower than minimax on the same picture. OpenCode 1.19 refuses to read a binary file at all, so the audio path is not reachable through the harness today; the vision path is. No effort levels, so no variant is written.",
   "limits": {
     "context": 200000,
     "output": 32000

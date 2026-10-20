@@ -1026,7 +1026,15 @@ var RouterPlugin = async ({ worktree }) => {
             }
             const key = `opencode/${fallback.model}`;
             if (health.unhealthy?.[key]) continue;
-            applyProfileToConfig(cfg, fallback);
+            const fleet = isFleet(profile);
+            applySessionModel(cfg, fallback, {
+              keepLanes: fleet,
+              // The lanes did not change, so the numbers derived from them did
+              // not change either.
+              profileId: fleet ? profile.id : fallback.id,
+              reserved: fleet ? reservedTokens(profile) : void 0,
+              threshold: fleet ? pruneThreshold(profile) : void 0
+            });
             health.active = candidate;
             writeHealth(worktree, health);
             break;
@@ -1083,7 +1091,10 @@ ${WARN_TEXT}`;
     }
   };
 };
-function applyProfileToConfig(cfg, profile) {
+function isFleet(profile) {
+  return Object.keys(profile?.roleModels ?? {}).length > 0;
+}
+function applySessionModel(cfg, profile, opts = {}) {
   try {
     const model = `${profile.provider}/${profile.model}`;
     cfg.model = model;
@@ -1091,19 +1102,26 @@ function applyProfileToConfig(cfg, profile) {
     const variant = profile.effort?.default;
     if (profile.effort?.levels?.length && variant) cfg.variant = variant;
     else delete cfg.variant;
-    for (const [lane, want] of Object.entries(profile.roles ?? {})) {
-      const agent = cfg.agent ?? (cfg.agent = {});
-      const existing = agent[lane] ?? (agent[lane] = {});
-      existing.model = model;
-      const level = resolveEffort(profile.effort?.levels ?? [], want);
-      if (level) existing.variant = level;
-      else delete existing.variant;
+    if (!opts.keepLanes) {
+      for (const [lane, want] of Object.entries(profile.roles ?? {})) {
+        const agent = cfg.agent ?? (cfg.agent = {});
+        const existing = agent[lane] ?? (agent[lane] = {});
+        existing.model = model;
+        const level = resolveEffort(profile.effort?.levels ?? [], want);
+        if (level) existing.variant = level;
+        else delete existing.variant;
+      }
     }
     if (cfg.compaction) {
       cfg.compaction.prune = true;
-      cfg.compaction.reserved = reservedTokens(profile);
+      cfg.compaction.reserved = opts.reserved ?? reservedTokens(profile);
     }
-    cfg.harness = { ...cfg.harness ?? {}, profile: profile.id, threshold: pruneThreshold(profile) };
+    cfg.harness = {
+      ...cfg.harness ?? {},
+      profile: opts.profileId ?? profile.id,
+      threshold: opts.threshold ?? pruneThreshold(profile),
+      sessionModel: model
+    };
   } catch {
   }
 }
@@ -1135,6 +1153,8 @@ function write(dir, record) {
 var TelemetryPlugin = async ({ worktree }) => {
   const dir = join4(worktree, ".space");
   const started = Date.now();
+  const opened = /* @__PURE__ */ new Set();
+  const closed = /* @__PURE__ */ new Set();
   return {
     event: async ({ event }) => {
       const type = event?.type;
@@ -1145,21 +1165,17 @@ var TelemetryPlugin = async ({ worktree }) => {
       }
       if (type === "message.updated") {
         const lane = laneOf(event);
-        if (lane) write(dir, { kind: "lane", ...lane });
+        if (!lane || !lane.id) return;
+        if (lane.ms !== void 0) {
+          if (closed.has(lane.id)) return;
+          closed.add(lane.id);
+          write(dir, { kind: "lane", ...lane });
+          return;
+        }
+        if (opened.has(lane.id)) return;
+        opened.add(lane.id);
+        write(dir, { kind: "lane", ...lane });
       }
-    },
-    "chat.message": async (input) => {
-      const agent = input?.agent;
-      if (typeof agent !== "string" || !agent) return;
-      const model = input?.model;
-      const variant = input?.variant;
-      write(dir, {
-        kind: "lane-call",
-        agent,
-        model: model?.modelID,
-        provider: model?.providerID,
-        variant: typeof variant === "string" ? variant : void 0
-      });
     },
     "tool.execute.after": async (input, output) => {
       const text = typeof output?.output === "string" ? output.output : "";
@@ -1182,6 +1198,7 @@ function laneOf(event) {
   const info = e?.properties?.info ?? e?.properties;
   if (!info || typeof info !== "object") return null;
   if (info.role && info.role !== "assistant") return null;
+  const id = typeof info.id === "string" ? info.id : void 0;
   const agent = typeof info.agent === "string" ? info.agent : void 0;
   const modelId = info.model?.modelID ?? info.modelID;
   const providerId = info.model?.providerID ?? info.providerID;
@@ -1189,8 +1206,9 @@ function laneOf(event) {
   const created = typeof time.created === "number" ? time.created : void 0;
   const completed = typeof time.completed === "number" ? time.completed : void 0;
   const ms = created !== void 0 && completed !== void 0 ? completed - created : void 0;
-  if (!agent && !modelId) return null;
+  if (!id || !agent) return null;
   return {
+    id,
     agent,
     model: typeof modelId === "string" ? modelId : void 0,
     provider: typeof providerId === "string" ? providerId : void 0,
@@ -1247,7 +1265,8 @@ function applyEffort(config, result, opts = {}) {
     /** @type {Record<string, any>} */
     config
   );
-  cfg.model = result.model;
+  const sessionModel = typeof opts.sessionModel === "string" && opts.sessionModel ? opts.sessionModel : result.model;
+  cfg.model = sessionModel;
   cfg.agent = cfg.agent ?? {};
   for (const [role, level] of Object.entries(result.roles)) {
     if (level === void 0) continue;
@@ -1259,7 +1278,11 @@ function applyEffort(config, result, opts = {}) {
     else existing.variant = level;
     cfg.agent[role] = existing;
   }
-  cfg.harness = opts.fallbackProfileId ? { profile: result.profileId, fallback: opts.fallbackProfileId } : { profile: result.profileId };
+  cfg.harness = {
+    ...cfg.harness ?? {},
+    profile: result.profileId,
+    ...opts.fallbackProfileId ? { fallback: opts.fallbackProfileId } : {}
+  };
   return config;
 }
 
@@ -1289,7 +1312,10 @@ var HarnessPlugin = async (ctx, options) => {
     const id = opts.profile ?? config?.harness?.profile ?? profileIdFromConfig();
     if (!id) return;
     try {
-      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }));
+      const sessionModel = typeof config?.harness?.sessionModel === "string" ? config.harness.sessionModel : void 0;
+      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }), {
+        sessionModel
+      });
       const dir = join5(ctx.worktree, ".space");
       mkdirSync3(dir, { recursive: true });
       writeFileSync2(join5(dir, "active"), `${id}
