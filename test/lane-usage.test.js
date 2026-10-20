@@ -44,8 +44,9 @@ test("one assistant message is one call, however many events it produced", () =>
   )
   try {
     const file = findTelemetryFile(dir)
-    const { lanes, records, ignored } = readLaneUsage(file)
+    const { lanes, records, requests, ignored } = readLaneUsage(file)
     assert.equal(records, 4, "four records were read")
+    assert.equal(requests, 2, "two requests, because a request is one message")
     assert.equal(ignored, 0)
     assert.equal(lanes.build.requests, 1, "three events are one request")
     assert.equal(lanes.locate.requests, 1)
@@ -106,9 +107,33 @@ test("a project with no telemetry reports no calls rather than failing", () => {
   const dir = mkdtempSync(join(tmpdir(), "ock-lanes-empty-"))
   try {
     assert.equal(findTelemetryFile(dir), null)
-    const { lanes, records } = readLaneUsage(null)
+    const { lanes, records, requests } = readLaneUsage(null)
     assert.deepEqual(lanes, {})
     assert.equal(records, 0)
+    assert.equal(requests, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a record with no lane is reported rather than silently dropped", () => {
+  // It cannot be attributed to a lane, so it is not counted - and it is
+  // counted as ignored, so a malformed file is visible in the tally rather
+  // than quietly shrinking the numbers.
+  const dir = mkdtempSync(join(tmpdir(), "ock-lanes-nolane-"))
+  try {
+    mkdirSync(join(dir, ".space"), { recursive: true })
+    writeFileSync(
+      join(dir, ".space", "telemetry.jsonl"),
+      [
+        JSON.stringify({ t: "1", kind: "lane", id: "msg_1", agent: "build", ms: 100 }),
+        JSON.stringify({ t: "2", kind: "lane", id: "msg_2", ms: 100 }),
+      ].join("\n"),
+    )
+    const { lanes, requests, ignored } = readLaneUsage(findTelemetryFile(dir))
+    assert.equal(requests, 1, "the lane-less record is not a request")
+    assert.equal(ignored, 1, "the lane-less record is reported")
+    assert.equal(lanes.build.requests, 1)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

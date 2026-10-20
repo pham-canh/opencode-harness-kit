@@ -44,6 +44,7 @@ import {
   parseJsonc,
 } from "../src/profile.js"
 import { generateConfig, globalInstructionsPath } from "../src/config.js"
+import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
 import { planEffort } from "../src/effort.js"
 import { findTelemetryFile, readLaneUsage, averageMs } from "../src/lane-usage.js"
 import { main as trustMain } from "../src/trust.js"
@@ -293,6 +294,14 @@ function cmdShow(id) {
   if (p.notes) {
     console.log(`\n  ${bold("notes")}`)
     console.log(`    ${p.notes}`)
+  }
+  // What the guard blocks, and why. It was the one part of the kit a user
+  // could not inspect at all, and the answer to "why was my command blocked"
+  // was a guess.
+  console.log(`\n  ${bold("guard rules")}`)
+  for (const name of ruleNames()) {
+    const rule = [...BASH_RULES, ...WRITE_RULES].find((r) => r.name === name)
+    console.log(`    ${name.padEnd(34)} ${stamp(rule?.why ?? "")}`)
   }
   console.log()
 }
@@ -1339,9 +1348,9 @@ function cmdLanes() {
   // from here. Reading `process.cwd()` alone reported "never called" for every
   // lane whenever the command was run from a subdirectory.
   const file = findTelemetryFile(process.cwd())
-  const { lanes: stats, records, ignored } = readLaneUsage(file)
+  const { lanes: stats, requests, ignored } = readLaneUsage(file)
 
-  console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${records} lane request(s)`)}\n`)
+  console.log(`\n${bold("lanes")}  ${stamp(`${activeId} - ${requests} lane request(s)`)}\n`)
   const lanes = Object.keys(profile.roles ?? {})
   if (!lanes.length) {
     console.log(`  ${stamp("this profile enables no lanes")}\n`)
@@ -1473,7 +1482,13 @@ function cmdAgents() {
       const resolved = target.startsWith("~") ? join(homedir(), target.slice(1)) : target
       if (!existsSync(resolved)) notes.push(`prompt ${target} is not installed`)
     }
-    if (lane in roles && roles[lane] === undefined) notes.push("not tiered by the profile")
+    // A lane the profile does not tier at all gets no variant, and a lane
+    // whose model publishes no such level gets none either. `resolveRoles`
+    // returns null for the second case and never undefined, so the check
+    // that used to be `=== undefined` was never true and reported nothing.
+    if (lane in roles && roles[lane] === null) {
+      notes.push("the profile asks for a level this model does not publish, so no variant is set")
+    }
 
     if (!notes.length) {
       console.log(

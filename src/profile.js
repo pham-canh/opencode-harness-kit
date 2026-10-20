@@ -42,7 +42,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 /** @param {string} start @returns {string} */
 function findRoot(start) {
   let dir = start
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 12; i++) {
     if (existsSync(join(dir, "profiles"))) return dir
     const parent = dirname(dir)
     if (parent === dir) break
@@ -105,7 +105,30 @@ export const WORKFLOW_LANES = ["build", "plan", "reviewer", "locate", "verify"]
 
 // Retention, ordered safest-first. A fleet is labelled with the worst level
 // among the models it actually resolves to.
-const RETENTION_SEVERITY = ["zero-retention", "retained", "unknown", "may-train"]
+//
+// `unknown` is the worst of the known levels on purpose. `retentionAllowed`
+// refuses it outright - a lane that would run on a model nobody has stated
+// the terms of is worse than a lane that runs on a worse model with known
+// terms - and a severity table that ranked it as milder than `may-train`
+// contradicted that: a profile with an unknown-retention model in it was
+// reported as safer than one with a training provider.
+const RETENTION_SEVERITY = ["zero-retention", "retained", "may-train", "unknown"]
+
+/**
+ * How bad a retention level is, as a number. Bigger is worse.
+ *
+ * `unknown` is the worst of them. `retentionAllowed` refuses it outright - a
+ * lane that would run on a model nobody has stated the terms of is worse
+ * than a lane that runs on a worse model with known terms - so a severity
+ * table that ranked it as milder than `may-train` contradicted the rule it
+ * sits next to.
+ *
+ * @param {string} level
+ * @returns {number} the rank, or -1 for a level that is not one of them
+ */
+export function retentionSeverity(level) {
+  return RETENTION_SEVERITY.indexOf(/** @type {Retention} */ (level))
+}
 
 /**
  * Profiles live in profiles/ (verified). schema.json and index.json are not
@@ -229,11 +252,21 @@ export function laneNames() {
  * blocks and plain scalars costs about forty lines, which is less than a
  * dependency for a file this shape.
  *
+ * Cached, like the lane table: `retentionFor` is called for every candidate
+ * of every lane, and every candidate of every lane re-read and re-parsed
+ * the whole file.
+ *
  * @returns {Record<string, RetentionRecord>}
  */
+/** @type {Record<string, RetentionRecord> | null} */
+let retentionCache = null
 export function loadRetention() {
+  if (retentionCache) return retentionCache
   const file = join(ROOT, "retention.yml")
-  if (!existsSync(file)) return {}
+  if (!existsSync(file)) {
+    retentionCache = {}
+    return retentionCache
+  }
   const out = /** @type {Record<string, any>} */ ({})
   const lines = readFileSync(file, "utf8").split("\n")
 
@@ -249,8 +282,8 @@ export function loadRetention() {
       i++
       continue
     }
-    // A model key sits at two-space indent under `models:`. Keys are written
-    // provider-qualified already, so do not re-prefix them.
+    // A model key sits at two-space indent under `models:`. A key with no
+    // provider prefix gets one, so a lookup by bare model id finds it.
     if (indent === 2 && line.endsWith(":")) {
       const key = line.slice(0, -1).trim()
       current = key.includes("/") ? key : `opencode/${key}`
@@ -291,6 +324,7 @@ export function loadRetention() {
     }
     i++
   }
+  retentionCache = out
   return out
 }
 
@@ -333,8 +367,8 @@ export function modelRetention(model) {
 export function retentionAllowed(model, ceiling) {
   const level = modelRetention(model)
   if (level === "unknown") return false
-  const max = RETENTION_SEVERITY.indexOf(ceiling)
-  const have = RETENTION_SEVERITY.indexOf(level)
+  const max = retentionSeverity(ceiling)
+  const have = retentionSeverity(level)
   if (max < 0) return false
   return have <= max
 }
@@ -754,7 +788,7 @@ export function effectiveRetention(p, opts = {}) {
     const declared = modelRetention(id)
     if (
       !worst ||
-      RETENTION_SEVERITY.indexOf(declared) > RETENTION_SEVERITY.indexOf(retention)
+      retentionSeverity(declared) > retentionSeverity(retention)
     ) {
       worst = id
       retention = declared
@@ -767,8 +801,11 @@ export function effectiveRetention(p, opts = {}) {
 
 /** Where opencode keeps its config, honouring the same env var it does. */
 export function configDir() {
+  // `homedir()` and not `process.env.HOME`: with HOME unset the other form
+  // produced a RELATIVE path, so `use` wrote to one place and
+  // `profileIdFromConfig` read another.
   return (
-    process.env.OPENCODE_CONFIG_DIR ?? join(process.env.HOME ?? "", ".config", "opencode")
+    process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config", "opencode")
   )
 }
 
