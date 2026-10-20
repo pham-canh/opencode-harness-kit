@@ -893,6 +893,21 @@ function validate(p, path = "<memory>") {
       );
     }
   }
+  if (p.utility) {
+    if (typeof p.utility.model !== "string" || !p.utility.model) {
+      throw new ProfileError(`${where}: utility.model must be a model id`);
+    }
+    const reachable = /* @__PURE__ */ new Set([p.model]);
+    for (const rm of Object.values(p.roleModels ?? {})) {
+      if (rm?.model) reachable.add(rm.model);
+      for (const rung of rm?.chain ?? []) reachable.add(rung);
+    }
+    if (!reachable.has(p.utility.model)) {
+      throw new ProfileError(
+        `${where}: utility.model is ${p.utility.model}, which this profile does not resolve to (it has ${[...reachable].join(", ")})`
+      );
+    }
+  }
   for (const id of p.fallback ?? []) {
     if (!profileExists(id)) {
       throw new ProfileError(
