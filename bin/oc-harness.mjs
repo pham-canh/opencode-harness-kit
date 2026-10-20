@@ -56,9 +56,48 @@ const ROOT = import.meta.dirname ? join(import.meta.dirname, "..") : process.cwd
 const args = process.argv.slice(2)
 const cmd = args[0] ?? "list"
 const has = (f) => args.includes(f)
+/**
+ * The value of a flag, in either spelling.
+ *
+ * `--profile fleet-safe` and `--profile=fleet-safe` are the same flag, and
+ * the second one is the conventional one. Reading only the first form made
+ * `--profile=fleet-safe` look like a flag with a missing value, which is a
+ * confusing way to be told you got the syntax wrong.
+ */
 const opt = (f) => {
   const i = args.indexOf(f)
-  return i >= 0 ? args[i + 1] : undefined
+  if (i >= 0) return args[i + 1]
+  const inline = args.find((a) => a.startsWith(`${f}=`))
+  return inline === undefined ? undefined : inline.slice(f.length + 1)
+}
+/** A flag given as `--flag` or `--flag=value`. */
+const flag = (f) => has(f) || args.some((a) => a.startsWith(`${f}=`))
+
+/**
+ * A number from a flag, or the default.
+ *
+ * `Number("abc")` is NaN, and every comparison against NaN is false - so a
+ * typo in `--max-rounds` silently disabled the round cap AND the time
+ * budget, which are the two limits that keep an unattended loop from
+ * running forever.
+ *
+ * A mistyped cap is refused, not replaced with a default. The cap is the
+ * limit the operator chose, and a substitute is a different limit wearing
+ * the same name - the one thing a cap cannot be. So the run stops here,
+ * before a loop is started, instead of starting one under a limit nobody
+ * asked for.
+ *
+ * @param {string | undefined} raw
+ * @param {number} fallback
+ * @returns {number}
+ */
+const positiveNumber = (raw, fallback) => {
+  if (raw === undefined) return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) {
+    fail(`${raw} is not a positive number. --max-rounds and --budget have to be positive numbers.`)
+  }
+  return n
 }
 
 const stamp = (s) => `\x1b[2m${s}\x1b[0m`
@@ -66,7 +105,7 @@ const bold = (s) => `\x1b[1m${s}\x1b[0m`
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
 const red = (s) => `\x1b[31m${s}\x1b[0m`
-const interactive = () => process.stdin.isTTY && !has("--yes")
+const interactive = () => process.stdin.isTTY && !flag("--yes")
 
 /**
  * A yes question with a yes default. Only asked on a terminal; scripts and
@@ -91,7 +130,7 @@ async function cmdList() {
   const idx = index()
   const retention = loadRetention()
   const only = opt("--retention")
-  const freeOnly = has("--free")
+  const freeOnly = flag("--free")
 
   console.log(`\n${bold("opencode-harness-kit")} ${stamp("profiles")}\n`)
   const head = [
@@ -292,6 +331,28 @@ function installTargets() {
 }
 
 /**
+ * The project root, found by walking up from the working directory.
+ *
+ * opencode reads a project's agent files from `<project>/.opencode/`, and the
+ * project is not necessarily the directory the command was run from. Anchored
+ * on `process.cwd()`, the shadow check below found nothing whenever the
+ * command was run from a subdirectory - which is the one place a shadow is
+ * most likely to hide, because that is where the agent is working.
+ *
+ * @returns {string}
+ */
+function projectRoot() {
+  let dir = process.cwd()
+  for (let i = 0; i < 12; i++) {
+    if (existsSync(join(dir, ".opencode"))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return process.cwd()
+}
+
+/**
  * The directories opencode loads agent markdown files from.
  *
  * Measured on OpenCode 1.19, not read off the docs:
@@ -307,11 +368,12 @@ function installTargets() {
  * half of them.
  */
 function agentDirs() {
+  const project = projectRoot()
   return [
     { dir: join(CONFIG_DIR, "agents"), scope: "config" },
     { dir: join(CONFIG_DIR, "agent"), scope: "config" },
-    { dir: join(process.cwd(), ".opencode", "agents"), scope: "project" },
-    { dir: join(process.cwd(), ".opencode", "agent"), scope: "project" },
+    { dir: join(project, ".opencode", "agents"), scope: "project" },
+    { dir: join(project, ".opencode", "agent"), scope: "project" },
   ]
 }
 
@@ -578,7 +640,13 @@ function cmdVerify() {
 
   // 2. Instruction paths must resolve. An unresolved path is a no-op, not an
   //    error, which is why it can sit there for weeks unnoticed.
-  const instructions = (actual?.instructions ?? [globalInstructionsPath()])
+  //
+  //    The kit's own GLOBAL.md has to be among them. A config whose
+  //    `instructions` array replaced the kit's file was loading none of the
+  //    behavioural layer - the lane table, the rules, the read-pressure
+  //    guidance - and every one of those paths resolved, so the check passed
+  //    over a harness that was doing nothing.
+  const instructions = actual?.instructions ?? [globalInstructionsPath()]
   for (const raw of instructions) {
     const target = raw.startsWith("~")
       ? join(homedir(), raw.slice(1))
@@ -592,6 +660,19 @@ function cmdVerify() {
         `instruction "${raw}" does not exist - the rules in it are not being loaded. Run: oc-harness install`,
       )
     }
+  }
+  const kitInstruction = globalInstructionsPath()
+  const kitTarget = kitInstruction.startsWith("~")
+    ? join(homedir(), kitInstruction.slice(1))
+    : kitInstruction
+  if (!instructions.includes(kitInstruction)) {
+    problems.push(
+      `the config does not load ${kitInstruction} - the kit's rules, the lane table and the read-pressure guidance are not being loaded. Run: oc-harness use ${p.id}`,
+    )
+  } else if (!existsSync(kitTarget)) {
+    problems.push(
+      `${kitInstruction} does not exist - the rules in it are not being loaded. Run: oc-harness install`,
+    )
   }
 
   // 3. Every lane the profile enables must have its prompt installed, and the
@@ -644,7 +725,15 @@ function cmdVerify() {
         )
         continue
       }
-      const text = readFileSync(join(dir, name), "utf8")
+      // A dangling symlink is a routine state after a checkout is moved or a
+      // package directory is deleted. It must not abort the whole report.
+      let text = ""
+      try {
+        text = readFileSync(join(dir, name), "utf8")
+      } catch {
+        problems.push(`agent file ${where}/${name} cannot be read (a broken symlink?)`)
+        continue
+      }
       const named = text.match(/opencode\/([a-z0-9.\-]+)/i)
       if (named && !modelsInPlay(p).includes(named[1])) {
         problems.push(
@@ -674,7 +763,9 @@ function cmdVerify() {
       )
     }
   } else {
-    notes.push("no plugin link: the guard is not enforcing anything. Run: oc-harness link")
+    problems.push(
+      "no plugin link: the guard is not enforcing anything, so nothing in this kit is enforced. Run: oc-harness link",
+    )
   }
 
   // 6. Schema check. `variant` at the top level is silently stripped by
@@ -703,7 +794,9 @@ function cmdVerify() {
   const skillsDir = join(CONFIG_DIR, "skills")
   const ourSkills = kitSkillNames()
   if (!existsSync(skillsDir)) {
-    notes.push("no skills directory: the skill loop is not installed. Run: oc-harness install")
+    problems.push(
+      "no skills directory: the skill loop is not installed, so the plan -> build -> review -> finish loop cannot run. Run: oc-harness install",
+    )
   } else {
     const installed = new Set(readdirSync(skillsDir))
     let valid = 0
@@ -854,7 +947,7 @@ async function cmdUse(id) {
         `Add an entry with retention: zero-retention | may-train before installing it.`,
     )
   }
-  if (eff.retention === "may-train" && !has("--yes")) {
+  if (eff.retention === "may-train" && !flag("--yes")) {
     const trainOn = roleSplitModels(p)
       .filter((s) => retentionFor(s.model)?.retention === "may-train")
       .map((s) => `${s.role} runs on ${s.model}`)
@@ -863,7 +956,7 @@ async function cmdUse(id) {
       (trainOn.length ? `  ${trainOn.join(", ")}.\n` : "") +
       `  ${retentionFor(eff.worst)?.note ?? ""}\n` +
       `  Re-run with --yes to accept.`
-    if (process.stdin.isTTY && !has("--print")) {
+    if (process.stdin.isTTY && !flag("--print")) {
       fail(msg + "\n")
     }
     console.error(msg)
@@ -872,14 +965,14 @@ async function cmdUse(id) {
   const base = readConfigJson()
 
   const out = generateConfig(p, { base, comments: true })
-  if (has("--print")) {
+  if (flag("--print")) {
     process.stdout.write(out)
     return
   }
 
   // A flag that is accepted and then ignored is worse than one that errors:
   // `--dryrun` used to write the real config anyway.
-  if (has("--dryrun")) {
+  if (flag("--dryrun")) {
     console.log(`\n  ${stamp("dry run, nothing written")}`)
     console.log(`  ${stamp(`would write ${CONFIG_FILE}`)}`)
     summary(p)
@@ -892,7 +985,7 @@ async function cmdUse(id) {
     // `--yes` skips the question, it does not skip the safety net. Gating the
     // backup on `--yes` meant the one path that overwrites without asking was
     // also the one path with nothing to fall back to.
-    if (!has("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
+    if (!flag("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
       fail("left the existing config alone")
     }
     writeFileSync(`${CONFIG_FILE}.bak`, readFileSync(CONFIG_FILE))
@@ -945,16 +1038,33 @@ function readConfigJson() {
   return parsed
 }
 
+/**
+ * Where the live model catalogue comes from.
+ *
+ * models.dev is the default and the only source the kit trusts for capability
+ * metadata. The override exists for a mirror, and for a test: a test that
+ * reached the network would fail on a machine that has none, and the kit's
+ * own rule is that the suite runs offline.
+ */
+const CATALOG_URL =
+  process.env.OPENCODE_HARNESS_CATALOG_URL ?? "https://models.dev/api.json"
+
 /** Re-fetch models.dev and report which profiles have drifted from it. */
 async function fetchCatalog() {
-  const url = "https://models.dev/api.json"
+  const url = CATALOG_URL
   try {
-    return JSON.parse(
-      execFileSync("curl", ["-sL", "--max-time", "40", url], {
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
-      }),
-    )
+    // `--fail` matters: without it curl exits 0 on a 4xx or a 5xx and hands
+    // back an error body, which parses as a catalogue with no models in it.
+    // Every profile would then be reported as withdrawn.
+    const body = execFileSync("curl", ["-sL", "--fail", "--max-time", "40", url], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    })
+    const parsed = JSON.parse(body)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      fail(`${url} did not return a model catalogue`)
+    }
+    return parsed
   } catch (err) {
     fail(`could not reach ${url}: ${err.message}`)
   }
@@ -1061,12 +1171,29 @@ function chainOf(p) {
   return out
 }
 
-/** Re-check every profile against the live provider catalog. */
+/**
+ * Re-check every profile against the live provider catalog.
+ *
+ * Two kinds of finding, and they are not the same kind of finding.
+ *
+ * A profile that has drifted from models.dev is perishable metadata: a
+ * provider changed a context window, or a model left the catalogue. That is
+ * worth reporting, and `oc-harness refresh` is the fix. It is not a broken
+ * install, and a CI job that fails on it fails on a Tuesday because somebody
+ * else changed a provider's limits.
+ *
+ * A config that has drifted from its profile, or an active profile that no
+ * longer loads, is a broken install. That is always a failure.
+ *
+ * `--strict` makes the perishable finding fail too, for a release.
+ */
 async function cmdDoctor() {
   const catalog = await fetchCatalog()
   const retention = loadRetention()
   const ids = listProfileIds()
   let problems = 0
+  let drift = 0
+  const strict = flag("--strict")
 
   console.log(`\n${bold("doctor")}  ${stamp(`catalog ${Object.keys(catalog).length} providers`)}\n`)
 
@@ -1082,7 +1209,7 @@ async function cmdDoctor() {
     const live = catalog?.[p.provider]?.models?.[p.model]
     if (!live) {
       console.log(`  ${red("✗")} ${id.padEnd(32)} ${red("not in models.dev - may be withdrawn")}`)
-      problems++
+      drift++
       continue
     }
 
@@ -1111,15 +1238,15 @@ async function cmdDoctor() {
     if (issues.length === 0) {
       console.log(`  ${green("✓")} ${id.padEnd(32)} ${stamp("matches catalog")}`)
     } else {
-      problems++
+      drift++
       console.log(`  ${yellow("!")} ${id.padEnd(32)} ${yellow("drift")}`)
       for (const i of issues) console.log(`      ${i}`)
       console.log(`      ${stamp(`fix: oc-harness refresh ${id}`)}`)
     }
   }
   console.log(
-    problems
-      ? `\n  ${yellow(`${problems} profile(s) drifted`)}\n`
+    drift
+      ? `\n  ${yellow(`${drift} profile(s) drifted`)}\n`
       : `\n  ${green("all profiles match live metadata")}\n`,
   )
 
@@ -1132,21 +1259,61 @@ async function cmdDoctor() {
   const activeId = profileIdFromConfig()
   if (!activeId) {
     console.log(`  ${yellow("!")} ${stamp("no profile recorded in the config. Run: oc-harness use <profile>")}\n`)
+    finishDoctor(problems, drift, strict)
     return
   }
   const installed = existsSync(CONFIG_FILE) ? readConfigJson() : null
   if (!installed) {
     console.log(`  ${yellow("!")} ${stamp(`${CONFIG_FILE} missing. Run: oc-harness use ${activeId}`)}\n`)
+    finishDoctor(problems, drift, strict)
     return
   }
-  const drift = configDrift(loadProfile(activeId), installed)
+  // A config pointing at a profile that no longer loads is a real problem, and
+  // it used to throw here and lose the whole report.
+  let active = null
+  try {
+    active = loadProfile(activeId)
+  } catch (err) {
+    console.log(`  ${red("✗")} ${stamp(`the active profile "${activeId}" cannot be loaded: ${err.message}`)}`)
+    console.log(`  ${stamp("fix: oc-harness use " + (index().default ?? "fleet-safe"))}\n`)
+    problems++
+    active = null
+  }
+  const fields = active ? configDrift(active, installed) : []
   console.log(`${bold("installed config")}  ${stamp(activeId)}\n`)
-  if (drift.length === 0) {
+  if (fields.length === 0) {
     console.log(`  ${green("✓")} ${stamp("opencode.jsonc matches the profile")}`)
   } else {
-    for (const d of drift) console.log(`  ${yellow("!")} ${d}`)
-    console.log(`\n  ${yellow(`${drift.length} field(s) drifted from the profile`)}`)
+    for (const d of fields) console.log(`  ${yellow("!")} ${d}`)
+    console.log(`\n  ${yellow(`${fields.length} field(s) drifted from the profile`)}`)
     console.log(`  ${stamp(`fix: oc-harness use ${activeId}`)}\n`)
+    problems++
+  }
+  finishDoctor(problems, drift, strict)
+}
+
+/**
+ * The exit code of `doctor`.
+ *
+ * A broken install fails. A profile that has drifted from models.dev is
+ * perishable metadata and only fails under `--strict`, so a CI job that runs
+ * this does not go red because a provider changed a context window.
+ *
+ * @param {number} problems
+ * @param {number} drift
+ * @param {boolean} strict
+ */
+function finishDoctor(problems, drift, strict) {
+  if (problems > 0) {
+    console.log(`  ${red(`${problems} problem(s) in the install`)}\n`)
+    process.exit(1)
+  }
+  if (drift > 0 && strict) {
+    console.log(`  ${red(`${drift} profile(s) drifted from live metadata`)}\n`)
+    process.exit(1)
+  }
+  if (drift > 0) {
+    console.log(`  ${stamp(`${drift} profile(s) drifted from live metadata; re-run with --strict to fail on it`)}\n`)
   }
 }
 
@@ -1324,7 +1491,13 @@ function cmdAgents() {
   // the most expensive tier. That is exactly the waste this kit exists to
   // remove, and it is invisible otherwise.
   for (const file of files) {
-    const text = readFileSync(file, "utf8")
+    let text = ""
+    try {
+      text = readFileSync(file, "utf8")
+    } catch {
+      console.log(`  ${yellow("!")} ${file.split("/").pop().padEnd(14)} ${yellow("cannot be read")}`)
+      continue
+    }
     const name = file.split("/").pop().replace(/\.md$/, "")
     const front = stripFrontmatter(text)
     if (name in config.agent) {
@@ -1361,13 +1534,19 @@ function fail(msg) {
  * reading the transcript.
  */
 async function cmdRun() {
+  // Read the caps before anything is started. A mistyped cap has to stop the
+  // run here, while the answer is still "that is not a number" - not after a
+  // loop has been stood up under a limit nobody asked for.
+  const maxRounds = positiveNumber(opt("--max-rounds"), 20)
+  const budgetMinutes = positiveNumber(opt("--budget"), 120)
+
   const { runLoop } = await import("../src/driver/run.mjs")
 
   const result = runLoop({
     cwd: process.cwd(),
     role: opt("--role") ?? "build",
-    maxRounds: Number(opt("--max-rounds") ?? 20),
-    budgetMinutes: Number(opt("--budget") ?? 120),
+    maxRounds,
+    budgetMinutes,
   })
 
   const s = result.summary
@@ -1447,6 +1626,7 @@ try {
     --yes          accept a retention warning, back up the old config
     --retention    filter list by retention class
     --free         list free profiles only
+    --strict       doctor: fail on perishable catalogue drift too
 
   run options
     --role <agent>  which agent does the work (default: build)
