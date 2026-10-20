@@ -146,6 +146,19 @@ jobs:
             echo "::error::The runner would not issue an OIDC token for the npm audience."
             exit 1
           fi
+          # The claims are what the registry compares the trusted publisher
+          # configuration against. Printing them turns "unauthorized" into
+          # "you entered this instead of that".
+          echo "$id_token" | node -e '
+            let s = ""
+            process.stdin.on("data", d => s += d).on("end", () => {
+              try {
+                const claims = JSON.parse(Buffer.from(s.split(".")[1], "base64url").toString())
+                for (const k of ["aud", "repository", "repository_owner", "workflow", "workflow_ref", "environment", "ref", "event_name"]) {
+                  if (claims[k] !== undefined) console.log("  " + k + ": " + claims[k])
+                }
+              } catch (e) { console.log("  could not read the claims: " + e.message) }
+            })'
           echo "the runner issued an OIDC token; asking npm to exchange it:"
           body=$(curl -sS -X POST \
             -H "Authorization: Bearer ${id_token}" \
