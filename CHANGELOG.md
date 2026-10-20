@@ -41,6 +41,86 @@ The project root is now resolved from the session's own DIRECTORY, walking up
 to the git root when there is one. A subdirectory of a monorepo is still that
 repository, and a directory that is not a repository is its own project.
 
+**The grader scored correct answers wrong.** An agent that answers in a
+markdown field writes the file on one line and the number on the next:
+
+    **File:** `src/profile.js`
+    **Line:** 105
+
+and the citation pattern stopped at the newline, so the pair was never made
+and the answer was scored wrong. It is the shape most of the answers took:
+on one measured run, four correct answers graded as one. The gap may cross a
+newline now, and the file/line field form is paired explicitly rather than by
+proximity. The numbers in `eval/RESULTS.md` were computed with this grader,
+so they are being re-measured rather than patched.
+
+**`npm publish` was ALLOWED.** The allowlist had a blanket `npm*`, so
+publishing to a registry needed no prompt and no question, while GLOBAL.md
+says to ask before publishing. The mechanical layer contradicted the
+judgement layer, which is the exact failure this kit is built to catch.
+
+The list now lives in `src/denylist.js` because it is enforced in TWO places:
+by opencode's permission map, and by the guard plugin. The two used to be
+different lists - the config denied `gh pr create` and `npm publish` and the
+guard blocked neither - so the config's own comment, "the guard plugin
+enforces the same set in code", was false. A permission map can be overridden
+by a plugin or lost to a hand-edit; the guard does not care.
+
+`npm install` and `npm ci` are no longer allowed without a question. They
+run code the agent did not read, and they change the tree the agent was
+asked to change.
+
+**The subject of the A/B held the grader and the answer key.** The subject of
+the self suite is this repository, so it held `eval/verify.mjs` - the grader -
+and `eval/tasks-self.json`, the answer key. An agent that found the grader
+used it to check its own work, and one that found the suite read the answer.
+Both were measured: an agent that read the grader made 48 tool calls to a
+task that needed 5. `eval/` and `test/` are excluded from the subject now.
+The answer lives in `src/`, and so does the question.
+
+**The kit's own cost, measured and cut.** The A/B said the kit was a net loss
+on a short task, and the commands showed why: the agent was running the
+project's whole test suite, and installing the dependencies, to rename one
+constant. The rule that told it to do that was absolute.
+
+It is scoped now: run the check that covers what you changed, run the one the
+task named, and do not re-run a check that already passed. Do not install
+anything the task did not ask for. And "locate before you read" is
+conditional - when the question already names the file, read it.
+
+Measured over 20 runs after the change, against 60 before:
+
+| per run | before | after |
+|---|---|---|
+| `npm test` calls | 2.2 | **0.9** |
+| `npm install` calls | 0.4 | **0** |
+
+### Added
+
+- **`oc-harness refresh --all`** re-derives every shipped profile against the
+  live catalogue, and reports which models are gone.
+- **`oc-harness doctor --check-models` and `--watch`** record a withdrawal in
+  `~/.config/opencode/withdrawn.jsonl`, with the profiles that used it. A model
+  is withdrawn without a rename and without a notice, so the only way to know
+  WHEN a lane started failing is to have been looking.
+- **`oc-harness upgrade`** checks the registry for a newer kit, refreshes the
+  profiles, and writes the config again. Three things go stale on their own -
+  the kit, the profiles and the config - and all three were invisible.
+- **A scheduled workflow** (`.github/workflows/measure.yml`), so the numbers
+  are kept rather than measured once. The offline half runs on every push;
+  the A/B runs nightly, because it costs model quota and takes about an hour.
+- **`OPENCODE_HARNESS_PROFILES`** points the kit at a different profile
+  directory. A test that refreshes a profile would otherwise rewrite the kit's
+  own data - which is what happened the first time this was tried.
+- **A flag appended to an npm script now overrides the script's own**:
+  `npm run measure:prune -- --sessions 1` means one session, not sixty.
+
+(found by a review of this release)
+
+- Tests for the pieces the suite never reached: the python fallback, the
+  project root for a project that is not a git repository, the escape rule,
+  and the flag parser.
+
 ### Fixed (found by a review of this release)
 
 **The project-root fix was incomplete.** Two call sites still read the
@@ -93,12 +173,6 @@ non-list `plugin` value was replaced instead of kept, the `why` in
 fleet-all's utility route claimed the model was in every chain when it is in
 seven of ten, and the install-wide measurement could report a 100% context
 improvement from a NULL average.
-
-### Added (found by a review of this release)
-
-- Tests for the pieces the suite never reached: the python fallback, the
-  project root for a project that is not a git repository, the escape rule,
-  and the flag parser.
 
 ### Changed
 
