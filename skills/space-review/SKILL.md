@@ -10,9 +10,11 @@ noise, and they bury the finding that mattered.
 
 The review itself belongs to the `reviewer` lane, which runs on its own model
 with its own context window: hand it the diff and the task, and take its
-findings. When the question is not "is this change wrong" but "does this change
-satisfy the spec, in every case the spec covers", that is the `audit` lane,
-which is slower and reads twice.
+findings. The lane does the two passes below in that order, and it never
+edits. When the question is not "is this change wrong" but "does this change
+satisfy the spec, in every case the spec covers", say so in the request you
+hand it: the same lane reads twice, and the second pass is a spec sweep
+rather than a quality pass.
 
 ## Pass 1 - does it do what was asked
 

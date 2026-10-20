@@ -7,7 +7,7 @@
   "family": "nemotron-free",
   "verified": "2026-10-19",
   "retention": "may-train",
-  "notes": "NVIDIA 120B-A12B. The only free model that publishes a `none` effort level, which is what makes it the cheap no-reasoning sweep lane. The catalog says it takes images, but a live call with an image attachment hangs and never returns: it is used here for text and for reasoning off, never for pictures.",
+  "notes": "NVIDIA 120B-A12B. The only free model that publishes a `none` effort level, which is what makes it the cheap no-reasoning sweep lane. The catalog says it takes images, but a live call with an image attachment hangs and never returns: it is used here for text and for reasoning off, never for pictures. The hang is specific to an attachment - a tool read of the same file answers in 4.2s - so the rule is 'never hand it a file', not 'never use it'.",
   "limits": {
     "context": 1048576,
     "input": 1048576,

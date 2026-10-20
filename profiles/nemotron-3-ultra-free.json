@@ -7,7 +7,7 @@
   "family": "nemotron-free",
   "verified": "2026-10-19",
   "retention": "may-train",
-  "notes": "The largest open MoE on the free tier at 550B-A55B. It reasons but publishes no selectable effort level, so no variant is ever written for it. Text only. NVIDIA trial terms: sessions are logged, so it is not the lane for private code.",
+  "notes": "The largest open MoE on the free tier at 550B-A55B. It reasons but publishes no selectable effort level, so no variant is ever written for it. Measured at 4.7s, though a cold first request took 34s. Text only. NVIDIA trial terms: sessions are logged, so it is not the lane for private code.",
   "limits": {
     "context": 1000000,
     "output": 128000

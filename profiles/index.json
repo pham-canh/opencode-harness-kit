@@ -33,7 +33,7 @@
       "topEffort": "max",
       "context": 1000000,
       "default": false,
-      "note": "512k output tokens, the widest of any free route. The only one that takes video."
+      "note": "512k output tokens, the widest of any free route, and the fastest measured image reader at 7.7s."
     },
     {
       "id": "beam-free",
@@ -66,7 +66,7 @@
       "topEffort": "max",
       "context": 200000,
       "default": false,
-      "note": "The only free model with structured output and a zero-retention policy. Slowest route on the tier at 16-27s."
+      "note": "Structured output on a zero-retention provider. Careful rather than fast: 4.4-5.8s on the work a lane does."
     },
     {
       "id": "longcat-2.5-preview-free",
@@ -88,7 +88,7 @@
       "topEffort": "xhigh",
       "context": 1048576,
       "default": false,
-      "note": "The only free model publishing a `none` effort level, so it is the reasoning-off sweep lane. Hangs on an image attachment."
+      "note": "The only free model publishing a `none` effort level, so it is the reasoning-off sweep lane. It hangs on a file ATTACHMENT - never hand it one - but not on a tool read."
     },
     {
       "id": "nemotron-3-ultra-free",
@@ -110,7 +110,7 @@
       "topEffort": null,
       "context": 262144,
       "default": false,
-      "note": "Its output cap equals its whole context, so it emits files larger than 128k tokens. One measured call took 114s."
+      "note": "Its output cap equals its whole context, so it emits files larger than 128k tokens. Usually the quickest lane on the tier at 3.7s, but one measured call took 114s."
     },
     {
       "id": "mimo-v2.6-flash-free",
@@ -121,7 +121,7 @@
       "topEffort": null,
       "context": 200000,
       "default": false,
-      "note": "Reads images in 8s. Publishes audio input too, but OpenCode will not read a binary file, so that path is unreachable today."
+      "note": "Reads images correctly, at 19.2s - the slowest lane on the tier. Publishes audio input too, but OpenCode will not read a binary file, so that path is unreachable today."
     },
     {
       "id": "big-pickle",
@@ -135,5 +135,27 @@
       "note": "Stealth model, no public identity, no effort levels, no image input. The provider may train on it during its free period."
     }
   ],
-  "excluded": []
+  "excluded": [],
+  "withdrawn": [
+    {
+      "id": "space-bunny-free",
+      "reason": "Withdrawn from the provider within a month of shipping. It was the default profile, so a config left pointing at it kept working and kept saying it was zero-retention."
+    },
+    {
+      "id": "x-preview-f-free",
+      "reason": "Withdrawn from the provider within a month of shipping."
+    },
+    {
+      "id": "deepseek-v4-flash-free",
+      "reason": "Withdrawn from the provider within a month of shipping. Its replacement on the tier is deepseek-v4.1-flash-free."
+    },
+    {
+      "id": "muse-spark-1.3-contributor-free",
+      "reason": "Withdrawn from the provider within a month of shipping. A Meta contributor-tier route whose provider was permitted to train on prompts; the paid muse-spark-1.3 route is still in the catalogue."
+    },
+    {
+      "id": "mimo-v2.5-free",
+      "reason": "Withdrawn from the provider. Observed alive for one day. Its replacement on the tier is mimo-v2.6-flash-free."
+    }
+  ]
 }
