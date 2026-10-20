@@ -95,8 +95,8 @@
         "vision": { "$ref": "#/definitions/effortRequest" },
         "doc": { "$ref": "#/definitions/effortRequest" },
         "schema": { "$ref": "#/definitions/effortRequest" },
-        "audit": { "$ref": "#/definitions/effortRequest" },
-        "sweep": { "$ref": "#/definitions/effortRequest" }
+        "sweep": { "$ref": "#/definitions/effortRequest" },
+        "longform": { "$ref": "#/definitions/effortRequest" }
       }
     },
     "roleModels": {
@@ -112,8 +112,8 @@
         "vision": { "$ref": "#/definitions/roleModel" },
         "doc": { "$ref": "#/definitions/roleModel" },
         "schema": { "$ref": "#/definitions/roleModel" },
-        "audit": { "$ref": "#/definitions/roleModel" },
-        "sweep": { "$ref": "#/definitions/roleModel" }
+        "sweep": { "$ref": "#/definitions/roleModel" },
+        "longform": { "$ref": "#/definitions/roleModel" }
       }
     },
     "prune": {
