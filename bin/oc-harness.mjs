@@ -46,6 +46,7 @@ import {
 import { generateConfig, globalInstructionsPath } from "../src/config.js"
 import { planEffort } from "../src/effort.js"
 import { findTelemetryFile, readLaneUsage, averageMs } from "../src/lane-usage.js"
+import { main as trustMain } from "../src/trust.js"
 
 const CONFIG_DIR =
   process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config/opencode")
@@ -1409,6 +1410,9 @@ try {
     case "lanes":
       cmdLanes()
       break
+    case "trust":
+      process.exitCode = trustMain(args.slice(1))
+      break
     case "doctor":
       await cmdDoctor()
       break
@@ -1433,6 +1437,7 @@ try {
     link          symlink the built plugin into ~/.config/opencode/plugins
     agents        report agents the effort tiering does not reach
     lanes         report which lanes the fleet actually used
+    trust         set up npm trusted publishing for this package
     doctor    re-check profiles against models.dev and the installed config
     baseline  measure the current opencode install
     run       drive .space/tasks.md to done with the build agent

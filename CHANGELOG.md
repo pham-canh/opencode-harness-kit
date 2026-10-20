@@ -14,6 +14,16 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-10-20
+
+### Added
+
+- **`oc-harness trust`** configures npm trusted publishing from the command
+  line, and says which field is wrong when it is wrong. It works from any
+  directory: a release tool that only runs from one place is a release tool
+  that people run from the wrong one, and the failure is `Cannot read
+  package.json`, which says nothing about what the command was for.
+
 ## [0.3.4] — 2026-10-20
 
 > 0.3.2 and 0.3.3 were never published. 0.3.2 carried the fix below but the
@@ -294,7 +304,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/pham-canh/space-harness/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.4
 [0.3.1]: https://github.com/pham-canh/space-harness/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/pham-canh/space-harness/compare/v0.2.1...v0.3.0

@@ -132,13 +132,18 @@ against the identity the workflow will actually present:
 ```bash
 npm install -g npm@latest      # npm trust needs 11.15.0 or later
 npm login                       # 2FA has to be enabled on the account
-npm run release:trust           # check, and replace it if it is wrong
+oc-harness trust                # check, and replace it if it is wrong
 ```
 
-`npm run release:trust` reads what npm has stored, compares it against the
+`oc-harness trust` reads what npm has stored, compares it against the
 workflow's own identity, and replaces it when it differs. npm allows exactly
 one configuration per package and cannot edit it, so replacing means revoking
-first — the script does that.
+first — the command does that.
+
+It works from any directory, which matters: a release tool that only runs
+from one place is a release tool that people run from the wrong one, and the
+failure is `Cannot read package.json`, which says nothing about what the
+command was for.
 
 To set it without the script, the command is:
 
