@@ -14,6 +14,22 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.3.7] — 2026-10-20
+
+### Fixed
+
+- **`oc-harness trust` no longer reports a failed create as a configured
+  one.** It printed "the trusted publisher is configured" after npm refused,
+  because it checked the error TEXT rather than the exit code. The user walks
+  away believing the publish path is fixed and finds out at the next release.
+  The exit code is what decides now, and npm's own words are printed when it
+  is not zero.
+- **A failed read is reported as a failed read**, with npm's answer attached,
+  rather than as "nothing is configured" - which sent the reader off to
+  create a configuration that already existed.
+- **The one-time password prompt goes to stderr, on a line of its own.** A
+  question buried in npm's output is a question nobody answers.
+
 ## [0.3.6] — 2026-10-20
 
 ### Fixed
@@ -319,7 +335,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/pham-canh/space-harness/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/pham-canh/space-harness/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/pham-canh/space-harness/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.4

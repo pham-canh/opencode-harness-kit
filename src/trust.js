@@ -96,7 +96,7 @@ function npm(args, opts = {}) {
  *
  * @param {string[]} args
  * @param {{ otp?: string }} [state]
- * @returns {Promise<string>}
+ * @returns {Promise<{ out: string, code: number }>}
  */
 async function npmWithOtp(args, state = {}) {
   /** @param {string[]} extra */
@@ -107,28 +107,28 @@ async function npmWithOtp(args, state = {}) {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
         }),
-        failed: false,
+        code: 0,
       }
     } catch (err) {
       const e = /** @type {any} */ (err)
-      return { out: `${e.stdout ?? ""}${e.stderr ?? ""}`, failed: true }
+      return { out: `${e.stdout ?? ""}${e.stderr ?? ""}`, code: e.status ?? 1 }
     }
   }
 
   const withOtp = state.otp ? [`--otp=${state.otp}`] : []
   let result = run(withOtp)
-  if (!result.failed || !/one-time password|EOTP/i.test(result.out)) return result.out
+  if (result.code === 0 || !/one-time password|EOTP/i.test(result.out)) return result
 
   // npm wants a code. Get one.
   const code = state.otp ?? (await askForOtp())
   if (!code) {
     console.error(red("npm needs a one-time password and none was given."))
-    console.error(dim(`  run it again with --otp=<the code from your authenticator app>`))
-    process.exit(1)
+    console.error(dim("  run it again with --otp=<the code from your authenticator app>"))
+    return { out: result.out, code: result.code }
   }
   state.otp = code
   result = run([`--otp=${code}`])
-  return result.out
+  return result
 }
 
 /**
@@ -145,9 +145,15 @@ async function askForOtp() {
     return null
   }
   const { createInterface } = await import("node:readline/promises")
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  // The prompt goes to stderr, and it gets a line of its own: a question
+  // buried in the middle of npm's output is a question nobody answers.
+  process.stderr.write("\n")
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
   try {
-    const answer = (await rl.question("  one-time password from your authenticator app: ")).trim()
+    const answer = (
+      await rl.question("  one-time password from your authenticator app: ")
+    ).trim()
+    process.stderr.write("\n")
     return answer || null
   } finally {
     rl.close()
@@ -163,19 +169,22 @@ async function askForOtp() {
  *
  * @param {string} name
  * @param {{ otp?: string }} [state]
- * @returns {Promise<{ configs: any[], failed: boolean }>}
+ * @returns {Promise<{ configs: any[], failed: boolean, detail?: string }>}
  */
 async function listConfigs(name, state = {}) {
-  const out = await npmWithOtp(["trust", "list", name, "--json"], state)
-  if (/one-time password|EOTP/i.test(out) && !state.otp) {
-    return { configs: [], failed: true }
+  const { out, code } = await npmWithOtp(["trust", "list", name, "--json"], state)
+  if (code !== 0) {
+    // A package with no configuration answers 404, and a failed call answers
+    // with something else. They are different facts.
+    if (/E404|not found/i.test(out)) return { configs: [], failed: false }
+    return { configs: [], failed: true, detail: out }
   }
   if (!out.trim()) return { configs: [], failed: false }
   let parsed
   try {
     parsed = JSON.parse(out)
   } catch {
-    return { configs: [], failed: true }
+    return { configs: [], failed: true, detail: out }
   }
   const items = Array.isArray(parsed) ? parsed : parsed.configs ?? [parsed]
   return { configs: items.filter(Boolean), failed: false }
@@ -226,10 +235,13 @@ export async function main(argv = []) {
     return 1
   }
 
-  const { configs, failed } = await listConfigs(name, state)
+  const { configs, failed, detail } = await listConfigs(name, state)
   if (failed && !configs.length) {
     console.error(red("could not read the trusted publisher configuration."))
-    console.error(dim("  npm answered with something that is not a configuration list."))
+    if (detail) {
+      console.error(dim("  npm said:"))
+      for (const line of detail.trim().split("\n").slice(-12)) console.error(dim("    " + line))
+    }
     console.error(dim(`  run \`npm trust list ${name}\` to see the raw answer.`))
     return 1
   }
@@ -244,7 +256,7 @@ export async function main(argv = []) {
       return 1
     }
     console.log(`  creating it: ${file}, no environment, publish and stage\n`)
-    const out = await npmWithOtp(
+    const { out, code } = await npmWithOtp(
       [
         "trust",
         "github",
@@ -259,9 +271,19 @@ export async function main(argv = []) {
       ],
       state,
     )
-    if (/one-time password|EOTP/i.test(out)) {
-      console.error(red("npm still wants a one-time password."))
-      console.error(dim("  run it again with --otp=<the code from your authenticator app>"))
+    if (code !== 0) {
+      // Printing "configured" after a failed create is the worst thing this
+      // command could do: the user walks away believing the publish path is
+      // fixed, and finds out at the next release.
+      console.error(red("npm did not create the trusted publisher."))
+      if (/one-time password|EOTP/i.test(out)) {
+        console.error(dim("  run it again with --otp=<the code from your authenticator app>"))
+      }
+      const detail = out.trim()
+      if (detail) {
+        console.error(dim("  npm said:"))
+        for (const line of detail.split("\n").slice(-12)) console.error(dim("    " + line))
+      }
       return 1
     }
     console.log(`\n  ${green("✓")} the trusted publisher is configured\n`)
@@ -314,8 +336,12 @@ export async function main(argv = []) {
       console.error("  revoke it on npmjs.com and run this again.")
       return 1
     }
-    await npmWithOtp(["trust", "revoke", name, "--id", id, "-y"], state)
-    await npmWithOtp(
+    const revoked = await npmWithOtp(["trust", "revoke", name, "--id", id, "-y"], state)
+    if (revoked.code !== 0) {
+      console.error(red("npm did not revoke the old configuration, so nothing was replaced."))
+      return 1
+    }
+    const created = await npmWithOtp(
       [
         "trust",
         "github",
@@ -330,6 +356,15 @@ export async function main(argv = []) {
       ],
       state,
     )
+    if (created.code !== 0) {
+      console.error(red("npm did not create the replacement configuration."))
+      const detail = created.out.trim()
+      if (detail) {
+        console.error(dim("  npm said:"))
+        for (const line of detail.split("\n").slice(-12)) console.error(dim("    " + line))
+      }
+      return 1
+    }
     console.log(`\n  ${green("✓")} the trusted publisher is configured\n`)
   }
   return 0
