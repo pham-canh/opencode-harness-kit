@@ -570,9 +570,13 @@ export function validate(p, path = "<memory>") {
     if (!rm?.model || typeof rm.model !== "string") {
       throw new ProfileError(`${where}: roleModels.${role} needs a model`)
     }
-    if (rm.levels !== undefined && !Array.isArray(rm.levels)) {
+    if (rm.levels !== undefined) {
+      // The field used to be in the schema and validated as an array, and
+      // then nothing read it. A profile author could fill it with a lie and
+      // get no error. It is out of the schema now, and a profile that still
+      // carries it is told so rather than having it ignored.
       throw new ProfileError(
-        `${where}: roleModels.${role}.levels must be an array`,
+        `${where}: roleModels.${role}.levels is not read by anything - the lane takes its levels from the model it runs on. Remove it.`,
       )
     }
     if (rm.chain !== undefined) {
@@ -592,6 +596,15 @@ export function validate(p, path = "<memory>") {
             `${where}: roleModels.${role}.chain names ${rung}, which has no retention.yml entry`,
           )
         }
+        // A rung with no profile cannot be resolved: its levels are unknown
+        // and its limits are unknown, so the lane quietly runs on a model it
+        // did not ask for. The retention check above passed it, because
+        // retention.yml lists a few paid routes the kit has no profile for.
+        if (!profileExists(rung)) {
+          throw new ProfileError(
+            `${where}: roleModels.${role}.chain names ${rung}, which has no profile in this directory`,
+          )
+        }
       }
     }
     // retention.yml is the only place retention is decided, so a role model
@@ -601,7 +614,35 @@ export function validate(p, path = "<memory>") {
         `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`,
       )
     }
+    if (!profileExists(rm.model)) {
+      throw new ProfileError(
+        `${where}: roleModels.${role} names ${rm.model}, which has no profile in this directory`,
+      )
+    }
   }
+  // The fallback queue is walked at startup, and an id that does not resolve
+  // is skipped without a word - so the queue quietly shortens and the
+  // session stays on a route that is already spent.
+  for (const id of p.fallback ?? []) {
+    if (!profileExists(id)) {
+      throw new ProfileError(
+        `${where}: fallback names ${id}, which has no profile in this directory`,
+      )
+    }
+  }
+}
+
+/**
+ * Whether a model id has a profile in this directory.
+ *
+ * The file is looked for rather than loaded: `loadProfile` validates, and
+ * validation is what asks this question.
+ *
+ * @param {string} id
+ * @returns {boolean}
+ */
+function profileExists(id) {
+  return profilePath(id) !== null
 }
 
 // --- context sizing ---------------------------------------------------------

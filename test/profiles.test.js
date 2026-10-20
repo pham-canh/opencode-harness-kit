@@ -443,6 +443,31 @@ test("validate refuses a role model with no retention.yml entry", () => {
   assert.throws(() => validate(badLevels, "test"), ProfileError)
 })
 
+test("validate refuses a chain rung or a fallback id that resolves to nothing", () => {
+  // A rung with no profile cannot be resolved: its levels and its limits
+  // are unknown, so the lane quietly runs on a model it did not ask for.
+  // A fallback id that does not exist is walked at startup and skipped
+  // without a word, so the queue quietly shortens and the session stays on
+  // a route that is already spent.
+  const p = loadProfile("fleet-all")
+  // `muse-spark-1.3` is in retention.yml - it is a paid route the catalogue
+  // still serves - and it has no profile here. That is exactly the shape the
+  // retention check alone cannot see.
+  const badRung = {
+    ...p,
+    roleModels: { ...p.roleModels, plan: { model: "beam-free", chain: ["beam-free", "muse-spark-1.3"] } },
+  }
+  assert.throws(
+    () => validate(badRung, "test"),
+    (e) => e instanceof ProfileError && /no profile in this directory/.test(e.message),
+  )
+  const badFallback = { ...p, fallback: ["does-not-exist"] }
+  assert.throws(
+    () => validate(badFallback, "test"),
+    (e) => e instanceof ProfileError && /fallback names does-not-exist/.test(e.message),
+  )
+})
+
 test("validate refuses a lane that is not one of the managed lanes", () => {
   const p = loadProfile("fleet-all")
   const bad = { ...p, roleModels: { ...p.roleModels, scout: { model: "beam-free" } } }
