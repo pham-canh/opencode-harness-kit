@@ -138,9 +138,17 @@ jobs:
             echo "::error::The runner did not provide ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN. The publish job needs the id-token: write permission, and the environment is GitHub Actions."
             exit 1
           fi
-          id_token=$(curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
-            -H "Accept: application/json" -H "Content-Type: application/json" -d '{}' \
+          # The URL the runner hands over already carries an audience, and
+          # appending a second one does not replace it - so the audience is
+          # SET, not appended, and the URL is printed so the difference is
+          # visible.
+          echo "runner id-token URL: ${ACTIONS_ID_TOKEN_REQUEST_URL}"
+          id_token=$(node -e '
+            const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL)
+            url.searchParams.set("audience", "npm:registry.npmjs.org")
+            process.stdout.write(url.href)
+          ' | xargs -I{} curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "{}" -H "Accept: application/json" -H "Content-Type: application/json" -d '{}' \
             | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).value||"")}catch{}})')
           if [ -z "$id_token" ]; then
             echo "::error::The runner would not issue an OIDC token for the npm audience."
