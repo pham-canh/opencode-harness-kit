@@ -277,7 +277,8 @@ verify  profile fleet-safe -> ~/.config/opencode/opencode.jsonc
   ✓ prompt build.md installed
   ...
   ✓ plugin linked
-  ✓ 4 skill(s) valid
+  ✓ 4 kit skill(s) valid
+  ✓ 219 other skill(s) present
 
   install is consistent with the profile
 ```

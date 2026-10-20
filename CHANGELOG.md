@@ -14,6 +14,22 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-20
+
+### Fixed
+
+- **`oc-harness verify` failed a good install over somebody else's skill
+  naming.** It checked every skill directory in the config and required the
+  `name:` in the frontmatter to match the directory name. OpenCode identifies
+  a skill by its **directory**, not by the frontmatter, so a skill whose two
+  differ loads perfectly well. An install carrying 220-odd community skills
+  reported five failures that were not failures at all, and the command is
+  the one people put in a commit hook.
+- The check now covers the kit's **own** skills, which do have to agree with
+  their directory — the loop refers to them by name, and one whose frontmatter
+  drifted is a step of the loop that will not load. Everyone else's skills are
+  counted and left alone.
+
 ## [0.3.0] — 2026-10-20
 
 ### The fleet
@@ -231,7 +247,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/pham-canh/space-harness/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/pham-canh/space-harness/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pham-canh/space-harness/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pham-canh/space-harness/compare/v0.1.0...v0.2.0
