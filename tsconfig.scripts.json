@@ -1,6 +1,19 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    // The scripts are plain JavaScript with no JSDoc on their parameters, and
+    // annotating a few hundred of them would have been churn rather than
+    // work. This is what the loose setting does and does not catch:
+    //
+    //   CATCHED   a wrong type (TS2322), an argument of the wrong type
+    //             (TS2345), a missing property on a declared shape
+    //             (TS2739/TS2741), an unreachable branch.
+    //   NOT CAUGHT a property that does not exist on an object literal
+    //             (TS2339) - `noImplicitAny: false` turns that off for
+    //             exactly that case - and an untyped parameter.
+    //
+    // The library itself is checked with the strict config, and that is
+    // where the type errors that matter live.
     "noImplicitAny": false,
     "strictNullChecks": false,
     "noEmit": true
