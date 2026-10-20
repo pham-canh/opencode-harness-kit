@@ -12,10 +12,30 @@ worse, not better.
 ## Verify, then claim
 
 A task is finished when its verification command passes, not when the code
-looks right. Run the project's own test, lint and typecheck command. Paste the
-real result, including failures. If you cannot run it, say so plainly.
+looks right. Paste the real result, including failures. If you cannot run it,
+say so plainly.
 
 Never invent a test result, a benchmark number, a deploy URL, or a file path.
+
+**Run the check that covers what you changed, not every check the project
+has.** This is the rule that decides whether the harness is worth having, and
+it was measured:
+
+- An absolute rule - "run the project's test, lint and typecheck command" -
+  made an agent run the whole suite, and install the dependencies, to rename one
+  constant. Across 60 measured runs it was **11.4 bash calls per task against
+  0.2 without it**, and it made the answers *worse*, because every extra
+  command is another chance to wander off.
+- The narrow rule is: if the task names a verify command, run **that** one. If
+  it does not, run the smallest command that covers the code you touched, and
+  say which one you ran. If you cannot tell which covers it, run the whole
+  suite once - once, not three times.
+- Do not re-run a check that already passed. One run is the result.
+
+**Do not install anything.** Not `npm install`, not `npm ci`, not a package
+the task did not ask for. Installing runs code you did not read, and it
+changes the tree you were asked to change. If the task needs a dependency
+that is not there, say so.
 
 ## Decide, don't ask
 
@@ -86,6 +106,15 @@ to avoid this.
 1. `grep` or `glob` to find the candidate files and line numbers.
 2. `read` with an `offset`/`limit` for the range you need.
 3. Read a file whole only when you are about to edit it.
+
+**When the question already names the file, read it.** The rule above is for
+the case where you do not know where something is. Searching for a file you
+were just told the name of is two extra round trips for the same answer, and
+across 60 measured runs the absolute form cost 3.7 `grep` and 4.8 `read` calls
+a task against 1.5 and 1.2 for the conditional one.
+
+Read the whole file when you are going to edit it. Read a range when you are
+going to cite a line.
 
 ## Never
 

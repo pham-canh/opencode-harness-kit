@@ -31,6 +31,7 @@ import {
 
 import { join } from "node:path"
 import { homedir } from "node:os"
+import { BASH_DENYLIST } from "./denylist.js"
 
 /** @typedef {import("./profile.js").Profile} Profile */
 
@@ -183,7 +184,7 @@ export const BASH_ALLOWLIST = [
   "cd*", "realpath*", "basename*", "dirname*", "readlink*",
   "for*", "set*", "export*", "unset*", "bash*", "sh*", "true*", "false*", "test*",
   "read*", "#*", "xargs*", "seq*", "exit*", ":*",
-  "node*", "python3*", "python*", "npm*", "bun*", "uv*", "go*", "cargo*", "rustc*",
+  "node*", "python3*", "python*", "bun*", "uv*", "go*", "cargo*", "rustc*",
   "opencode*", "sqlite3*", "jq*", "fd*",
   "git status*", "git log*", "git diff*", "git show*", "git branch*",
   "git rev-parse*", "git config --get*", "git remote*", "git blame*",
@@ -202,27 +203,20 @@ export const BASH_ALLOWLIST = [
   "python3 -m pytest*", "python3 -m venv*", "python3 -m compileall*",
   "python3 -c*", "python3 agent/*", "python3 src/*", "python3 -",
   ".venv/bin/python*", "pytest*", "ruff*", "mypy*", "black*",
-  "npm test*", "npm run *", "npm ci*", "npm ls*", "npm view *",
-  "npx*", "uv run *", "uv pip *", "bun run *", "bunx*", "node -e*",
+  "npm test*", "npm run *", "npm ls*", "npm view *", "npm outdated*",
+  "npx tsc*", "npx eslint*", "npx prettier*",
+  "uv run *", "uv pip *", "bun run *", "bunx*", "node -e*",
   "opencode debug*", "opencode --version*", "opencode models*",
 ]
 
-/** Hard blocks. The guard plugin enforces the same set in code. */
-export const BASH_DENYLIST = [
-  // `git push` is intentionally absent: it falls through to the `*` ask rule
-  // so opencode prompts for human approval before publishing.
-  "rm -rf *",
-  "rm -fr *",
-  "curl * | sh",
-  "curl * | bash",
-  "chmod 777 *",
-  "chmod 777*",
-  "gh pr create*",
-  "gh pr merge*",
-  "gh pr close*",
-  "gh release*",
-  "gh repo delete*",
-]
+/**
+ * Hard blocks.
+ *
+ * The list lives in ./denylist.js because it is enforced in TWO places: by
+ * opencode's permission map, and by the guard plugin. The two used to be
+ * different lists, and the comment here claimed they were the same.
+ */
+export { BASH_DENYLIST } from "./denylist.js"
 
 /**
  * @param {Profile} p

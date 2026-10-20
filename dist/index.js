@@ -352,6 +352,54 @@ function checkWrite(target, rules = WRITE_RULES, root = "") {
   return null;
 }
 
+// src/denylist.js
+var BASH_DENYLIST = [
+  // `git push` is intentionally absent: it falls through to the `*` ask rule
+  // so opencode prompts for human approval before publishing.
+  "rm -rf *",
+  "rm -fr *",
+  "curl * | sh",
+  "curl * | bash",
+  "chmod 777 *",
+  "chmod 777*",
+  "gh pr create*",
+  "gh pr merge*",
+  "gh pr close*",
+  "gh release*",
+  "gh repo delete*",
+  // Publishing to a registry. The allowlist had a blanket `npm*`, so
+  // `npm publish` was ALLOWED - no prompt, no question - while GLOBAL.md says
+  // to ask before publishing. The mechanical layer contradicted the judgement
+  // layer, which is the exact failure this kit is built to catch.
+  //
+  // The registry is the one destination where a mistake cannot be undone by
+  // deleting a file.
+  "npm publish*",
+  "npm unpublish*",
+  "npm deprecate*",
+  "npm login*",
+  "npm adduser*",
+  "npm token *",
+  "npm owner *",
+  "yarn publish*",
+  "pnpm publish*",
+  "bun publish*"
+];
+function matchesPattern(command, pattern) {
+  const re = new RegExp(
+    "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[\\s\\S]*") + "$"
+  );
+  return re.test(command);
+}
+function deniedBy(command) {
+  const cmd = String(command ?? "").trim();
+  if (!cmd) return null;
+  for (const pattern of BASH_DENYLIST) {
+    if (matchesPattern(cmd, pattern)) return pattern;
+  }
+  return null;
+}
+
 // src/telemetry-store.ts
 import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -466,6 +514,17 @@ var GuardPlugin = async ({ worktree, directory }) => {
           if (hit) {
             refuse(input.tool, hit.name, hit.name, `${hit.why}
   command: ${truncate(hit.segment)}`);
+          }
+          const command = String(output.args?.command ?? "");
+          const pattern = deniedBy(command);
+          if (pattern) {
+            refuse(
+              input.tool,
+              `denied command (${pattern})`,
+              "denied command",
+              `this command matches \`${pattern}\`, which the kit never allows.
+  command: ${truncate(command)}`
+            );
           }
           return;
         }
