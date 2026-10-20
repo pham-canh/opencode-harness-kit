@@ -300,6 +300,30 @@ profiles has been withdrawn — `space-bunny-free`, `x-preview-f-free`,
 `mimo-v2.5-free` — and the default profile pointed at a model that no longer
 existed.
 
+## The install-wide measurement is an observation, and there is a controlled one
+
+`npm run measure` compares the work before the kit landed with the work
+after. It reported the context per request going **up** by 16% on one install,
+with twice as many reads and twice as many messages in the second window.
+
+That is a number about the jobs, not about the kit. The two windows are never
+the same work, and "everything since the install" is a window that grows
+without bound, so the comparison is a different one every time the script
+runs.
+
+`npm run measure` now says so: the windows are fixed and equal around the
+split, the context drop is skipped with a note when the two sides are not
+comparable, and the gate uses the number that IS comparable.
+
+`eval/measure-prune.mjs` is that number. opencode stores the message parts
+unpruned - the pruner rewrites the outgoing request, not the history - so the
+stored parts of a real session are exactly what the pruner was given, and
+replaying the real pruner over them measures exactly what it removed. On one
+install: **82% of the context across 289 real sessions**, 11,242 parts stubbed.
+
+The controlled comparison of the two arms is `eval/ab.mjs`, and its result is
+in `eval/RESULTS.md`.
+
 ## A model-driven compressor is not assumed to work
 
 `@tarquinen/opencode-dcp` (4.3k stars) exposes a `compress` tool so the model

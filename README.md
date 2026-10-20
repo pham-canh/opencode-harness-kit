@@ -487,6 +487,18 @@ reads exceed 51,200 bytes, so that ceiling is not what limits context.
 
 Your numbers stay on your machine; only the script is in the repo.
 
+`npm run measure` is an **observation** about one install: it compares the
+work before the kit landed with the work after, and the work is never the
+same. It says so when the two windows are not comparable, and the gate uses
+the number that is.
+
+`npm run measure:prune` is the attributable one. opencode stores the message
+parts unpruned — the pruner rewrites the outgoing request, not the history —
+so the stored parts of a real session are exactly what the pruner was given,
+and replaying the real pruner over them measures exactly what it removed, on
+the same messages with and without. On one install: **82% of the context
+across 289 real sessions**.
+
 ## Memory
 
 The kit does not implement memory. A local vector store with embeddings, a
