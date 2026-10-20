@@ -25,8 +25,10 @@ description: Implement one planned task and verify it with a real command. Use w
    Fix the cause, then run it again. The third identical attempt is a signal to
    stop and report.
 7. **Mark the task done in `.space/tasks.md`** and paste the verify command's
-   verbatim final lines into its `verify:` line. A task marked done without
-   that has not been verified.
+   verbatim final lines into its `output:` line. The `verify:` line keeps the
+   command and nothing else - it is what the driver runs, so a `verify:` that
+   reads `npm test - 3 passed` is a command that does not exist. A task marked
+   done without the output has not been verified.
 8. **Report the command and its verbatim output.**
 
 ## Test-first when the plan called for it

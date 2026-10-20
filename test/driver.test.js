@@ -56,7 +56,10 @@ test("a passing task is marked done and its real output recorded", () => {
   assert.equal(r.code, 0)
   const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
   assert.equal(after.tasks[0].status, "done")
-  assert.ok(after.tasks[0].verify.includes("# pass 3"))
+  // The command stays a command and the output goes beside it. A driver that
+  // ran the recorded output would be running "npm test exit 0 in 2s".
+  assert.equal(after.tasks[0].verify, "npm test")
+  assert.ok(after.tasks[0].output.includes("# pass 3"), after.tasks[0].output)
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -88,7 +91,8 @@ test("a failing verify stops the loop and blocks the task", () => {
   assert.equal(r.rounds, 1)
   const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
   assert.equal(after.tasks[0].status, "blocked")
-  assert.ok(after.tasks[0].verify.includes("# fail 1"))
+  assert.equal(after.tasks[0].verify, "check-a", "the command is not corrupted")
+  assert.ok(after.tasks[0].output.includes("# fail 1"), after.tasks[0].output)
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -105,6 +109,28 @@ test("the agent's claim is not trusted: verify is re-run by the loop", () => {
     },
   })
   assert.equal(verifyCalls, 1)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("the loop hands the verify COMMAND to the shell, not the command and its output", () => {
+  // The output used to be written as continuation lines under `verify:`, and
+  // the parser folded it back into the field. The driver then handed the
+  // whole string to a shell: "npm test exit 0 in 2s". The command is the only
+  // thing that is ever executed.
+  const dir = scratch(oneTask())
+  const commands = []
+  runLoop({
+    cwd: dir,
+    runAgent: () => ({ ok: true, status: 0, output: "" }),
+    runVerify: (cmd) => {
+      commands.push(cmd)
+      return { ok: true, status: 0, output: "exit 0 in 2s\n# pass 3", seconds: 2 }
+    },
+  })
+  assert.deepEqual(commands, ["npm test"])
+  const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+  assert.equal(after.tasks[0].verify, "npm test")
+  assert.ok(after.tasks[0].output.includes("# pass 3"))
   rmSync(dir, { recursive: true, force: true })
 })
 
