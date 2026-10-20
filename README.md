@@ -12,6 +12,9 @@ narrated. The take script and the voiceover are in [`video/`](video/), and
 rebuilding it is documented there — including the two mistakes that cost the
 most time, so the next person does not repeat them.*
 
+*It was recorded against an earlier version of the kit: the numbers it names
+are the ones from then, and the ones below are the ones now.*
+
 A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
 

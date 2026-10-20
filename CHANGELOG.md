@@ -12,7 +12,16 @@ is not happening.
 
 ---
 
-## [Unreleased]
+## [0.4.4] — 2026-10-20
+
+### Added
+
+- **The demo is back on the front page.** `docs/demo/pitch.mp4` and
+  `docs/demo-loop.gif` are in the README again, and `video/` still holds the
+  take script, the voiceover and the recording driver. The film was recorded
+  against an earlier version of the kit, and the README now says so next to
+  it rather than leaving a front page that quietly misstates the project's own
+  numbers.
 
 ### Fixed
 
@@ -676,7 +685,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/pham-canh/space-harness/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/pham-canh/space-harness/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/pham-canh/space-harness/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/pham-canh/space-harness/compare/v0.4.0...v0.4.1
