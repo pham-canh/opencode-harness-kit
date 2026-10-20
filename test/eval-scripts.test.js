@@ -18,8 +18,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
+import { mkdtemp } from "./helpers.mjs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -27,7 +28,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const PREPARE = join(REPO, "eval", "prepare.mjs")
 
 function scratchDir(prefix) {
-  return mkdtempSync(join(tmpdir(), prefix))
+  return mkdtemp(prefix)
 }
 
 /**

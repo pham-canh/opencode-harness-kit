@@ -8,10 +8,14 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import { existsSync, readdirSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import { loadProfile, modelsInPlay } from "../src/profile.js"
 
-const ROOT = new URL("..", import.meta.url).pathname
+// fileURLToPath, not `.pathname`: on Windows a URL pathname is
+// "/C:/Users/...", which is not a path any fs call understands. The kit
+// claims Windows support, and the other test files already use this.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const LOOP = ["space-plan", "space-build", "space-review", "space-finish"]
 
 function frontmatter(path) {

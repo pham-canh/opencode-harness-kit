@@ -22,6 +22,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { repoOf, openBrowser } from "../src/trust.js"
+import { mkdtemp } from "./helpers.mjs"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(ROOT, "bin", "oc-harness.mjs")
@@ -61,7 +62,7 @@ test("`oc-harness trust` works from any directory", () => {
   //
   // A fake npm stands in for the registry, so the test never waits on a
   // two-factor challenge and never touches the network.
-  const dir = mkdtempSync(join(tmpdir(), "ock-trust-anywhere-"))
+  const dir = mkdtemp("ock-trust-anywhere-")
   const bin = join(dir, "bin")
   mkdirSync(bin, { recursive: true })
   writeFileSync(
@@ -79,7 +80,13 @@ esac
   try {
     const r = spawnSync("node", [CLI, "trust", "--check"], {
       cwd: "/",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        // The two-factor wait defaults to ten minutes. A test that reaches it
+        // has to fail in seconds, not in ten minutes.
+        OC_TRUST_WAIT_SECONDS: "10",
+      },
       encoding: "utf8",
     })
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
@@ -103,7 +110,7 @@ test("a failed create is never reported as a configured one", () => {
   // path is fixed, and finds out at the next release.
   //
   // A fake npm on the PATH makes the create fail, deterministically.
-  const dir = mkdtempSync(join(tmpdir(), "ock-trust-fail-"))
+  const dir = mkdtemp("ock-trust-fail-")
   const bin = join(dir, "bin")
   mkdirSync(bin, { recursive: true })
   const fake = join(bin, "npm")
@@ -126,7 +133,12 @@ esac
   )
   try {
     const r = spawnSync("node", [CLI, "trust"], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OC_TRUST_NO_BROWSER: "1" },
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        OC_TRUST_NO_BROWSER: "1",
+        OC_TRUST_WAIT_SECONDS: "10",
+      },
       encoding: "utf8",
     })
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
@@ -154,7 +166,7 @@ test("each npm command gets its own two-factor challenge", async () => {
     res.end(JSON.stringify({ token: `TOKEN-${issued}` }))
   })
   void issued
-  const dir = mkdtempSync(join(tmpdir(), "ock-trust-otp-"))
+  const dir = mkdtemp("ock-trust-otp-")
   const bin = join(dir, "bin")
   mkdirSync(bin, { recursive: true })
   const log = join(dir, "argv.log")
@@ -190,7 +202,12 @@ esac
     // it. That is a deadlock, not a slow test.
     const r = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "trust"], {
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OC_TRUST_NO_BROWSER: "1" },
+        env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        OC_TRUST_NO_BROWSER: "1",
+        OC_TRUST_WAIT_SECONDS: "10",
+      },
       })
       let stdout = ""
       let stderr = ""

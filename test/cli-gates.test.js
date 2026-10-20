@@ -7,18 +7,19 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
+import { spawnSync, execFileSync } from "node:child_process"
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseJsonc } from "../src/profile.js"
+import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
 
 function sandbox() {
-  const dir = mkdtempSync(join(tmpdir(), "ock-gate-"))
+  const dir = mkdtemp("ock-gate-")
   return {
     dir,
     config: join(dir, "opencode.jsonc"),
@@ -29,7 +30,7 @@ function sandbox() {
 
 function run(box, args, opts = {}) {
   const r = spawnSync("node", [CLI, ...args], {
-    env: opts.env ?? box.env,
+    env: { OC_HARNESS_NO_HOOK: "1", ...(opts.env ?? box.env) },
     encoding: "utf8",
     cwd: opts.cwd ?? box.dir,
   })
@@ -38,6 +39,35 @@ function run(box, args, opts = {}) {
     out: `${r.stdout ?? ""}${r.stderr ?? ""}`,
   }
 }
+
+test("the pre-commit hook goes into the project, not into the kit's own repository", () => {
+  // It used to be written to `<kit root>/.git/hooks/pre-commit`. For a user
+  // running `npx opencode-harness-kit install` that is the kit's own
+  // installation directory - a node_modules folder or an npx cache, possibly
+  // read-only, and never the repository the user works in. So the gate was
+  // installed somewhere useless, and running the test suite installed it into
+  // the kit's repository.
+  const box = sandbox()
+  try {
+    // A project that IS a git repository.
+    const project = join(box.dir, "project")
+    mkdirSync(project, { recursive: true })
+    execFileSync("git", ["init", "-q", project])
+
+    const r = spawnSync("node", [CLI, "install"], {
+      env: { ...box.env, OC_HARNESS_NO_HOOK: "" },
+      encoding: "utf8",
+      cwd: project,
+    })
+    assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}`)
+    assert.ok(
+      existsSync(join(project, ".git", "hooks", "pre-commit")),
+      "the hook was not installed into the project",
+    )
+  } finally {
+    box.cleanup()
+  }
+})
 
 test("a flag accepts both spellings", () => {
   // `--profile=fleet-safe` is the conventional spelling and it used to be

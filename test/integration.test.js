@@ -9,9 +9,11 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import { tmpdir } from "node:os"
 import { loadProfile } from "../src/profile.js"
+import { mkdtemp } from "./helpers.mjs"
 
 // Isolate from the developer's real opencode config. Without this, a test that
 // omits an explicit profile would read whatever happens to be installed, and
@@ -25,7 +27,10 @@ writeFileSync(
 process.env.OPENCODE_CONFIG_DIR = SANDBOX_CONFIG
 process.on("exit", () => rmSync(SANDBOX_CONFIG, { recursive: true, force: true }))
 
-const ROOT = new URL("..", import.meta.url).pathname
+// fileURLToPath, not `.pathname`: on Windows a URL pathname is
+// "/C:/Users/...", which is not a path any fs call understands. The kit
+// claims Windows support, and the other test files already use this.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 // Built into a scratch directory, never into dist/. dist/index.js is a committed
 // artifact, and a test run must not be able to rewrite it -- see ensureBuild().
 // The scratch dir lives one level under the repo root, not in the OS temp dir,
@@ -124,7 +129,7 @@ async function harness(worktree, opts) {
 }
 
 function workspace() {
-  const dir = join(tmpdir(), `ock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  const dir = mkdtemp("ock-")
   mkdirSync(join(dir, ".space"), { recursive: true })
   return dir
 }

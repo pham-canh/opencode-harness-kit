@@ -14,7 +14,7 @@
 
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, relative } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { createInterface } from "node:readline/promises"
@@ -340,6 +340,26 @@ function installTargets() {
 }
 
 /**
+ * The git repository that contains `startDir`, or null.
+ *
+ * Found by walking up, the same way the telemetry file is found: the project
+ * is not necessarily the directory the command was run in.
+ *
+ * @param {string} startDir
+ * @returns {string | null}
+ */
+function gitRoot(startDir) {
+  let dir = resolve(startDir)
+  for (let i = 0; i < 12; i++) {
+    if (existsSync(join(dir, ".git"))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
+/**
  * The project root, found by walking up from the working directory.
  *
  * opencode reads a project's agent files from `<project>/.opencode/`, and the
@@ -488,13 +508,22 @@ async function cmdInstall() {
     console.log(`  ${stamp(`  ${dest.replace(`${homedir()}/`, "~/")}`)}`)
   }
 
-  // The commit gate lives in the repository, not in the home directory, so it
-  // survives a reinstall and can be reviewed. An existing hook is never
-  // overwritten without asking.
+  // The commit gate lives in the PROJECT's repository, not in the kit's.
+  //
+  // It used to be written to `<kit root>/.git/hooks/pre-commit`, which for a
+  // user running `npx opencode-harness-kit install` is the kit's own
+  // installation directory - a node_modules folder or an npx cache, possibly
+  // read-only, and never the repository the user works in. So the gate was
+  // installed somewhere useless, and running the test suite installed it
+  // into the kit's own repository.
+  //
+  // The repository is the one that contains the directory the command was
+  // run in, found by walking up - the same way the telemetry file is found.
   const hookSrc = fileURLToPath(new URL("./git-hooks/pre-commit", import.meta.url))
-  const hookDest = join(ROOT, ".git/hooks/pre-commit")
+  const projectGit = gitRoot(process.cwd())
+  const hookDest = projectGit ? join(projectGit, ".git", "hooks", "pre-commit") : null
   let hookState = "skipped, not a git repository"
-  if (existsSync(join(ROOT, ".git"))) {
+  if (hookDest && !process.env.OC_HARNESS_NO_HOOK) {
     let existing = null
     try {
       existing = readFileSync(hookDest, "utf8")
@@ -505,7 +534,7 @@ async function cmdInstall() {
       hookState = "skipped at the prompt"
     } else {
       try {
-        mkdirSync(join(ROOT, ".git/hooks"), { recursive: true })
+        mkdirSync(join(projectGit, ".git", "hooks"), { recursive: true })
         copyFileSync(hookSrc, hookDest)
         chmodSync(hookDest, 0o755)
         hookState = `installed ${hookDest}`
@@ -513,6 +542,8 @@ async function cmdInstall() {
         hookState = `could not install: ${err.message}`
       }
     }
+  } else if (process.env.OC_HARNESS_NO_HOOK) {
+    hookState = "skipped (OC_HARNESS_NO_HOOK is set)"
   }
   console.log(`  ${stamp(`pre-commit hook: ${hookState}`)}`)
 
@@ -1072,6 +1103,17 @@ const CATALOG_URL =
 async function fetchCatalog() {
   const url = CATALOG_URL
   try {
+    // A `file://` URL is read directly. The catalogue override exists for a
+    // mirror and for a test, and a test that needs the `curl` binary is a
+    // test that fails on a minimal CI image.
+    if (url.startsWith("file://")) {
+      const body = readFileSync(url.slice("file://".length), "utf8")
+      const parsed = JSON.parse(body)
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        fail(`${url} did not return a model catalogue`)
+      }
+      return parsed
+    }
     // `--fail` matters: without it curl exits 0 on a 4xx or a 5xx and hands
     // back an error body, which parses as a catalogue with no models in it.
     // Every profile would then be reported as withdrawn.

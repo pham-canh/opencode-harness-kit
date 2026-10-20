@@ -4,12 +4,13 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { checkPremises } from "../eval/premises.mjs"
+import { mkdtemp } from "./helpers.mjs"
 
 // A subject to check premises against. Built here rather than pointed at the
 // real one so the test does not need a prepared snapshot, and so the contents
 // are stated: every assertion below is about what this directory says.
 function subject(files) {
-  const dir = mkdtempSync(join(tmpdir(), "premises-test-"))
+  const dir = mkdtemp("premises-test-")
   for (const [rel, body] of Object.entries(files)) {
     const abs = join(dir, rel)
     mkdirSync(join(abs, ".."), { recursive: true })

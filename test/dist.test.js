@@ -8,9 +8,13 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 
-const ROOT = new URL("..", import.meta.url).pathname
+// fileURLToPath, not `.pathname`: on Windows a URL pathname is
+// "/C:/Users/...", which is not a path any fs call understands. The kit
+// claims Windows support, and the other test files already use this.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const COMMITTED = join(ROOT, "dist", "index.js")
 
 // Byte for byte what `npm run build` produces, from the same script and flags.

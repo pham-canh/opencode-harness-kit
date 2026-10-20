@@ -9,9 +9,10 @@ import { join } from "node:path"
 
 import { runLoop, tail, buildPrompt } from "../src/driver/run.mjs"
 import { parseTasks } from "../src/tasks.js"
+import { mkdtemp } from "./helpers.mjs"
 
 function scratch(doc) {
-  const dir = mkdtempSync(join(tmpdir(), "space-driver-"))
+  const dir = mkdtemp("space-driver-")
   mkdirSync(join(dir, ".space"))
   writeFileSync(join(dir, ".space", "tasks.md"), doc)
   return dir
@@ -39,7 +40,7 @@ const twoTasks = `# Goal
 `
 
 test("a missing task file stops with advice, not a crash", () => {
-  const dir = mkdtempSync(join(tmpdir(), "space-empty-"))
+  const dir = mkdtemp("space-empty-")
   const r = runLoop({ cwd: dir, runAgent: () => ({ ok: true }), runVerify: () => ({ ok: true }) })
   assert.equal(r.code, 1)
   assert.match(r.reason, /space-plan/)

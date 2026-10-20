@@ -9,9 +9,14 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+import { mkdtemp } from "./helpers.mjs"
 
-const ROOT = new URL("..", import.meta.url).pathname
+// fileURLToPath, not `.pathname`: on Windows a URL pathname is
+// "/C:/Users/...", which is not a path any fs call understands. The kit
+// claims Windows support, and the other test files already use this.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const BIN = join(ROOT, "bin", "oc-harness.mjs")
 
 // spawnSync rather than execFileSync: execFileSync hands back stdout only when the
@@ -21,13 +26,16 @@ function run(args, env = {}) {
   const r = spawnSync("node", [BIN, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, ...env },
+    // The hook is not installed: a test that writes an executable git hook
+    // into the repository it is testing is a test that changes the
+    // repository. `init` runs `install`, which installs a hook.
+    env: { ...process.env, OC_HARNESS_NO_HOOK: "1", ...env },
   })
   return { exit: r.status ?? 1, out: (r.stdout ?? "") + (r.stderr ?? "") }
 }
 
 test("init validates the profile before writing anything", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const dir = mkdtemp("oc-init-")
   const r = run(["init", "--profile", "no-such-profile"], { OPENCODE_CONFIG_DIR: dir })
   assert.notEqual(r.exit, 0, "a bad profile must fail")
   assert.ok(r.out.includes("no profile named"), "the error says what went wrong")
@@ -35,14 +43,14 @@ test("init validates the profile before writing anything", () => {
 })
 
 test("init without a terminal and without --profile says so", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const dir = mkdtemp("oc-init-")
   const r = run(["init"], { OPENCODE_CONFIG_DIR: dir })
   assert.notEqual(r.exit, 0, "no question can be asked without a terminal")
   assert.ok(r.out.includes("--profile"), "the error shows the non-interactive form")
 })
 
 test("init runs install + use + verify into a fresh config dir", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const dir = mkdtemp("oc-init-")
   const r = run(["init", "--profile", "fleet-safe", "--yes"], { OPENCODE_CONFIG_DIR: dir })
   assert.equal(r.exit, 0, `init must succeed end to end:\n${r.out}`)
   for (const expected of ["opencode.jsonc", "prompts", "skills", "GLOBAL.md"]) {
@@ -63,7 +71,7 @@ test("the help lists init next to the commands it chains", () => {
 // the safe one: it backs up what it is about to replace rather than asking a
 // question nobody can answer when there is no terminal.
 test("init is safe to re-run over a config it already wrote", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const dir = mkdtemp("oc-init-")
   const env = { OPENCODE_CONFIG_DIR: dir }
 
   const first = run(["init", "--profile", "fleet-safe", "--yes"], env)
@@ -86,7 +94,7 @@ test("init is safe to re-run over a config it already wrote", () => {
 // A hand-edited config that does not parse cannot be merged onto. Regenerating
 // over it would silently drop settings the user wrote and the tool cannot read.
 test("init refuses to regenerate over a config it cannot parse", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const dir = mkdtemp("oc-init-")
   const config = join(dir, "opencode.jsonc")
   const broken = '{ "model": "not closed\n'
   writeFileSync(config, broken)
@@ -104,7 +112,7 @@ test("init refuses to regenerate over a config it cannot parse", () => {
 const ASK = "may train on your prompts and completions"
 
 test("a profile whose split role may train is announced before it becomes default", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const dir = mkdtemp("oc-init-")
   const r = run(["init", "--profile", "fleet-all"], { OPENCODE_CONFIG_DIR: dir })
 
   assert.equal(r.exit, 0, "without a terminal the run continues, it does not hang")
@@ -129,7 +137,7 @@ test("a profile whose split role may train is announced before it becomes defaul
 })
 
 test("--yes is what silences the may-train warning", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const dir = mkdtemp("oc-init-")
   const r = run(["init", "--profile", "fleet-all", "--yes"], { OPENCODE_CONFIG_DIR: dir })
 
   assert.equal(r.exit, 0, "accepting the terms is a successful run")
@@ -142,7 +150,7 @@ test("--yes is what silences the may-train warning", () => {
 })
 
 test("a zero-retention profile installs without a retention warning", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const dir = mkdtemp("oc-init-")
   const r = run(["init", "--profile", "fleet-safe", "--yes"], { OPENCODE_CONFIG_DIR: dir })
 
   assert.equal(r.exit, 0, `the run must succeed:\n${r.out}`)
