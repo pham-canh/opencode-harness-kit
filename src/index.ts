@@ -66,7 +66,17 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
       // The same set of spent routes the router used. A lane that failed over
       // to a model with fewer effort levels must not keep the variant the
       // previous model had.
-      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }))
+      //
+      // The session model is read before the effort plan is applied, because
+      // the router may have moved it onto a fallback while the base route was
+      // spent. Pinning the base back here would undo that failover.
+      const sessionModel =
+        typeof config?.harness?.sessionModel === "string"
+          ? config.harness.sessionModel
+          : undefined
+      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(ctx.worktree) }), {
+        sessionModel,
+      })
       // Record it where the prune hook looks, so pruning picks up this
       // profile's thresholds without access to the resolved config.
       const dir = join(ctx.worktree, ".space")

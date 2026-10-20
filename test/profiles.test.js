@@ -142,6 +142,54 @@ test("the retention ceiling decides which rung a lane may use", () => {
   assert.equal(resolveLaneModel(safe, "plan").model, "deepseek-v4.1-flash-free")
 })
 
+test("a chain is ordered inside its own profile's ceiling", () => {
+  // A chain is "the models that could serve this lane, best first", and
+  // "best" is judged inside the profile's retention ceiling. The safe fleet
+  // therefore cannot name a model that may train, not even as a later rung:
+  // the first rung is always the one that runs, but a chain that could reach
+  // a training provider is a chain whose failover would break the promise
+  // the profile makes.
+  for (const id of ["fleet-safe", "fleet-all"]) {
+    const p = loadProfile(id)
+    const ceiling = p.maxRetention ?? p.retention
+    for (const lane of Object.keys(p.roleModels ?? {})) {
+      for (const rung of resolveLaneChain(p, lane)) {
+        assert.ok(
+          retentionAllowed(rung, ceiling),
+          `${id}: lane ${lane} has ${rung} in its chain, which is above the ${ceiling} ceiling`,
+        )
+      }
+    }
+  }
+})
+
+test("the safe fleet's second choice is still the best one inside the ceiling", () => {
+  // Six of the ten lanes run on a second-choice model under a zero-retention
+  // ceiling. That is the price of the ceiling, and it is only worth paying
+  // when the model that takes over is the best one available for THAT job.
+  const safe = loadProfile("fleet-safe")
+  // `locate` wants the lowest effort and the fastest answer. longcat
+  // publishes no effort levels at all, so a locate lane on it cannot honour
+  // a `low` request; deepseek can, and is faster.
+  assert.equal(resolveLaneModel(safe, "locate").model, "deepseek-v4.1-flash-free")
+  assert.equal(resolveRoles(safe).locate, "low")
+  // `vision` wants a fast image reader. minimax reads one in 7 seconds.
+  assert.equal(resolveLaneModel(safe, "vision").model, "minimax-m3.1-flash-free")
+  // `sweep` wants reasoning turned off, and no zero-retention model publishes
+  // a `none` level. The lane is kept, but it cannot do the one thing it was
+  // built for - which the routing doc says out loud.
+  assert.equal(resolveLaneModel(safe, "sweep").model, "longcat-2.5-preview-free")
+  assert.equal(resolveRoles(safe).sweep, null)
+  // Six lanes differ from the unrestricted fleet. The number is a fact about
+  // the tier, not a preference, and the docs quote it.
+  const all = loadProfile("fleet-all")
+  const displaced = Object.keys(safe.roles).filter(
+    (lane) => resolveLaneModel(safe, lane).model !== resolveLaneModel(all, lane).model,
+  )
+  assert.equal(displaced.length, 6)
+  assert.deepEqual(displaced.sort(), ["locate", "plan", "reviewer", "sweep", "verify", "vision"])
+})
+
 test("a model whose terms are unknown is never used", () => {
   assert.equal(retentionAllowed("beam-free", "zero-retention"), false)
   assert.equal(retentionAllowed("beam-free", "retained"), true)
@@ -233,7 +281,11 @@ test("the same plugin source produces different behaviour per profile", () => {
   //    dead config existed.
   assert.equal(single.agent.plan.variant, "max")
   assert.equal(single.agent.locate.variant, "low")
-  assert.equal(safe.agent.locate.variant, undefined, "no tunable effort, no variant")
+  // The safe fleet's `locate` lane is on a model that publishes a `low` level,
+  // so it gets one. The sweep lane is on a model that publishes none, so it
+  // gets no variant at all rather than a level that model does not have.
+  assert.equal(safe.agent.locate.variant, "low")
+  assert.equal(safe.agent.sweep.variant, undefined, "no tunable effort, no variant")
   for (const c of [safe, all, single]) {
     assert.equal("variant" in c, false, "top-level variant must not be emitted")
   }
@@ -403,6 +455,46 @@ test("modelsInPlay and effectiveRetention see past the base model", () => {
   // A profile that never leaves its base model is unaffected.
   const plain = effectiveRetention(loadProfile("beam-free"))
   assert.equal(plain.retention, "retained")
+})
+
+test("effectiveRetention names the MODEL responsible for the level", () => {
+  // `worst` used to be a retention class on one path and a model id on the
+  // other, and the header prints it as a model name. A fleet that resolved to
+  // a `retained` lane said "but retained makes the whole file retained".
+  const all = effectiveRetention(loadProfile("fleet-all"))
+  assert.equal(all.retention, "may-train")
+  assert.ok(
+    ["big-pickle", "mimo-v2.6-flash-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "nemotron-3.5-super-vl-free"].includes(
+      all.worst,
+    ),
+    `worst should name a model, got ${all.worst}`,
+  )
+  // The safe fleet resolves to zero-retention models only, so the level is
+  // zero-retention whatever the model is called.
+  const safe = effectiveRetention(loadProfile("fleet-safe"))
+  assert.equal(safe.retention, "zero-retention")
+  assert.ok(safe.worst && safe.worst.length > 0, "worst is still a model id")
+})
+
+test("the header states the input cap that governs, not the base model's", () => {
+  // The header used to print the base model's cap under a label that said
+  // "narrowest lane", so the number and the label described two different
+  // things. `reserved` and `prune` are derived from the narrowest one, and a
+  // reader could not check the arithmetic.
+  const safe = loadProfile("fleet-safe")
+  const text = generateConfig(safe)
+  const cap = inputCap(safe)
+  assert.match(text, new RegExp(`input cap\\s+${cap.toLocaleString("en-US")} tokens`))
+  assert.match(text, /narrowest lane; governs the shared reserve/)
+  // The base model's own context is still named, and labelled as the base.
+  assert.match(text, /context\s+1,000,000 tokens\s+\(base model\)/)
+  // And the derived numbers follow the cap that was printed.
+  assert.match(text, new RegExp(`compaction\\.reserved\\s+${reservedTokens(safe).toLocaleString("en-US")}`))
+
+  // A single-model profile has one number and no fleet annotation.
+  const single = generateConfig(loadProfile("beam-free"))
+  assert.match(single, /input cap\s+1,048,576 tokens/)
+  assert.doesNotMatch(single, /narrowest lane/)
 })
 
 test("the header names each lane's real output cap", () => {

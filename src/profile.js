@@ -679,25 +679,29 @@ export function roleSplitModels(p, opts = {}) {
  * The retention that actually applies once every lane is considered, which is
  * what a config header has to print. `retention.yml` is the source of truth.
  *
+ * `worst` is the MODEL responsible for that level, not the level itself. The
+ * two used to be the same field with two different meanings - a retention
+ * class on one path and a model id on the other - and the header prints it as
+ * a model name, so a fleet that resolved to a `retained` lane said
+ * "but retained makes the whole file retained".
+ *
  * @param {Profile} p
  * @param {{ unhealthy?: Set<string> }} [opts]
  * @returns {{ retention: string, worst: string | null }}
  */
 export function effectiveRetention(p, opts = {}) {
+  /** @type {string | null} */
   let worst = null
   let retention = "zero-retention"
   for (const id of modelsInPlay(p, opts)) {
     const declared = modelRetention(id)
-    if (declared === "may-train") {
-      return { retention: "may-train", worst: id }
-    }
     if (
       !worst ||
-      RETENTION_SEVERITY.indexOf(declared) > RETENTION_SEVERITY.indexOf(worst)
+      RETENTION_SEVERITY.indexOf(declared) > RETENTION_SEVERITY.indexOf(retention)
     ) {
-      worst = declared
+      worst = id
+      retention = declared
     }
-    retention = worst
   }
   return { retention, worst }
 }
