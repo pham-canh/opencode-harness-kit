@@ -14,6 +14,23 @@
 // lanes that are never called are ten descriptions in the model\'s context and
 // ten models on the free tier doing nothing. `oc-harness lanes` reads these
 // records and reports the ones that were never called.
+//
+// WHAT A CALL IS
+//
+// One assistant message is one call. opencode emits `message.updated` several
+// times for a single message - created, streamed, completed - so writing a
+// record per event counted every call three times. A lane record therefore
+// carries the message id, and a lane is counted once per id.
+//
+// Two records are written per message, at most: an open one when the message
+// appears, and a closed one when it completes. The closed record is the only
+// one with a duration, so "how long does this lane take" and "was this lane
+// called at all" are answered from the same file without guessing.
+//
+// The `chat.message` hook is deliberately not used for this. Measured on
+// OpenCode 1.19, its `agent` field is undefined, so it cannot attribute a
+// call to a lane; and a second counter that cannot be correlated with the
+// first would double-count every call.
 
 import type { Plugin } from "@opencode-ai/plugin"
 import { appendFileSync, mkdirSync, existsSync, statSync, renameSync } from "node:fs"
@@ -51,6 +68,17 @@ export const TelemetryPlugin: Plugin = async ({ worktree }) => {
   const dir = join(worktree, ".space")
   const started = Date.now()
 
+  // The message id of every lane record already written, and of every one
+  // already written with a duration.
+  //
+  // opencode emits `message.updated` several times for a single assistant
+  // message: once when the message is created, once per streaming update, and
+  // once when it completes. Writing a record per event counted one call three
+  // times, which made the "cut the lanes nobody calls" counter wrong by a
+  // factor of three. A lane is counted once per message id instead.
+  const opened = new Set<string>()
+  const closed = new Set<string>()
+
   return {
     event: async ({ event }) => {
       // Events are provider-specific and opencode may add shapes we have never
@@ -65,30 +93,28 @@ export const TelemetryPlugin: Plugin = async ({ worktree }) => {
         return
       }
 
-      // A finished assistant message is the only place the kit can see which
-      // lane ran, on which model, and how long it took. That record is what
-      // makes "cut the lanes nobody uses" a measurement instead of a guess.
+      // An assistant message is the only place the kit can see which lane ran,
+      // on which model, and how long it took. That record is what makes "cut
+      // the lanes nobody uses" a measurement instead of a guess.
       if (type === "message.updated") {
         const lane = laneOf(event)
-        if (lane) write(dir, { kind: "lane", ...lane })
+        if (!lane || !lane.id) return
+        if (lane.ms !== undefined) {
+          // The completed event. Written once, and only if the open record
+          // did not already carry a duration.
+          if (closed.has(lane.id)) return
+          closed.add(lane.id)
+          write(dir, { kind: "lane", ...lane })
+          return
+        }
+        // The open event: the lane was called. Written even if the call never
+        // finishes, because "this lane is useless" and "this lane is slow"
+        // are different questions and only the first one is settled by a
+        // record with no duration.
+        if (opened.has(lane.id)) return
+        opened.add(lane.id)
+        write(dir, { kind: "lane", ...lane })
       }
-    },
-
-    "chat.message": async (input) => {
-      // The request side of the same record. A lane that was called and never
-      // answered still counts as called, which is the difference between "this
-      // lane is useless" and "this lane is slow".
-      const agent = (input as { agent?: unknown } | undefined)?.agent
-      if (typeof agent !== "string" || !agent) return
-      const model = (input as { model?: { providerID?: string; modelID?: string } } | undefined)?.model
-      const variant = (input as { variant?: unknown } | undefined)?.variant
-      write(dir, {
-        kind: "lane-call",
-        agent,
-        model: model?.modelID,
-        provider: model?.providerID,
-        variant: typeof variant === "string" ? variant : undefined,
-      })
     },
 
     "tool.execute.after": async (input, output) => {
@@ -110,13 +136,16 @@ export const TelemetryPlugin: Plugin = async ({ worktree }) => {
 }
 
 /**
- * The lane, model and duration of a finished message, read defensively.
+ * The lane, model and duration of one assistant message, read defensively.
  *
  * The event shape is opencode's, not ours, and it has changed between
  * releases. Every field is optional and a shape we do not recognise yields
  * null rather than a wrong number.
+ *
+ * The message id is what makes the record countable: one message is one call.
  */
 function laneOf(event: unknown): {
+  id?: string
   agent?: string
   model?: string
   provider?: string
@@ -127,6 +156,7 @@ function laneOf(event: unknown): {
   if (!info || typeof info !== "object") return null
   if (info.role && info.role !== "assistant") return null
 
+  const id = typeof info.id === "string" ? info.id : undefined
   const agent = typeof info.agent === "string" ? info.agent : undefined
   const modelId = info.model?.modelID ?? info.modelID
   const providerId = info.model?.providerID ?? info.providerID
@@ -135,8 +165,9 @@ function laneOf(event: unknown): {
   const completed = typeof time.completed === "number" ? time.completed : undefined
   const ms = created !== undefined && completed !== undefined ? completed - created : undefined
 
-  if (!agent && !modelId) return null
+  if (!id || !agent) return null
   return {
+    id,
     agent,
     model: typeof modelId === "string" ? modelId : undefined,
     provider: typeof providerId === "string" ? providerId : undefined,
