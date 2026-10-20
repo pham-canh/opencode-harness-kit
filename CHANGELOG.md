@@ -12,7 +12,12 @@ is not happening.
 
 ---
 
-## [0.4.4] — 2026-10-20
+## [0.4.4] — 2026-10-20, not yet published
+
+The tag does not exist yet, and the npm release has not happened. It is cut
+by `git tag v0.4.4 && git push origin main v0.4.4`, which is what the
+publish job watches for. Until that happens, the latest PUBLISHED version is
+0.4.3.
 
 ### Fixed
 
@@ -765,7 +770,7 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.3...HEAD
 [0.4.4]: https://github.com/pham-canh/space-harness/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/pham-canh/space-harness/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/pham-canh/space-harness/compare/v0.4.1...v0.4.2

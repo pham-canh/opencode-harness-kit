@@ -326,7 +326,9 @@ tier cannot do.
 | OS | macOS, Linux and Windows. The tests run on `ubuntu-latest`. |
 | Shell | none needed to *use* the kit — no `bash`, `zsh` or `fish` setup. Two commands shell out to external binaries: `doctor` and `refresh` call `curl` to read models.dev, and `baseline` and the measurement scripts call `sqlite3`. Everything else, including `install`, `use` and `verify`, works offline. |
 | Network | only `doctor` and `refresh` need it, and only to read the live model catalogue. `list` is offline: it reads the shipped profiles. Everything else works offline. |
-| Disk | `use` and `install` write into `~/.config/opencode/` and nothing else. `doctor` and `refresh` write nothing; `refresh` rewrites a profile in the repository. |
+| Disk | `use` and `install` write into `~/.config/opencode/` and nothing else. `doctor` writes nothing. `refresh` rewrites a profile in the kit's own
+directory - `node_modules` for an npm install - and keeps a backup of the
+one it replaced. |
 
 `~/.config/opencode/` is your live agent config. `use` and `install` write there,
 `verify` only reads, and `use --dryrun` writes nothing at all. Every write keeps
@@ -339,7 +341,7 @@ oc-harness list       profiles with retention and caveats
 oc-harness show <id>  resolved lanes, derived numbers, fallback chains, guard rules
 oc-harness init       pick a free profile, then install + use + verify
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
-oc-harness use <id> --dryrun   print what would be written, write nothing
+oc-harness use <id> --dryrun   print a summary of what would be written, write nothing
 oc-harness refresh <id> re-derive a profile against the live model list
 oc-harness install    symlink the plugin, prompts, skills and GLOBAL.md
 oc-harness link       just the plugin, no prompts or skills
@@ -351,6 +353,8 @@ oc-harness doctor     re-check profiles against models.dev and the live config
 oc-harness refresh --all   re-derive every shipped profile against the live catalogue
 oc-harness upgrade    check for a newer kit, refresh the profiles, rewrite the config
 oc-harness backups   the configs that were replaced, newest first
+oc-harness uninstall remove the plugin, prompts, skills and GLOBAL.md again
+oc-harness cost      what the kit is doing on this project, in numbers
 oc-harness restore <file>  put one back
 oc-harness baseline   measure the current install
 oc-harness run        drive .space/tasks.md to done with the build agent
@@ -467,7 +471,7 @@ READ PRESSURE
   cut by the 200-line cap     441
   re-reads with an offset     423
 PERMISSION PRESSURE
-  prompt with kit allowlist  1,002 (18.5%)
+  prompt with kit allowlist  1,002 (19.1%)
 compaction events  0  (never fired)
 ```
 

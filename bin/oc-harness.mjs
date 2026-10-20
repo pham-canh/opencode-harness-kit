@@ -14,7 +14,7 @@
 
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, relative, resolve } from "node:path"
+import { basename, dirname, join, relative, resolve } from "node:path"
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { createInterface } from "node:readline/promises"
@@ -43,7 +43,7 @@ import {
   ProfileError,
   parseJsonc,
 } from "../src/profile.js"
-import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin, canAddMemoryPlugin, MEMORY_PLUGIN } from "../src/config.js"
+import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin, canAddMemoryPlugin, kitVersion, MEMORY_PLUGIN } from "../src/config.js"
 import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
 import { planEffort } from "../src/effort.js"
 import { findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
@@ -1262,6 +1262,17 @@ async function cmdRefreshAll() {
       continue
     }
     applyLiveMetadata(p, live)
+    // `verified` is the field that says when a profile was last checked
+    // against live metadata. Leaving it stale after a refresh makes it a lie.
+    p.verified = new Date().toISOString().slice(0, 10)
+    if (flag("--dryrun")) {
+      changed.push(`${id}: ${before.join(", ")} (dry run, nothing written)`)
+      continue
+    }
+    // A refresh overwrites a file the user may have edited by hand, and for
+    // an npm install that file is inside node_modules, where the next
+    // `npm install` destroys it anyway. The backup is the only copy.
+    keepProfileBackup(path, readFileSync(path, "utf8"))
     writeFileSync(path, `${JSON.stringify(p, null, 2)}\n`)
     changed.push(`${id}: ${before.join(", ")}`)
   }
@@ -1346,6 +1357,23 @@ function applyLiveMetadata(p, live) {
 const BACKUP_DIR = "backups"
 
 /**
+ * Keep a copy of a profile before it is overwritten.
+ *
+ * @param {string} path the profile file
+ * @param {string} text its current contents
+ */
+function keepProfileBackup(path, text) {
+  try {
+    const dir = join(dirname(path), "backups")
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+    writeFileSync(join(dir, `${basename(path, ".json")}-${stamp}.json`), text)
+  } catch {
+    // A backup that cannot be written is not worth failing over.
+  }
+}
+
+/**
  * Keep a copy of the config before it is overwritten.
  *
  * @param {string} text the config as it is now
@@ -1388,6 +1416,186 @@ function cmdBackups() {
   }
   console.log("")
   console.log(stamp("restore one with: oc-harness restore <file>"))
+  console.log("")
+}
+
+/**
+ * What the kit is doing on THIS project, in numbers.
+ *
+ * The kit's claim is a trade: it costs a fixed overhead on every request and
+ * buys back the context it prunes. Both numbers are already being written -
+ * the prune log records what each pass removed, and the telemetry records
+ * what each lane cost - and nothing read them together.
+ *
+ * This reads them and puts them next to each other, so the question "is this
+ * kit earning its place here" has an answer that is about THIS project.
+ */
+function cmdCost() {
+  const dir = join(CONFIG_DIR, "..", ".space")
+  const projectSpace = findProjectSpace(process.cwd())
+  const pruneLog = projectSpace ? join(projectSpace, "prune.jsonl") : null
+  const telemetry = projectSpace ? join(projectSpace, "telemetry.jsonl") : null
+
+  console.log(`\n${bold("cost")}  ${stamp(projectSpace ?? "no project found")}\n`)
+
+  // 1. What the pruner removed.
+  let prunes = 0
+  let saved = 0
+  let stubbed = 0
+  if (pruneLog && existsSync(pruneLog)) {
+    try {
+      for (const line of readFileSync(pruneLog, "utf8").split("\n")) {
+        if (!line.trim()) continue
+        const r = JSON.parse(line)
+        prunes++
+        saved += r.savedBytes ?? 0
+        stubbed += r.stubbed ?? 0
+      }
+    } catch {
+      // A log that cannot be read is a log with nothing in it.
+    }
+  }
+  console.log(`  ${bold("pruned")}`)
+  if (!prunes) {
+    console.log(`    ${stamp("nothing yet - the pruner has not run in this project")}`)
+  } else {
+    console.log(`    ${bold(saved.toLocaleString("en-US"))} bytes removed over ${prunes} pass(es)`)
+    console.log(`    ${bold(stubbed.toLocaleString("en-US"))} tool outputs stubbed`)
+    console.log(`    ${stamp("the same context, re-sent on every request of the session")}`)
+  }
+
+  // 2. What the lanes cost.
+  const files = findTelemetryFiles(process.cwd())
+  const { lanes: stats, requests } = readLaneUsage(files)
+  console.log("")
+  console.log(`  ${bold("lanes")}  ${stamp(`${requests} request(s)`)}`)
+  const rows = Object.entries(stats)
+    .map(([lane, s]) => ({
+      lane,
+      requests: s.requests,
+      avgCtx: averageMs(s.ctx),
+      avgReasoning: averageMs(s.reasoning),
+    }))
+    .filter((r) => r.requests > 0)
+    .sort((a, b) => (b.avgCtx ?? 0) - (a.avgCtx ?? 0))
+  if (!rows.length) {
+    console.log(`    ${stamp("no lane has been used in this project yet")}`)
+  } else {
+    console.log(
+      `    ${"lane".padEnd(12)}${"reqs".padStart(6)}${"avg ctx".padStart(10)}${"avg reasoning".padStart(15)}`,
+    )
+    for (const r of rows) {
+      console.log(
+        `    ${r.lane.padEnd(12)}${String(r.requests).padStart(6)}${String(r.avgCtx ?? "-").padStart(10)}${String(r.avgReasoning ?? "-").padStart(15)}`,
+      )
+    }
+  }
+
+  // 3. The fixed overhead.
+  console.log("")
+  console.log(`  ${bold("fixed")}`)
+  console.log(`    ${stamp(`kit ${kitVersion()}, ${Object.keys(loadLanes()).length} lanes defined`)}`)
+  const activeId = profileIdFromConfig()
+  if (activeId) {
+    try {
+      const p = loadProfile(activeId)
+      const models = new Set(
+        Object.values(p.roleModels ?? {}).map((r) => r?.model).filter(Boolean),
+      )
+      console.log(`    ${stamp(`profile ${activeId}: ${models.size} model(s) in play`)}`)
+    } catch {
+      // The active profile not loading is `verify`'s job, not this one's.
+    }
+  }
+  console.log("")
+  console.log(stamp("the full measurement, on the whole install: npm run measure:prune"))
+  console.log("")
+}
+
+/**
+ * The `.space` directory of the project, found by walking up.
+ *
+ * @param {string} startDir
+ * @returns {string | null}
+ */
+function findProjectSpace(startDir) {
+  let dir = resolve(startDir)
+  for (let i = 0; i < 12; i++) {
+    const space = join(dir, ".space")
+    if (existsSync(space)) return space
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
+/**
+ * Remove what the kit installed.
+ *
+ * The install SYMLINKS the plugin, the prompts, the skills and GLOBAL.md out
+ * of the kit's directory and into the config directory. So `npm uninstall`
+ * the kit leaves four dangling symlinks behind, and opencode then loads
+ * neither the rules nor the guard - and says nothing about it.
+ *
+ * So the kit can take them back out, and it says what it removed.
+ */
+function cmdUninstall() {
+  const removed = []
+  const kept = []
+  const targets = [
+    join(CONFIG_DIR, "plugins", "opencode-harness-kit.js"),
+    join(CONFIG_DIR, "GLOBAL.md"),
+  ]
+  for (const dir of ["prompts", "skills"]) {
+    const full = join(CONFIG_DIR, dir)
+    if (!existsSync(full)) continue
+    // A directory of symlinks is ours; a real directory is not.
+    let entries = []
+    try {
+      entries = readdirSync(full)
+    } catch {
+      continue
+    }
+    const ours = entries.filter((f) => {
+      try {
+        return lstatSync(join(full, f)).isSymbolicLink()
+      } catch {
+        return false
+      }
+    })
+    if (!ours.length) {
+      kept.push(`${dir}/ holds real files`)
+      continue
+    }
+    for (const f of ours) {
+      try {
+        rmSync(join(full, f), { force: true })
+      } catch {}
+    }
+    removed.push(`${dir}/ (${ours.length} link(s))`)
+  }
+  for (const t of targets) {
+    if (!existsSync(t)) continue
+    try {
+      // Only a symlink is ours to remove. A real file the user put there
+      // is theirs.
+      if (!lstatSync(t).isSymbolicLink()) {
+        kept.push(`${t} is a real file`)
+        continue
+      }
+      rmSync(t, { force: true })
+      removed.push(t)
+    } catch {
+      kept.push(t)
+    }
+  }
+  console.log(`\n${bold("uninstall")}\n`)
+  for (const r of removed) console.log(`  ${green("✓")} removed ${r}`)
+  for (const k of kept) console.log(`  ${yellow("!")} left alone: ${k}`)
+  if (!removed.length) console.log(`  ${stamp("nothing of the kit's was installed here")}`)
+  console.log("")
+  console.log(stamp("the config itself is untouched - remove it by hand if you want it gone"))
   console.log("")
 }
 
@@ -1505,6 +1713,15 @@ async function cmdRefresh(id) {
   }
   p.verified = new Date().toISOString().slice(0, 10)
 
+  if (flag("--dryrun")) {
+    console.log(`\n  ${stamp("dry run, nothing written")}`)
+    for (const line of before) console.log(`      ${line}`)
+    return
+  }
+  // A refresh overwrites a file the user may have edited by hand, and for
+  // an npm install that file is inside node_modules, where the next
+  // `npm install` destroys it anyway. The backup is the only copy.
+  keepProfileBackup(path, readFileSync(path, "utf8"))
   writeFileSync(path, `${JSON.stringify(p, null, 2)}\n`)
   console.log(`\n  ${green("✓")} refreshed ${path}`)
   for (const line of before) console.log(`      ${line}`)
@@ -2113,6 +2330,12 @@ try {
     case "backups":
       cmdBackups()
       break
+    case "uninstall":
+      cmdUninstall()
+      break
+    case "cost":
+      cmdCost()
+      break
     case "restore":
       cmdRestore(args[1])
       break
@@ -2173,6 +2396,8 @@ try {
     doctor    re-check profiles against models.dev and the installed config
     upgrade   check for a newer kit, refresh the profiles, rewrite the config
     backups   the configs that were replaced, newest first
+    uninstall remove the plugin, prompts, skills and GLOBAL.md again
+    cost      what the kit is doing on this project, in numbers
     restore <file>  put one back
     baseline  measure the current opencode install
     run       drive .space/tasks.md to done with the build agent
