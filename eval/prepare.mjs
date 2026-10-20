@@ -158,9 +158,28 @@ if (from) {
   // `\` and leaves `$`, backticks and `!` alone, so a path containing `$(...)`
   // was executed by the shell. `git` and `tar` are called with argument arrays
   // and the tar goes through a pipe, so nothing is ever parsed as a command.
-  const archive = spawnSync("git", ["-C", repo, "archive", "--format=tar", sha], {
-    maxBuffer: 512 * 1024 * 1024,
-  })
+  //
+  // `eval/` and `test/` are EXCLUDED, and that is not a detail. The subject of
+  // the self suite is this repository: `eval/` holds the grader and the
+  // answer key, and `test/` quotes the answer in its own assertions. An agent
+  // that found `eval/verify.mjs` would use the grader to check its own work,
+  // and one that found the answer in a test would cite the test.
+  //
+  // Both were measured. An agent that read the grader made 48 tool calls to a
+  // task that needed 5, and the answer was somewhere else in the file it was
+  // asked about.
+  const archive = spawnSync(
+    "git",
+    [
+      "-C", repo, "archive", "--format=tar", sha, "--",
+      ".",
+      ":(exclude)eval",
+      ":(exclude)test",
+    ],
+    {
+      maxBuffer: 512 * 1024 * 1024,
+    },
+  )
   if (archive.status !== 0 || archive.error) {
     console.error(`cannot archive ${repo} at ${sha}`)
     if (archive.stderr?.length) console.error(archive.stderr.toString().trimEnd())
