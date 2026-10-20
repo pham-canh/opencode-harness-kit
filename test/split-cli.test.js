@@ -248,13 +248,13 @@ test("verify fails when the plugin was copied out of the kit's tree", () => {
 })
 
 test("`lanes` reports which lanes the fleet used", () => {
-  // The lane table is a hypothesis until something counts the calls. A lane
-  // that was never called is a description the model reads every turn and a
-  // free model doing nothing.
+  // The lane table is a hypothesis until something counts the requests. A
+  // lane that was never used is a description the model reads every turn and
+  // a free model doing nothing.
   const box = sandbox()
   try {
     const out = run(box, ["lanes"])
-    assert.match(out, /never called/)
+    assert.match(out, /never used/)
     assert.match(out, /sweep/)
   } finally {
     box.cleanup()

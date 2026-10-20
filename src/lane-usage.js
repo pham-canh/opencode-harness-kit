@@ -23,8 +23,8 @@ import { dirname, join, resolve } from "node:path"
 
 /**
  * @typedef {object} LaneUsage
- * @property {number} calls      distinct assistant messages that used the lane
- * @property {number[]} ms       durations of the calls that completed
+ * @property {number} requests  distinct assistant messages that used the lane
+ * @property {number[]} ms       durations of the requests that completed
  * @property {Set<string>} models the models the lane was seen on
  */
 
@@ -51,7 +51,12 @@ export function findTelemetryFile(startDir) {
  *
  * Records are merged by message id: a lane record is written when the message
  * appears and again when it completes, and only the second one carries a
- * duration. A message is one call, and it contributes one duration.
+ * duration. A message is one request, and it contributes one duration.
+ *
+ * A REQUEST is one assistant message, which is one round trip to the
+ * provider. A lane that makes three tool calls makes three requests, so this
+ * is a count of provider traffic rather than of delegations - which is the
+ * number that decides whether a free route's quota can carry the fleet.
  *
  * Records without a message id are ignored. They come from kit versions
  * before the counter was fixed, and their number is inflated by a factor of
@@ -116,8 +121,9 @@ export function readLaneUsage(file) {
   }
 
   for (const rec of byId.values()) {
-    const usage = lanes[rec.lane] ?? (lanes[rec.lane] = { calls: 0, ms: [], models: new Set() })
-    usage.calls++
+    const usage =
+      lanes[rec.lane] ?? (lanes[rec.lane] = { requests: 0, ms: [], models: new Set() })
+    usage.requests++
     if (typeof rec.ms === "number") usage.ms.push(rec.ms)
     if (rec.model) usage.models.add(rec.model)
   }
