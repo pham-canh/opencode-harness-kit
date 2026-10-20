@@ -10,6 +10,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { checkBash, checkWrite, insideRoot } from "./rules.js"
+import { deniedBy } from "./denylist.js"
 import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
 
@@ -142,6 +143,24 @@ export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
           const hit = checkBash(String(output.args?.command ?? ""))
           if (hit) {
             refuse(input.tool, hit.name, hit.name, `${hit.why}\n  command: ${truncate(hit.segment)}`)
+          }
+          // The shared denylist, enforced in code.
+          //
+          // The config denies these through opencode's permission map, and the
+          // guard used to enforce a DIFFERENT set - it blocked neither
+          // `gh pr create` nor `npm publish`. The config's own comment said
+          // the two were the same, and they were not. One list, two
+          // enforcers: the permission map can be overridden by a plugin or
+          // lost to a hand-edit, and the guard does not care.
+          const command = String(output.args?.command ?? "")
+          const pattern = deniedBy(command)
+          if (pattern) {
+            refuse(
+              input.tool,
+              `denied command (${pattern})`,
+              "denied command",
+              `this command matches \`${pattern}\`, which the kit never allows.\n  command: ${truncate(command)}`,
+            )
           }
           return
         }

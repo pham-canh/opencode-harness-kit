@@ -248,3 +248,56 @@ test("a denial is not re-wrapped into a confusing failure", async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("the denylist is enforced in code, not only by the permission map", async () => {
+  // The config denies these through opencode's permission map, and the guard
+  // used to enforce a DIFFERENT set - it blocked neither `gh pr create` nor
+  // `npm publish`. The config's own comment said the two were the same, and
+  // they were not. A permission map can be overridden by a plugin or lost to
+  // a hand-edit; the guard does not care.
+  const dir = workspace()
+  try {
+    const hooks = await guard(dir)
+    for (const command of [
+      "gh pr create --title x",
+      "gh pr merge 12",
+      "gh release v1",
+      "npm publish",
+      "npm publish --access public",
+      "npm unpublish opencode-harness-kit",
+      "npm login",
+      "yarn publish",
+    ]) {
+      const msg = await blocks(hooks, "bash", { command })
+      assert.ok(msg, `the guard allowed \`${command}\``)
+      assert.match(msg, /denied/, `the wrong message for \`${command}\`: ${msg}`)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("the commands the kit allows are still allowed", async () => {
+  // The denylist is a list, and a list that grows without checking what it
+  // blocks stops being a policy.
+  const dir = workspace()
+  try {
+    const hooks = await guard(dir)
+    for (const command of [
+      "npm test",
+      "npm run build",
+      "npm ls --depth=0",
+      "git status",
+      "git push origin main",
+      "ls -la",
+    ]) {
+      assert.equal(
+        await blocks(hooks, "bash", { command }),
+        null,
+        `the guard blocked \`${command}\``,
+      )
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
