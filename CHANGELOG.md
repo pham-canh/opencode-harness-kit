@@ -95,33 +95,10 @@ Measured over 20 runs after the change, against 60 before:
 | `npm test` calls | 2.2 | **0.9** |
 | `npm install` calls | 0.4 | **0** |
 
-### Added
+### Fixed, again
 
-- **`oc-harness refresh --all`** re-derives every shipped profile against the
-  live catalogue, and reports which models are gone.
-- **`oc-harness doctor --check-models` and `--watch`** record a withdrawal in
-  `~/.config/opencode/withdrawn.jsonl`, with the profiles that used it. A model
-  is withdrawn without a rename and without a notice, so the only way to know
-  WHEN a lane started failing is to have been looking.
-- **`oc-harness upgrade`** checks the registry for a newer kit, refreshes the
-  profiles, and writes the config again. Three things go stale on their own -
-  the kit, the profiles and the config - and all three were invisible.
-- **A scheduled workflow** (`.github/workflows/measure.yml`), so the numbers
-  are kept rather than measured once. The offline half runs on every push;
-  the A/B runs nightly, because it costs model quota and takes about an hour.
-- **`OPENCODE_HARNESS_PROFILES`** points the kit at a different profile
-  directory. A test that refreshes a profile would otherwise rewrite the kit's
-  own data - which is what happened the first time this was tried.
-- **A flag appended to an npm script now overrides the script's own**:
-  `npm run measure:prune -- --sessions 1` means one session, not sixty.
-
-(found by a review of this release)
-
-- Tests for the pieces the suite never reached: the python fallback, the
-  project root for a project that is not a git repository, the escape rule,
-  and the flag parser.
-
-### Fixed (found by a review of this release)
+A review of this release found six more, and fixing them turned up two of the
+same class.
 
 **The project-root fix was incomplete.** Two call sites still read the
 worktree: the effort hook looked for the spent-route file under it, and the
@@ -327,6 +304,28 @@ improvement from a NULL average.
 
   The full table, and what it does not establish, is in
   `eval/RESULTS.md`.
+
+- **`oc-harness refresh --all`** re-derives every shipped profile against the
+  live catalogue, and reports which models are gone.
+- **`oc-harness doctor --check-models` and `--watch`** record a withdrawal in
+  `~/.config/opencode/withdrawn.jsonl`, with the profiles that used it. A model
+  is withdrawn without a rename and without a notice, so the only way to know
+  WHEN a lane started failing is to have been looking.
+- **`oc-harness upgrade`** checks the registry for a newer kit, refreshes the
+  profiles, and writes the config again. Three things go stale on their own -
+  the kit, the profiles and the config - and all three were invisible.
+- **A scheduled workflow** (`.github/workflows/measure.yml`), so the numbers
+  are kept rather than measured once. The offline half runs on every push;
+  the A/B runs nightly, because it costs model quota and takes about an hour.
+- **`OPENCODE_HARNESS_PROFILES`** points the kit at a different profile
+  directory. A test that refreshes a profile would otherwise rewrite the kit's
+  own data - which is what happened the first time this was tried.
+- **A flag appended to an npm script now overrides the script's own**:
+  `npm run measure:prune -- --sessions 1` means one session, not sixty.
+
+- **Tests for the pieces the suite never reached**: the python fallback, the
+  project root for a project that is not a git repository, the escape rule,
+  and the flag parser.
 
 ### Security
 
