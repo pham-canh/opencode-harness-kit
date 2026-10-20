@@ -14,6 +14,20 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-10-20
+
+### Fixed
+
+- **The publish preflight rejected the very token it wanted.** It called `npm
+  access list packages` and required the package to appear in the list. That
+  command lists the packages a *user* has access to, which needs
+  account-level read permission - and a granular token scoped to one package
+  is answered **403** for it. A correctly scoped publish token would have
+  been refused, and the user sent looking for a problem that was in the
+  check. Only `npm whoami` is checked now, which any valid token passes; the
+  write permission is proven by the publish itself, and its failure message
+  says what was missing.
+
 ## [0.3.1] — 2026-10-20
 
 ### Fixed
@@ -247,7 +261,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/pham-canh/space-harness/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/pham-canh/space-harness/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pham-canh/space-harness/compare/v0.2.0...v0.2.1
