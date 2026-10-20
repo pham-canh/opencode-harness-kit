@@ -25,7 +25,7 @@
 // only runs from one directory is a release tool that people run from the
 // wrong one.
 
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -84,80 +84,101 @@ function npm(args, opts = {}) {
 }
 
 /**
- * Run npm, and if it asks for a one-time password, ask for one here and run
- * it again.
+ * Run npm with its output captured.
  *
- * npm's own helper for this opens a browser - but only when stdin and stdout
- * are both terminals, and under `npx` they are not. The result is a failure
- * that prints a web URL masked as `auth/cli/***`, which cannot be opened.
+ * @param {string[]} args
+ * @param {{ otp?: string }} [state]
+ * @returns {{ out: string, code: number }}
+ */
+function npmCaptured(args, state = {}) {
+  const extra = state.otp ? [`--otp=${state.otp}`] : []
+  const r = spawnSync("npm", [...args, ...extra], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  return { out: `${r.stdout ?? ""}${r.stderr ?? ""}`, code: r.status ?? 1 }
+}
+
+/**
+ * Run npm, and complete a two-factor challenge if it asks for one.
  *
- * So the code is asked for here, and the same code is passed straight back to
- * npm as `--otp`.
+ * npm answers a request that needs a second factor with a body carrying the
+ * URL to authenticate at and the URL to collect the result from. The URL in
+ * the ERROR TEXT is masked - `auth/cli/***` - but the one in the JSON body is
+ * not, and that is the one that can be opened.
+ *
+ * So the challenge is completed the way npm completes it: the URL is opened
+ * in a browser, the user answers there however their account is set up - a
+ * code from an authenticator app, a security key, or one mailed to them - and
+ * the result is collected from the second URL.
+ *
+ * npm's own helper does exactly this, but only when stdin AND stdout are
+ * both terminals. A tool that pipes npm's output takes the terminal away from
+ * it, and npm then gives up and prints a URL nobody can open. So the flow is
+ * done here, where the URL can be recovered.
  *
  * @param {string[]} args
  * @param {{ otp?: string }} [state]
  * @returns {Promise<{ out: string, code: number }>}
  */
 async function npmWithOtp(args, state = {}) {
-  /** @param {string[]} extra */
-  const run = (extra) => {
-    try {
-      return {
-        out: execFileSync("npm", [...args, ...extra], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        }),
-        code: 0,
-      }
-    } catch (err) {
-      const e = /** @type {any} */ (err)
-      return { out: `${e.stdout ?? ""}${e.stderr ?? ""}`, code: e.status ?? 1 }
-    }
-  }
+  let result = npmCaptured(args, state)
+  if (result.code === 0) return result
 
-  const withOtp = state.otp ? [`--otp=${state.otp}`] : []
-  let result = run(withOtp)
-  if (result.code === 0 || !/one-time password|EOTP/i.test(result.out)) return result
+  const m = /"doneUrl"\s*:\s*"[^"]*authId=([a-f0-9-]+)"/.exec(result.out)
+  if (!m) return result
+  const authId = m[1]
+  const authUrl = `https://www.npmjs.com/auth/cli/${authId}`
+  const doneUrl = `https://registry.npmjs.org/-/v1/done?authId=${authId}`
 
-  // npm wants a code. Get one.
-  const code = state.otp ?? (await askForOtp())
-  if (!code) {
-    console.error(red("npm needs a one-time password and none was given."))
-    console.error(dim("  run it again with --otp=<the code from your authenticator app>"))
-    return { out: result.out, code: result.code }
+  // Open it if this machine can. The URL is printed either way, because a
+  // browser that cannot be opened here can be opened anywhere.
+  try {
+    execFileSync("xdg-open", [authUrl], { stdio: "ignore", timeout: 10_000 })
+  } catch {
+    // No browser here. The URL below is the way out.
   }
-  state.otp = code
-  result = run([`--otp=${code}`])
+  console.error("")
+  console.error(bold("  npm needs to confirm it is you."))
+  console.error(`  ${authUrl}`)
+  console.error(dim("  Answer there however your npm account is set up - an authenticator"))
+  console.error(dim("  app, a security key, or a code sent to your email."))
+  console.error(dim("  This page is open in a browser, or copy the URL above."))
+  console.error("")
+
+  const token = await waitForToken(doneUrl)
+  if (!token) {
+    console.error(red("  no answer came back, so nothing was changed."))
+    return result
+  }
+  state.otp = token
+  result = npmCaptured(args, state)
   return result
 }
 
 /**
- * Ask for the one-time password.
+ * Wait for the browser to answer.
  *
+ * @param {string} doneUrl
  * @returns {Promise<string | null>}
  */
-async function askForOtp() {
-  if (!process.stdin.isTTY) {
-    console.error(
-      red("this needs a one-time password, and there is no terminal to ask for it on."),
-    )
-    console.error(dim(`  run it with --otp=<the code from your authenticator app>`))
-    return null
+async function waitForToken(doneUrl) {
+  // How long to wait for a human. The window is generous, because the person
+  // may be answering an email, and it is configurable so a CI run does not
+  // hang on it.
+  const seconds = Number(process.env.OC_TRUST_WAIT_SECONDS ?? 600)
+  const attempts = Math.max(1, Math.round(seconds / 5))
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(doneUrl)
+      const body = /** @type {any} */ (await res.json())
+      if (body && typeof body.token === "string" && body.token) return body.token
+    } catch {
+      // Not ready yet, or the network blipped. Try again.
+    }
+    await new Promise((r) => setTimeout(r, 5000))
   }
-  const { createInterface } = await import("node:readline/promises")
-  // The prompt goes to stderr, and it gets a line of its own: a question
-  // buried in the middle of npm's output is a question nobody answers.
-  process.stderr.write("\n")
-  const rl = createInterface({ input: process.stdin, output: process.stderr })
-  try {
-    const answer = (
-      await rl.question("  one-time password from your authenticator app: ")
-    ).trim()
-    process.stderr.write("\n")
-    return answer || null
-  } finally {
-    rl.close()
-  }
+  return null
 }
 
 /**

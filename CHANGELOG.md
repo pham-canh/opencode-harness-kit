@@ -14,6 +14,29 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-10-20
+
+### Fixed
+
+- **`oc-harness trust` completes the two-factor challenge the way npm does, so
+  it works with whatever second factor the account has.** npm answers a
+  request that needs one with the URL to authenticate at and the URL to
+  collect the result from - the URL in the error text is masked, but the one
+  in the JSON body is not.
+  
+  The URL is opened in a browser and printed, the result is collected, and the
+  command carries on. That works with an authenticator app, a security key,
+  or a code sent to the user's email - none of which is a code typed into a
+  terminal.
+  
+  npm's own helper does the same thing, but only when stdin AND stdout are
+  both terminals. A tool that pipes npm's output takes the terminal away from
+  it, and npm then gives up and prints a URL nobody can open. That is what
+  was happening, and it is why the command looked like it wanted a code from
+  an authenticator app and nothing else.
+- The wait for a human is configurable with `OC_TRUST_WAIT_SECONDS`, so a CI
+  run does not hang on it.
+
 ## [0.3.7] — 2026-10-20
 
 ### Fixed
@@ -335,7 +358,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.8...HEAD
+[0.3.8]: https://github.com/pham-canh/space-harness/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/pham-canh/space-harness/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/pham-canh/space-harness/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/pham-canh/space-harness/compare/v0.3.4...v0.3.5
