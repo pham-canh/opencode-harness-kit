@@ -23,9 +23,16 @@ import { gradeAnswer } from "../eval/verify.mjs"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
-test("the python fallback reads a database when the sqlite3 CLI is not there", () => {
+test("the python fallback reads a database when the sqlite3 CLI is not there", (t) => {
   // The CLI is not on every machine, and the measurement scripts have to run
   // anyway. The fallback is the path that runs there, and it had no test.
+  //
+  // The test needs python3 to BUILD the database. A machine without python3
+  // cannot run it, and a test that fails there is not a hermetic test.
+  if (!hasPythonSqlite()) {
+    t.skip("python3 has no sqlite3 module")
+    return
+  }
   const db = join(tmpdir(), "ock-sqlite-probe.db")
   rmSync(db, { force: true })
   try {
@@ -42,20 +49,18 @@ con.commit()`,
     assert.equal(rows.length, 1)
     assert.equal(rows[0].name, "one")
     assert.equal(typeof rows[0].id, "number")
-  } catch (err) {
-    // python3 without sqlite3 is the only reason to skip.
-    if (!hasPythonSqlite()) {
-      assert.fail(`python3 has no sqlite3: ${err.message}`)
-    }
-    throw err
   } finally {
     rmSync(db, { force: true })
   }
 })
 
-test("a database path with a question mark in it is still a path", () => {
+test("a database path with a question mark in it is still a path", (t) => {
   // The path is put into a URI, and a `?` in a URI is a query separator. A
   // path with one in it has to be percent-encoded.
+  if (!hasPythonSqlite()) {
+    t.skip("python3 has no sqlite3 module")
+    return
+  }
   const dir = mkdtempSync(join(tmpdir(), "ock-sqlite-?q-"))
   const db = join(dir, "we?ird.db")
   try {
