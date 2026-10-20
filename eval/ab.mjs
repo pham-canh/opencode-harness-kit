@@ -30,6 +30,7 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { elapsedSeconds, median } from "./metrics.js"
+import { countFlag, numberFlag } from "./flags.mjs"
 import { gradeAnswer, gradeMutation } from "./verify.mjs"
 import { checkPremises } from "./premises.mjs"
 
@@ -48,7 +49,15 @@ const all = (...n) =>
 
 const target = flag("--target")
 const task = flag("--task")
-const reps = Number(flag("--reps") ?? 3)
+// A malformed count is an error. NaN made the loop body never run, and the
+// suite reported success having run nothing at all.
+let reps
+try {
+  reps = countFlag("--reps") ?? 3
+} catch (err) {
+  console.error(String(err.message))
+  process.exit(1)
+}
 const expect = all("--expect")
 // A suite is a file of {id, task, expect}. One prompt can only say so much
 // about the kit; four prompts asked four different ways is the difference
@@ -60,7 +69,20 @@ const suitePath = flag("--suite")
 const rescoreDir = flag("--rescore")
 // One pathological run burned 4.4 minutes once. Without a ceiling a single bad
 // arm can hold the whole suite open indefinitely.
-const runTimeoutMs = Number(flag("--timeout") ?? 600) * 1000
+//
+// A timeout of zero would REMOVE the ceiling - node only applies a timeout
+// when it is above zero - which is the opposite of what the flag says. And a
+// non-numeric one was NaN, which node rejects with a RangeError out of
+// spawnSync.
+let runTimeoutMs
+try {
+  const minutes = numberFlag("--timeout") ?? 600
+  if (minutes <= 0) throw new Error("--timeout must be more than 0, or the ceiling is removed")
+  runTimeoutMs = minutes * 1000
+} catch (err) {
+  console.error(String(err.message))
+  process.exit(1)
+}
 
 if (!target || (!task && !suitePath)) {
   console.error('usage: node eval/ab.mjs --target <dir> (--task "<prompt>" | --suite <file>) [--reps 3] [--expect token]... [--timeout 600]')
@@ -382,15 +404,27 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
   // --dir is not optional. Nested inside an opencode session, `opencode run`
   // otherwise inherits the *parent* session's project directory and reads the
   // wrong repository entirely - which it did on the first pilot.
-  const { stdout } = spawnSync("opencode", ["run", "--dir", runDir, "--format", "json", prompt], {
+  const res = spawnSync("opencode", ["run", "--dir", runDir, "--format", "json", prompt], {
     cwd: runDir, env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024,
     timeout: runTimeoutMs, killSignal: "SIGKILL",
   })
-  writeFileSync(out, stdout ?? "")
+  const stdout = res.stdout ?? ""
+  writeFileSync(out, stdout)
+  // Whether the run was killed by the ceiling.
+  //
+  // The old check was `stdout === null`, and `spawnSync` NEVER returns null
+  // for stdout - it returns the partial output and reports the kill through
+  // `error` and `signal`. So the timeout branch could never fire, every run
+  // scored as a success, and a run that hung until the ceiling was counted in
+  // the correctness ratio and in every median.
+  const timedOut =
+    res.error?.code === "ETIMEDOUT" ||
+    res.signal === "SIGKILL" ||
+    (res.status === null && Date.now() - t0 >= runTimeoutMs)
   return {
     out,
-    code: stdout === null ? 1 : 0,
-    timedOut: stdout === null && Date.now() - t0 >= runTimeoutMs,
+    code: res.status === 0 ? 0 : 1,
+    timedOut,
     wall: elapsedSeconds(t0, Date.now()),
   }
 }

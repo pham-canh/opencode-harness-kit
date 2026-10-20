@@ -17,9 +17,17 @@ export function readsPerSearch(reads, searches) {
   return Math.round((reads / searches) * 10) / 10
 }
 
-/** Percentage drop in average context per request. Null when there is no baseline. */
+/**
+ * Percentage drop in average context per request. Null when there is no
+ * baseline, or no measurement on the other side.
+ *
+ * The other side being NULL means there was no data. Treating that as zero
+ * would report a 100% improvement - "context per request: 100% lower" from a
+ * window that contained nothing at all. The caller passes null for "no
+ * rows", and this returns null rather than a number.
+ */
 export function ctxDropPct(before, after) {
-  if (!before) return null
+  if (!before || after === null || after === undefined) return null
   return Math.round((1 - after / before) * 1000) / 10
 }
 

@@ -60,8 +60,22 @@ if (!(before < split && split < after)) {
   process.exit(1)
 }
 
-const minNarrow = flag("--min-narrow") === undefined ? null : Number(flag("--min-narrow"))
-const minCtxDrop = flag("--min-ctx-drop") === undefined ? null : Number(flag("--min-ctx-drop"))
+// A gate that cannot be parsed is an error, not a disabled gate. A typo used
+// to turn the check off silently and the report said PASS.
+let minNarrow
+let minCtxDrop
+try {
+  minNarrow = numberFlag("--min-narrow")
+  minCtxDrop = numberFlag("--min-ctx-drop")
+} catch (err) {
+  console.error(String(err.message))
+  process.exit(1)
+}
+
+if (!hasSqlite()) {
+  console.error(sqliteMissingMessage())
+  process.exit(1)
+}
 
 if (!existsSync(DB)) {
   console.error(`opencode database not found: ${DB}`)
@@ -71,6 +85,8 @@ if (!existsSync(DB)) {
 
 // Both helpers live in ./metrics.js so they can be tested without a database.
 import { pct, readsPerSearch, ctxDropPct as computeCtxDropPct } from "./metrics.js"
+import { hasSqlite, sqliteMissingMessage } from "../src/sqlite.js"
+import { numberFlag } from "./flags.mjs"
 
 function query(sql) {
   const out = execFileSync("sqlite3", ["-json", `file:${DB}?mode=ro`, sql], {
@@ -127,8 +143,11 @@ function pick(rows, win) {
     reads_per_search: readsPerSearch(reads, searches),
     bash: r ? Number(r.bash ?? 0) : 0,
     messages: c ? Number(c.messages) : 0,
-    avg_ctx: c ? Math.round(Number(c.avg_ctx ?? 0)) : 0,
-    avg_reasoning: c ? Math.round(Number(c.avg_reasoning ?? 0)) : 0,
+    // NULL, not zero, when the window has no rows. Zero would say "the
+    // average context per request was zero", and the drop computed from it
+    // would be 100%.
+    avg_ctx: c ? Math.round(Number(c.avg_ctx ?? 0)) : null,
+    avg_reasoning: c ? Math.round(Number(c.avg_reasoning ?? 0)) : null,
   }
 }
 
@@ -138,14 +157,25 @@ const after_ = pick(toolRows, "after")
 const ctxDropPct = computeCtxDropPct(before_.avg_ctx, after_.avg_ctx)
 
 // A window of a few hundred reads moves with the day's task mix. Say so instead
-// of letting a small sample pass as a result.
-const thin = after_.reads > 0 && after_.reads < 500
+// of letting a small sample pass as a result. A window with NO reads is the
+// thinnest there is.
+const thin = after_.reads < 500
 
 const failures = []
-if (minNarrow !== null && !Number.isNaN(minNarrow) && after_.narrow_pct < minNarrow)
-  failures.push(`narrow reads ${after_.narrow_pct}% < ${minNarrow}%`)
-if (minCtxDrop !== null && !Number.isNaN(minCtxDrop) && ctxDropPct !== null && ctxDropPct < minCtxDrop)
-  failures.push(`context per request fell ${ctxDropPct}% < ${minCtxDrop}%`)
+if (minNarrow !== null) {
+  if (after_.reads === 0) {
+    failures.push("no reads in the after window, so the narrow-read share cannot be measured")
+  } else if (after_.narrow_pct < minNarrow) {
+    failures.push(`narrow reads ${after_.narrow_pct}% < ${minNarrow}%`)
+  }
+}
+if (minCtxDrop !== null) {
+  if (ctxDropPct === null) {
+    failures.push("no context data in the after window, so the drop cannot be measured")
+  } else if (ctxDropPct < minCtxDrop) {
+    failures.push(`context per request fell ${ctxDropPct}% < ${minCtxDrop}%`)
+  }
+}
 
 const verdict = failures.length ? "FAIL" : "PASS"
 
