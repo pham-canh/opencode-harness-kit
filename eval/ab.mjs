@@ -194,6 +194,12 @@ function isInsideTarget(p, root = TARGET_REAL) {
   //
   // The check is about the agent walking out into the real repository or the
   // user's files, not into a scratch file in /tmp.
+  //
+  // The exception is broad, and it is a known limit: a repository that
+  // happens to live under the temp directory is inside the exception, so a
+  // write to it would not be caught. The alternative - halting the whole
+  // experiment because an agent put a scratch file where GLOBAL.md told it
+  // to - was worse, and happened twice.
   const tmp = realpathSafe(tmpdir())
   return abs === tmp || abs.startsWith(tmp + "/")
 }
