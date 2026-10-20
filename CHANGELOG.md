@@ -14,6 +14,21 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-10-20
+
+### Fixed
+
+- **`oc-harness trust` asks for the one-time password itself.** npm's own
+  helper opens a browser for it, but only when stdin and stdout are both
+  terminals — and under `npx` they are not. The result was a failure that
+  printed a web URL masked as `auth/cli/***`, which cannot be opened. The code
+  is asked for in the terminal now, and `--otp=<code>` works where there is
+  none.
+- **A failed read is no longer reported as "nothing is configured".** A
+  package with no trusted publisher and a call that could not read one are
+  different facts, and treating the second as the first sends you off to
+  create a configuration that already exists.
+
 ## [0.3.5] — 2026-10-20
 
 ### Added
@@ -304,7 +319,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/pham-canh/space-harness/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/pham-canh/space-harness/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.4
 [0.3.1]: https://github.com/pham-canh/space-harness/compare/v0.3.0...v0.3.1

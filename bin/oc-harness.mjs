@@ -1411,7 +1411,7 @@ try {
       cmdLanes()
       break
     case "trust":
-      process.exitCode = trustMain(args.slice(1))
+      process.exitCode = await trustMain(args.slice(1))
       break
     case "doctor":
       await cmdDoctor()
