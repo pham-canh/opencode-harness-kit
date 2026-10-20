@@ -127,8 +127,13 @@ function npmCaptured(args, extra = []) {
  * @returns {Promise<{ out: string, code: number }>}
  */
 async function npmWithOtp(args, state = {}) {
+  // JSON, always. In text mode npm prints the challenge as
+  // `auth/cli/***` - masked - and the URL that can be opened is only in the
+  // JSON body. Without this flag the create cannot be completed at all, and
+  // the failure says nothing about why.
+  const withJson = args.includes("--json") ? [] : ["--json"]
   const userOtp = state.otp ? [`--otp=${state.otp}`] : []
-  let result = npmCaptured(args, userOtp)
+  let result = npmCaptured([...args, ...withJson], userOtp)
   if (result.code === 0) return result
 
   // The URLs come FROM the body, not from a guess. Guessing the done URL
@@ -169,7 +174,7 @@ async function npmWithOtp(args, state = {}) {
     return result
   }
   // The code is used for THIS call only.
-  result = npmCaptured(args, [`--otp=${token}`])
+  result = npmCaptured([...args, ...withJson], [`--otp=${token}`])
   return result
 }
 
