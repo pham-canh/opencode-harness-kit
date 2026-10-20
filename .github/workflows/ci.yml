@@ -71,6 +71,21 @@ jobs:
           node-version: '22.x'
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci --no-audit --no-fund
+      # The registry answers 404 for a package the token cannot touch, which
+      # reads like a missing package rather than a missing permission. Check
+      # the token's access first, and say which permission is missing.
+      - name: check the publish token
+        run: |
+          set -euo pipefail
+          if ! npm whoami; then
+            echo "::error::NPM_TOKEN is not a valid npm token. The publish job needs a token that can publish opencode-harness-kit."
+            exit 1
+          fi
+          if ! npm access list packages 2>/dev/null | grep -q "opencode-harness-kit"; then
+            echo "::error::NPM_TOKEN cannot publish opencode-harness-kit. It needs a granular token with write access to the package, not only to the account."
+            exit 1
+          fi
+          echo "the token can publish opencode-harness-kit"
       # prepublishOnly rebuilds dist, so the install above is what provides
       # the esbuild binary it runs with. Auth comes from NPM_TOKEN (a
       # granular access token stored as a repo secret); without it this step
