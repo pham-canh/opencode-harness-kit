@@ -197,29 +197,16 @@ jobs:
           tail -30 /tmp/publish.log
           echo "--- end ---"
           if [ $code -ne 0 ]; then
-            # npm reports a refused OIDC exchange as "package not found", which
-            # is what a missing or mismatched trusted publisher looks like
-            # from here, and it does not say which field was wrong.
+            # The staged path is NOT tried here. It was tried once as a
+            # diagnostic, and it staged a version - which then made the
+            # registry refuse to publish that same version directly
+            # ("Cannot publish over previously staged version"). A diagnostic
+            # that mutates the registry is not a diagnostic.
             #
-            # `npm stage publish` is the other way in: a trusted publisher
-            # created after 2026-09-03 allows staging by default and only
-            # permits a direct publish if it was ticked. Staging separates the
-            # two causes - a stage that gets through means the configuration
-            # is right and only the direct publish was not allowed; a stage
-            # that fails the same way means the configuration is missing.
-            # Only when the OIDC exchange is what failed. A publish that
-            # failed for any other reason - the version is already published,
-            # say - must not go on to stage a second copy of it.
-            if [ -z "${NODE_AUTH_TOKEN:-}" ] && grep -q "oidc/token/exchange" /tmp/publish.log; then
-              echo "::error::npm publish was refused. Trying the staged path to tell a refused direct publish from a missing trusted publisher."
-              stage_code=0
-              npm stage publish > /tmp/stage.log 2>&1 || stage_code=$?
-              grep -iE "oidc|not found|ENEEDAUTH|error|staged|approval" /tmp/stage.log | head -20 || true
-              if [ $stage_code -eq 0 ]; then
-                echo "::error::the staged publish was ACCEPTED, so the trusted publisher is configured correctly and only the direct publish was not allowed. Tick 'npm publish' under Allowed actions for this trusted publisher on npmjs.com, then publish again. The staged version is waiting for approval there."
-                exit 1
-              fi
-              echo "::error::the staged publish was refused the same way, so the trusted publisher configuration itself does not match. Check that npmjs.com lists this PACKAGE (not the account) with: Organization or user = pham-canh, Repository = space-harness, Workflow filename = ci.yml, Environment name = EMPTY (the workflow declares no environment, so an environment on npmjs.com can never match), and Allowed actions includes npm publish."
+            # `npm stage list <package>` shows what is waiting, and
+            # `npm stage approve <id>` publishes it.
+            if grep -q "oidc/token/exchange" /tmp/publish.log; then
+              echo "::error::the OIDC exchange was refused, so the trusted publisher configuration does not match. Check that npmjs.com lists this PACKAGE (not the account) with: Organization or user = pham-canh, Repository = space-harness, Workflow filename = ci.yml, Environment name = EMPTY (the workflow declares no environment, so a claim that is never sent can never match), and Allowed actions includes npm publish."
             elif grep -q "one-time password" /tmp/publish.log; then
               # The token was accepted for reading - `npm whoami` passed - but
               # the publish was refused with EOTP. That is the account's
