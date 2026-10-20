@@ -16,8 +16,9 @@ is not happening.
 
 ### Fixed
 
-Twelve defects, each of them a case where the kit reported success while the
-thing it promised was not happening. They are grouped by what they broke.
+Twenty-eight defects, each of them a case where the kit reported success
+while the thing it promised was not happening. They are grouped by what they
+broke.
 
 **The guard did not guard.**
 
@@ -28,6 +29,15 @@ thing it promised was not happening. They are grouped by what they broke.
   so `git -C /repo reset --hard` was allowed. The file already had a
   `gitSubcommand` helper that knows which git options take a value; it was
   never called.
+- `apply_patch` was not in the list of write tools. OpenCode 1.19 REMOVES
+  `write` and `edit` on a GPT-5-class model and replaces them with
+  `apply_patch`, so on those models the entire write side of the guard
+  enforced nothing. The paths are read out of the patch and every one of them
+  is checked.
+- The bash tool's `workdir` was ignored, so a command run from `/etc` was a
+  way around the scope rule.
+- A write tool whose arguments name no file was allowed through. A guard that
+  cannot see what a write touches cannot scope it, so it fails closed now.
 
 **A failover could hand a lane a dead route.**
 
@@ -75,8 +85,6 @@ thing it promised was not happening. They are grouped by what they broke.
   cap AND the time budget.
 - `curl` was called without `--fail`, so a 4xx body parsed as a catalogue with
   no models in it and every profile was reported as withdrawn.
-- A dangling symlink in the agents directory aborted `verify` with a raw
-  ENOENT and lost the whole report.
 
 **A trusted publisher could be lost.**
 
@@ -90,7 +98,8 @@ thing it promised was not happening. They are grouped by what they broke.
   so. The old configuration is now captured before the revoke, and a failed
   create prints what was there and the exact command to put it back.
 - `npm whoami` ran through a helper that ends the process on failure, so the
-  "not logged in, run npm login" guidance was unreachable code.
+  "not logged in, run npm login" guidance was unreachable code and the user
+  saw only npm's raw error.
 
 **The shipped profiles violated the shipped schema, and nothing checked.**
 
@@ -112,6 +121,77 @@ thing it promised was not happening. They are grouped by what they broke.
   prompt at the same time, so it was being told two opposite things about the
   same action. The policy is now one statement in all three, and a test pins
   them to each other.
+
+**The pruner counted reasoning as saved and never dropped it.**
+
+- The reasoning branch booked 200 bytes "after" for a part that kept its full
+  text. Reasoning is 15.6% of stored bytes, so the reported saving included
+  bytes that were never removed — and the reasoning was still re-sent on
+  every turn, which is the problem the plugin exists to solve.
+- The prune log went to `process.cwd()` rather than the worktree, so it
+  landed outside the project — and the test suite was writing nine hundred
+  lines of its own prune statistics into the repository it was testing.
+- The profile was resolved when the plugin factory ran. OpenCode builds the
+  factories before it runs the config hooks, and the config hook is what
+  writes the marker naming the active profile — so a fresh project had no
+  marker yet and pruning was off for that entire first session.
+- The stub for a bash result matched "ok" anywhere, so an output containing
+  "took 3 seconds" was reported as "ok".
+- `prune.keepRecentTurns` was never validated, and a negative value made the
+  prunable span reach the last message.
+
+**The guard recorded nothing, and a rotation threw the history away.**
+
+- A denial never reached the telemetry plugin: the guard throws in
+  `tool.execute.before`, and opencode calls `tool.execute.after` only after
+  the tool has run. The `kind: "guard"` record that did exist scraped the
+  word "blocked:" out of any tool's OUTPUT, so a `read` of a file containing
+  the word produced a record claiming a rule had fired.
+- A rotation renamed the file at 4 MB and the reader looked at the newest one
+  alone, so every lane reported "never used" the moment a rotation happened —
+  on the number that decides whether the fleet stays at ten lanes.
+- The router's event hook called `JSON.stringify` on opencode's event object,
+  which can hold a reference back to itself, and a hook that throws takes the
+  event down with it.
+
+**The loop erased what the agent wrote, and ran it in the wrong project.**
+
+- `.space/tasks.md` was read once and every write used that copy, so a task
+  the agent added, a verify command it corrected, or a note it left were
+  erased by the loop's own write.
+- `opencode run` was spawned with a `cwd` and nothing else. `spawnSync` does
+  not update the inherited `PWD`, and opencode resolves its project from
+  `PWD` — so the agent was handed the right directory and worked in the wrong
+  repository.
+- The verify command was given a fixed thirty-minute timeout, so a run capped
+  at two hours could overrun by half an hour.
+
+**The measurement gates reported success while measuring nothing.**
+
+- A timeout was never detected: `spawnSync` does not return `stdout === null`
+  for a killed process, so a run that hung until the ceiling was scored as a
+  success and counted in every median.
+- A mistyped `--reps` became NaN and the A/B suite reported success having
+  run nothing. A mistyped `--min-narrow` became NaN and the gate was skipped.
+  A gate that cannot be parsed is now an error.
+- An empty window reported a hundred percent improvement, and the gate
+  passed on it. An empty window is now null, which is not a measurement.
+- `--timeout 0` removed the ceiling rather than setting it.
+- A missing `sqlite3` was a raw ENOENT stack trace.
+- The day bucket in `thresholds.mjs` was hard-coded to UTC+7 while every
+  other day bucket in the repo uses the local calendar.
+
+**The test suite was changing the repository it was testing.**
+
+- `oc-harness install` wrote its pre-commit hook to the KIT's own
+  `.git/hooks/`, which for a user running `npx opencode-harness-kit install`
+  is a node_modules folder or an npx cache — never the repository they work
+  in. The hook goes into the project now.
+- Six tests could not detect the bug they were written for: a hardcoded
+  retention default, a README table listing a withdrawn model, a `list` that
+  started reading the network, a changed CLI command list, a skill naming a
+  withdrawn model after a live one, and a wrong browser opener. All six were
+  checked by mutation.
 
 ### Changed
 
@@ -145,12 +225,30 @@ thing it promised was not happening. They are grouped by what they broke.
 - The README quoted two different sets of numbers for the same measurement.
   There is one set now, and it is the one in `docs/RESEARCH.md` and
   `eval/RESULTS.md`.
+- Both `.space/telemetry.jsonl` and `.space/prune.jsonl` are written in the
+  project. The prune log used to land in the process's working directory,
+  which is often your home directory.
 
 ### Added
 
 - `OPENCODE_HARNESS_CATALOG_URL` overrides where the live model catalogue
   comes from. A mirror is one use; a local fixture is another, and a test
   that reached models.dev would fail on a machine with no network.
+- `OC_HARNESS_NO_HOOK` skips the pre-commit hook. A test that writes an
+  executable git hook into the repository it is testing is a test that changes
+  the repository.
+
+### Security
+
+- `eval/prepare.mjs` could delete a directory tree. `--name` was joined onto
+  the scratch root without being checked and the result removed with
+  `rmSync(..., { recursive: true })`, so `--name ../victim` deleted the
+  victim's tree. The label is a name and not a path, and the resolved path is
+  checked a second time against the scratch root.
+- `eval/prepare.mjs` could run a command. The archive step was one `sh -c`
+  string and the paths were quoted with `JSON.stringify`, which is not shell
+  quoting — a path containing `$(...)` was executed by the shell. `git` and
+  `tar` are called with argument arrays now, and the tar goes through a pipe.
 
 ## [0.4.3] — 2026-10-20
 
