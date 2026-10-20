@@ -29,13 +29,14 @@ import {
   pruneThreshold,
   reservedTokens,
   effectiveRetention,
+  modelsInPlay,
+  retentionFor,
   roleSplitModels,
   resolveDefaultVariant,
   resolveRoles,
   resolveRoleModel,
   resolveLaneChain,
   resolveLaneModel,
-  modelsInPlay,
   modelRetention,
   loadLanes,
   laneNames,
@@ -791,20 +792,33 @@ function configDrift(p, actual) {
 async function cmdUse(id) {
   if (!id) fail("usage: oc-harness use <profile> [--print] [--yes]")
   const p = loadProfile(id)
-  const retention = loadRetention()[`${p.provider}/${p.model}`]
+
+  // A split profile puts the user behind every model in play, not just the base
+  // one. `p.retention` describes the base only, so gating on it let
+  // muse-split-free -- whose plan/build/reviewer run on a may-train endpoint --
+  // install silently. Every check below is over the whole set.
+  const eff = effectiveRetention(p)
+  const unrecorded = modelsInPlay(p).filter((m) => {
+    const entry = retentionFor(m)
+    return !entry || entry.retention === "unknown"
+  })
 
   // A profile may not become the default until a human has stated its
   // retention terms. Capability metadata cannot answer this question.
-  if (retention?.retention === "unknown" || (!retention && p.retention === "unknown")) {
+  if (unrecorded.length) {
     fail(
-      `retention for ${p.provider}/${p.model} is not recorded in retention.yml.\n` +
+      `retention for ${unrecorded.join(", ")} is not recorded in retention.yml.\n` +
         `Add an entry with retention: zero-retention | may-train before installing it.`,
     )
   }
-  if (p.retention === "may-train" && !has("--yes")) {
+  if (eff.retention === "may-train" && !has("--yes")) {
+    const trainOn = roleSplitModels(p)
+      .filter((s) => retentionFor(s.model)?.retention === "may-train")
+      .map((s) => `${s.role} runs on ${s.model}`)
     const msg =
-      `${yellow("!")} ${p.provider}/${p.model} may train on your prompts and completions.\n` +
-      `  ${retention?.note ?? ""}\n` +
+      `${yellow("!")} ${eff.worst} may train on your prompts and completions.\n` +
+      (trainOn.length ? `  ${trainOn.join(", ")}.\n` : "") +
+      `  ${retentionFor(eff.worst)?.note ?? ""}\n` +
       `  Re-run with --yes to accept.`
     if (process.stdin.isTTY && !has("--print")) {
       fail(msg + "\n")

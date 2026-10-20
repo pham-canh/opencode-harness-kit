@@ -21,21 +21,19 @@ baseline-*.txt
 # eval scratch
 .space-eval/
 
+# Scratch bundle built by test/integration.test.js. The test removes it on exit,
+# but the handler does not run if the process is killed, so ignore it regardless.
+.test-build-*/
+
 # video build artifacts (regenerate with video/build.py)
 video/scenes/
 video/audio/
 video/space-harness-demo.mp4
-video/__pycache__/
+__pycache__/
 video/build/
 video/vo.m4a
 video/vo_timed.txt
 video/narration.m4a
 
-# Demo tooling. tools/vrec and tools/btake carry their own .gitignore for their
-# own scratch; these are the leftovers a script creates at the root of the tree.
-tools/*/node_modules/
-tools/*/.venv/
-tools/*/__pycache__/
-tools/*/out/
-tools/*/frames/
-tools/vrec/.repos/
+# vrec and btake are not in this repo. They keep their own .gitignore in their own
+# repos, so anything left here would only ever match a stray copy of one of them.

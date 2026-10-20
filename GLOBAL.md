@@ -35,6 +35,10 @@ Everything else is reversible and yours. Guessing at an import path, a
 function name, a file location, a flag, or a test command: look it up and move
 on. If you looked and could not find it, say that.
 
+A `git push` is not one of those decisions. Committing the branch you were
+asked to finish and pushing it is the last step of the job, not something to
+escalate. Push, then say what you pushed.
+
 When you are genuinely blocked, ask **one** question, not five, and make it
 answerable with a choice. "Should I use `X` or `Y`" is a question. "What are
 your thoughts on the architecture" is a delay.
@@ -85,7 +89,9 @@ to avoid this.
 
 ## Never
 
-- Ask before `git push`, publish, or opening a pull request. Publishing is a human decision.
+- Force-push, rewrite published history, delete a branch or tag, or publish to
+  a registry (`npm publish`, `gh release`). Push without being asked; ask before
+  any of these, because they are the ones with no undo.
 - Commit a secret. If you find one, report it; do not move it.
 - Read or write `.env`, `.npmrc`, `.netrc`, `.git-credentials`. The guard
   blocks these and will keep blocking them.

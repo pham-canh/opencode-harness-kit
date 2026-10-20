@@ -18,7 +18,9 @@
 # instead, which costs nothing in realism.
 
 TAKE_DIR="${VREC_TAKE_DIR:-/tmp/sh}"
-REPO="${REPO:-/Users/admin/harness/space-harness}"
+# Derived from this script's own location so the take works from any clone.
+# A hardcoded absolute path made the take run on exactly one machine.
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 APP_DIR="$TAKE_DIR/app"
 DEMO_CFG="$TAKE_DIR/cfg"
 REAL_CFG="$HOME/.config/opencode/opencode.jsonc"
@@ -44,7 +46,13 @@ REAL_CFG="$HOME/.config/opencode/opencode.jsonc"
 # incapable of that: snapshot the real file, refuse to finish if it moved.
 real_cfg_stamp() { shasum "$REAL_CFG" 2>/dev/null | cut -d' ' -f1; }
 
-# wait_for <path> [seconds]
+# wait_path <path> [seconds]
+#
+# Named wait_path, not wait_for, on purpose. vrec already defines wait_for as
+# "wait for port:N or a URL". A shell that redefines that name with file
+# semantics makes a later `wait_for port:3000` in a take silently wait for a
+# file instead of a socket, then time out for a reason nobody can see. Different
+# name, same job.
 #
 # The gates run in this process; the commands they check were typed into the
 # recorded shell. `vis` waits for the screen to stop changing, which is not the
@@ -52,7 +60,7 @@ real_cfg_stamp() { shasum "$REAL_CFG" 2>/dev/null | cut -d' ' -f1; }
 # packages" and writes node_modules/.bin a moment later, so `test -x` fired
 # against a directory that did not exist yet: the take died on a red gate while
 # every gate after it passed.
-wait_for() {
+wait_path() {
   local path="$1" limit="${2:-90}" waited=0
   while [ ! -e "$path" ] && [ "$waited" -lt "$limit" ]; do
     sleep 1
@@ -98,7 +106,7 @@ beat_setup() {
 beat_install() {
   step "install: from the registry, the way a reader gets it"
   vis "npm install opencode-harness-kit" 150
-  wait_for "$APP_DIR/node_modules/.bin/oc-harness" 90
+  wait_path "$APP_DIR/node_modules/.bin/oc-harness" 90
   need_cmd "CLI installed" test -x "$APP_DIR/node_modules/.bin/oc-harness"
   need_grep "profiles shipped in the tarball" "space-bunny-free" \
     <("$APP_DIR/node_modules/.bin/oc-harness" list 2>&1)
@@ -126,8 +134,14 @@ beat_result() {
   step "result: the suite, measured live"
   vis "cd $REPO" 25
   vis "npm test" 240
-  need_grep "suite is green on screen" "# fail 0" \
-    <(cd "$REPO" && env -u OPENCODE_CONFIG_DIR npm test 2>&1)
+  # Checked by exit status, not by reading the output. node --test prints the TAP
+  # summary ("# fail 0") when its output is a pipe and the spec summary
+  # ("fail 0") when it is a terminal, so grepping for one format passed forever
+  # against a run that had produced the other -- this gate was named "on screen"
+  # while never looking at anything a viewer sees. The exit status says the same
+  # thing and cannot go stale when node changes its reporter.
+  need_cmd "suite is green on screen" \
+    bash -c 'cd "$1" && env -u OPENCODE_CONFIG_DIR npm test' _ "$REPO"
 
   step "result: back to the installed CLI"
   vis "cd $APP_DIR" 25
@@ -149,7 +163,7 @@ beat_result() {
 
   step "result: regenerate it"
   vis "oc-harness use space-bunny-free --yes" 60
-  wait_for "$DEMO_CFG/opencode.jsonc" 30
+  wait_path "$DEMO_CFG/opencode.jsonc" 30
   need_file "config regenerated in scratch" "$DEMO_CFG/opencode.jsonc"
 
   step "result: the setting survived"
@@ -175,3 +189,4 @@ take_main() {
   beat_result
   beat_finish
 }
+

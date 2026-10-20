@@ -394,7 +394,7 @@ against 1/3 on answers that had not found the file at all.
 The first pilot produced no usable number either, for a reason worth recording.
 Nested inside a running opencode session, `opencode run` inherits the *parent*
 session's project directory. Both arms ignored the target entirely and read
-`/Users/admin/harness/space-harness`; the kit-off arm ran 15 file paths and 9
+`<repo path>`; the kit-off arm ran 15 file paths and 9
 shell commands there. The prompt said not to modify anything. It modified
 something anyway - it reverted a change to `package.json`, which had to be
 reapplied.

@@ -1,14 +1,33 @@
 #!/usr/bin/env bash
 # One-time setup for the demo pipeline in this repo.
 #
-# Idempotent: run it as often as you like. It creates tools/vrec/.venv, fetches
-# the Playwright Chromium build, and ends by running `vrec doctor` so the last
-# line you read is the state of the machine, not an assumption about it.
+# Idempotent: run it as often as you like. It builds vrec's venv, fetches the
+# Playwright Chromium build, and ends by running `vrec doctor` so the last line
+# you read is the state of the machine, not an assumption about it.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VREC="$HERE/vrec"
-BTAKE="$HERE/btake"
+
+# vrec and btake are tools with their own history and their own repos. They used
+# to sit inside this repo as copies, and keeping the copies is how they drifted:
+# you fix a bug in one and record a take with the other. They live one directory
+# up, next to this repo, and there is exactly one of each.
+#
+# Override HARNESSTOOLS when this repo is not checked out inside the harness repo.
+HARNESSTOOLS="${HARNESSTOOLS:-$(cd "$HERE/../.." && pwd)/tools}"
+VREC="$HARNESSTOOLS/vrec"
+BTAKE="$HARNESSTOOLS/btake"
+
+for tool in "$VREC" "$BTAKE"; do
+  if [ ! -d "$tool" ]; then
+    printf 'setup-demo: %s is missing.\n' "$tool" >&2
+    printf '  These are separate repos. Clone them next to this one:\n' >&2
+    printf '    git clone https://github.com/pham-canh/vrec.git  %s/vrec\n' "$HARNESSTOOLS" >&2
+    printf '    git clone https://github.com/pham-canh/btake.git %s/btake\n' "$HARNESSTOOLS" >&2
+    printf '  or point HARNESSTOOLS at wherever you keep them.\n' >&2
+    exit 1
+  fi
+done
 
 say() { printf '\n== %s\n' "$1"; }
 need() {
@@ -44,7 +63,7 @@ VENV="$VREC/.venv"
 if "$VENV/bin/python" -c "import Quartz" 2>/dev/null; then
   echo "  Quartz imports — the keyboard driver is live"
 else
-  echo "  Quartz did not import in $VENV — rerun tools/vrec/lib/setup_env.sh" >&2
+  echo "  Quartz did not import in $VENV — rerun $VREC/lib/setup_env.sh" >&2
   exit 1
 fi
 

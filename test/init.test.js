@@ -6,25 +6,24 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { execFileSync } from "node:child_process"
-import { mkdtempSync, readdirSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 const ROOT = new URL("..", import.meta.url).pathname
 const BIN = join(ROOT, "bin", "oc-harness.mjs")
 
+// spawnSync rather than execFileSync: execFileSync hands back stdout only when the
+// child succeeds, so a warning printed to stderr before exit 0 was unreachable and
+// nothing here could assert that a run warned rather than stayed silent.
 function run(args, env = {}) {
-  try {
-    const out = execFileSync("node", [BIN, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...env },
-    })
-    return { exit: 0, out }
-  } catch (e) {
-    return { exit: e.status ?? 1, out: (e.stdout ?? "") + (e.stderr ?? "") }
-  }
+  const r = spawnSync("node", [BIN, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...env },
+  })
+  return { exit: r.status ?? 1, out: (r.stdout ?? "") + (r.stderr ?? "") }
 }
 
 test("init validates the profile before writing anything", () => {
@@ -58,4 +57,86 @@ test("the help lists init next to the commands it chains", () => {
   const r = run(["--help"])
   assert.equal(r.exit, 0, "help must succeed")
   assert.ok(r.out.includes("init"), "a front door nobody lists does not exist")
+})
+
+// init is re-run by people who half-succeeded once, so the second run has to be
+// the safe one: it backs up what it is about to replace rather than asking a
+// question nobody can answer when there is no terminal.
+test("init is safe to re-run over a config it already wrote", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const env = { OPENCODE_CONFIG_DIR: dir }
+
+  const first = run(["init", "--profile", "fleet-safe", "--yes"], env)
+  assert.equal(first.exit, 0, `the first run must succeed:\n${first.out}`)
+  const original = readFileSync(join(dir, "opencode.jsonc"), "utf8")
+
+  const second = run(["init", "--profile", "fleet-safe", "--yes"], env)
+  assert.equal(second.exit, 0, `re-running init must not fail:\n${second.out}`)
+  assert.ok(
+    readdirSync(dir).includes("opencode.jsonc.bak"),
+    "the config being replaced is backed up, not dropped",
+  )
+  assert.equal(
+    readFileSync(join(dir, "opencode.jsonc.bak"), "utf8"),
+    original,
+    "the backup is the config that was there before, not the one written after",
+  )
+})
+
+// A hand-edited config that does not parse cannot be merged onto. Regenerating
+// over it would silently drop settings the user wrote and the tool cannot read.
+test("init refuses to regenerate over a config it cannot parse", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const config = join(dir, "opencode.jsonc")
+  const broken = '{ "model": "not closed\n'
+  writeFileSync(config, broken)
+
+  const r = run(["init", "--profile", "fleet-safe", "--yes"], { OPENCODE_CONFIG_DIR: dir })
+  assert.notEqual(r.exit, 0, "unreadable settings must stop the run")
+  assert.ok(r.out.includes("left untouched"), "the error says the file is safe")
+  assert.ok(r.out.includes("Refusing to regenerate"), "the error says why it stopped")
+  assert.equal(readFileSync(config, "utf8"), broken, "the config on disk is byte for byte what it was")
+})
+
+// REGRESSION: the consent gate read p.retention, which describes the base model
+// alone. A fleet's base is a zero-retention model while five of its ten lanes
+// run on may-train endpoints, so the profile installed with no warning at all.
+const ASK = "may train on your prompts and completions"
+
+test("a profile whose split role may train is announced before it becomes default", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const r = run(["init", "--profile", "fleet-all"], { OPENCODE_CONFIG_DIR: dir })
+
+  assert.equal(r.exit, 0, "without a terminal the run continues, it does not hang")
+  assert.ok(r.out.includes(ASK), `the consent warning is printed, not swallowed:\n${r.out}`)
+  assert.ok(
+    r.out.includes("nemotron-3-ultra-free"),
+    "the warning names the model that actually may train, not the zero-retention base",
+  )
+  assert.ok(r.out.includes("Re-run with --yes to accept"), "the warning says what to do about it")
+  assert.ok(
+    !r.out.includes("opencode/minimax-m3.1-flash-free may train"),
+    "the base model is zero-retention and must not be named as the reason",
+  )
+})
+
+test("--yes is what silences the may-train warning", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const r = run(["init", "--profile", "fleet-all", "--yes"], { OPENCODE_CONFIG_DIR: dir })
+
+  assert.equal(r.exit, 0, "accepting the terms is a successful run")
+  assert.ok(
+    !r.out.includes("Re-run with --yes to accept"),
+    `--yes means the human already agreed, so stop asking:\n${r.out}`,
+  )
+  assert.ok(!r.out.includes(ASK), "the consent warning is gone once accepted")
+  assert.ok(readFileSync(join(dir, "opencode.jsonc"), "utf8").includes("fleet-all"))
+})
+
+test("a zero-retention profile installs without a retention warning", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-init-"))
+  const r = run(["init", "--profile", "fleet-safe", "--yes"], { OPENCODE_CONFIG_DIR: dir })
+
+  assert.equal(r.exit, 0, `the run must succeed:\n${r.out}`)
+  assert.ok(!r.out.includes(ASK), "nothing here may train, so saying it would be noise")
 })
