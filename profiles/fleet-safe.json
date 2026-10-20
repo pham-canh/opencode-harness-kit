@@ -1,5 +1,5 @@
 {
-  "$comment": "A fleet is ten jobs with ten models. `roleModels.<lane>.chain` is the ordered list of models that can serve that lane; the first rung the profile's `maxRetention` ceiling allows is the one that runs it, and the router walks the same chain when a route is spent. No model name in a lane is a promise that it will still exist next month, which is why every lane has a chain.",
+  "$comment": "A fleet is ten jobs with ten models. `roleModels.<lane>.chain` is the ordered list of models that can serve that lane, best first, and the first rung the profile's `maxRetention` ceiling allows is the one that runs it. A chain is therefore ordered WITHIN this profile's ceiling, not globally: a ceiling of zero-retention puts the best zero-retention model for the job first, which is not always the best model for the job overall. The router walks the same chain when a route is spent. No model name in a lane is a promise that it will still exist next month, which is why every lane has a chain.",
   "id": "fleet-safe",
   "title": "Ten jobs, zero-retention models only",
   "provider": "opencode",
@@ -8,7 +8,7 @@
   "verified": "2026-10-19",
   "retention": "zero-retention",
   "maxRetention": "zero-retention",
-  "notes": "The default. Every lane resolves to a model whose provider states a zero-retention policy: no training, nothing kept. The cost is that four of the ten jobs run on a model that is not the one that suits them best - the planner loses beam (30-day retention) and the reviewer loses Nemotron 3 Ultra - so this is the floor, not the ceiling. `fleet-all` gives every lane the model built for it.",
+  "notes": "The default. Every lane resolves to a model whose provider states a zero-retention policy: no training, nothing kept. The cost is that six of the ten jobs run on a second-choice model - the planner loses beam (30-day retention) and the reviewer loses Nemotron 3 Ultra - so this is the floor, not the ceiling. The chains are ordered within the ceiling rather than copied from `fleet-all`: `locate` takes deepseek because it publishes a `low` effort level that longcat does not, and `vision` takes minimax because it reads an image in 7 seconds. `fleet-all` gives every lane the model built for it.",
   "limits": {
     "context": 1000000,
     "output": 512000
@@ -53,43 +53,43 @@
       ]
     },
     "plan": {
-      "model": "beam-free",
+      "model": "deepseek-v4.1-flash-free",
       "chain": [
-        "beam-free",
         "deepseek-v4.1-flash-free",
+        "glm-5.3-flash-free",
         "longcat-2.5-preview-free"
       ]
     },
     "reviewer": {
-      "model": "nemotron-3-ultra-free",
+      "model": "glm-5.3-flash-free",
       "chain": [
-        "nemotron-3-ultra-free",
         "glm-5.3-flash-free",
-        "deepseek-v4.1-flash-free"
-      ]
-    },
-    "locate": {
-      "model": "nemotron-3.5-lightning-free",
-      "chain": [
-        "nemotron-3.5-lightning-free",
-        "big-pickle",
+        "deepseek-v4.1-flash-free",
         "longcat-2.5-preview-free"
       ]
     },
-    "verify": {
-      "model": "big-pickle",
+    "locate": {
+      "model": "deepseek-v4.1-flash-free",
       "chain": [
-        "big-pickle",
-        "nemotron-3.5-lightning-free",
-        "deepseek-v4.1-flash-free"
+        "deepseek-v4.1-flash-free",
+        "longcat-2.5-preview-free",
+        "minimax-m3.1-flash-free"
+      ]
+    },
+    "verify": {
+      "model": "deepseek-v4.1-flash-free",
+      "chain": [
+        "deepseek-v4.1-flash-free",
+        "glm-5.3-flash-free",
+        "longcat-2.5-preview-free"
       ]
     },
     "vision": {
-      "model": "mimo-v2.6-flash-free",
+      "model": "minimax-m3.1-flash-free",
       "chain": [
-        "mimo-v2.6-flash-free",
+        "minimax-m3.1-flash-free",
         "longcat-2.5-preview-free",
-        "minimax-m3.1-flash-free"
+        "deepseek-v4.1-flash-free"
       ]
     },
     "doc": {
@@ -104,16 +104,16 @@
       "model": "deepseek-v4.1-flash-free",
       "chain": [
         "deepseek-v4.1-flash-free",
-        "beam-free",
-        "glm-5.3-flash-free"
+        "glm-5.3-flash-free",
+        "longcat-2.5-preview-free"
       ]
     },
     "sweep": {
-      "model": "nemotron-3.5-super-vl-free",
+      "model": "longcat-2.5-preview-free",
       "chain": [
-        "nemotron-3.5-super-vl-free",
         "longcat-2.5-preview-free",
-        "beam-free"
+        "deepseek-v4.1-flash-free",
+        "minimax-m3.1-flash-free"
       ]
     },
     "longform": {
@@ -121,7 +121,7 @@
       "chain": [
         "longcat-2.5-preview-free",
         "minimax-m3.1-flash-free",
-        "beam-free"
+        "deepseek-v4.1-flash-free"
       ]
     }
   },
