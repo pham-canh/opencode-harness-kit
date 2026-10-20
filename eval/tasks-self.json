@@ -64,9 +64,9 @@
     {
       "id": "edit-multi",
       "$comment": "Two separate edits in one file, both of which have to land. An agent that does one and stops is the obvious failure, and the grader catches it because both strings are required.",
-      "task": "In src/config.js the BASH_DENYLIST has eleven entries. Change the entry `gh pr close*` to `gh pr close *`, and change the entry `gh release*` to `gh release *`. Make no other changes and do not reformat anything.",
+      "task": "In src/denylist.js the BASH_DENYLIST holds the commands the kit never allows. Change the entry `gh pr close*` to `gh pr close *`, and change the entry `gh release*` to `gh release *`. Make no other changes and do not reformat anything.",
       "mutate": {
-        "file": "src/config.js",
+        "file": "src/denylist.js",
         "mustContain": [
           "gh pr close *",
           "gh release *"

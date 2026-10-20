@@ -166,7 +166,16 @@ const TARGET_REAL = realpathSync(target)
  * answer. An agent that greps for the symbol and cites the suite passes
  * without reading anything.
  */
-const SUITE_FILES = ["tasks-self.json", "tasks.json", "tasks-ts.json"]
+const SUITE_FILES = [
+  "tasks-self.json",
+  "tasks.json",
+  "tasks-ts.json",
+  // A citation to a BUILD OUTPUT is not evidence about the source, and a
+  // citation to a TEST is not evidence either - the test quotes the answer.
+  "dist/",
+  "test/",
+  "eval/",
+]
 
 /**
  * True when `p` is `root` or something under it. Symlinks are resolved on both
