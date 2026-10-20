@@ -294,3 +294,40 @@ test("rule names are unique so telemetry can attribute a denial", () => {
   assert.equal(new Set(all).size, all.length, "duplicate rule names would blur telemetry")
   assert.ok(all.length >= 8)
 })
+
+test("a backgrounded command is still a command", () => {
+  // `a & b` runs `b` as its own command. The splitter used to treat a single
+  // `&` as an ordinary character, so the destructive half of a backgrounded
+  // pair was only caught when it happened to come first.
+  assert.equal(blocked("sleep 1 & rm -rf /tmp/x"), "recursive delete")
+  assert.equal(blocked("rm -rf /tmp/x & sleep 1"), "recursive delete")
+  assert.equal(blocked("true & chmod 777 /"), "chmod 777")
+  assert.equal(blocked("true & git -C /repo reset --hard"), "history rewrite")
+  // A redirection is not a boundary.
+  allowed("ls -la &> /tmp/out.txt")
+  allowed("ls -la 2>&1")
+  allowed("ls -la >&2")
+})
+
+test("git options before the subcommand do not hide it", () => {
+  // git takes options before the subcommand, so a rule that reads the
+  // subcommand off the front of the text is defeated by every one of them.
+  for (const cmd of [
+    "git -C /repo reset --hard",
+    "git --git-dir=/srv/repo reset --hard",
+    "git --work-tree /srv/worktree reset --hard",
+    "git --no-pager reset --hard",
+    "git -c core.pager=cat reset --hard",
+    "git -C /repo clean -fd",
+    "git -C /repo rebase --force-with-lease",
+  ]) {
+    assert.equal(blocked(cmd), "history rewrite", `wrong result for ${cmd}`)
+  }
+  // The same options in front of a command that is not destructive stay
+  // allowed, and a subcommand's own flag is not the previous subcommand's.
+  allowed("git -C /repo status")
+  allowed("git -C /repo log --grep reset --oneline")
+  allowed("git -C /repo reset --soft HEAD~1")
+  allowed("git -C /repo clean -n")
+  allowed("git -C /repo commit -m 'reset --hard is not run here'")
+})

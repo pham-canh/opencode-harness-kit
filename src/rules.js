@@ -147,9 +147,22 @@ export function segments(command) {
       if (command[i + 1] === "|") i++
       continue
     }
-    if (ch === "&" && command[i + 1] === "&") {
+    if (ch === "&") {
+      // `&>` and `>&` are redirections, not separators: `cmd &> log` writes
+      // both streams to a file, and `cmd 2>&1` duplicates a descriptor. Both
+      // keep the `&` as part of the command.
+      if (command[i - 1] === ">" || command[i + 1] === ">") {
+        cur += ch
+        continue
+      }
+      // `&&` runs the next command only if the first one succeeded, and a
+      // single `&` runs it regardless. Both are command boundaries.
+      if (command[i + 1] === "&") {
+        flush()
+        i++
+        continue
+      }
       flush()
-      i++
       continue
     }
     cur += ch
@@ -367,7 +380,18 @@ export const BASH_RULES = [
   {
     name: "history rewrite",
     scope: "segment",
-    test: /^git\s+(reset\s+--hard|clean\s+-[a-zA-Z]*f|rebase\s+.*--force)/i,
+    // The subcommand is resolved rather than read off the front of the text,
+    // because git takes options before it: `git -C /repo reset --hard` is the
+    // same command as `git reset --hard`, and a rule anchored at `^git` is
+    // defeated by every one of them. `gitSubcommand` already knows which
+    // options take a value and which ones are global.
+    check: (text) => {
+      const sub = gitSubcommand(text)
+      if (sub === "reset") return /(^|\s)--hard(\s|$)/.test(text)
+      if (sub === "clean") return /(^|\s)-[a-zA-Z]*f/.test(text)
+      if (sub === "rebase") return /(^|\s)--force/.test(text)
+      return false
+    },
     why: "destroys work that only exists locally",
   },
 ]

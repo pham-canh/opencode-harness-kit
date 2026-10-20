@@ -84,9 +84,17 @@ function segments(command) {
       if (command[i + 1] === "|") i++;
       continue;
     }
-    if (ch === "&" && command[i + 1] === "&") {
+    if (ch === "&") {
+      if (command[i - 1] === ">" || command[i + 1] === ">") {
+        cur += ch;
+        continue;
+      }
+      if (command[i + 1] === "&") {
+        flush();
+        i++;
+        continue;
+      }
       flush();
-      i++;
       continue;
     }
     cur += ch;
@@ -140,6 +148,26 @@ function tokenize(segment) {
 var ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 var GIT_WRAPPERS = /* @__PURE__ */ new Set(["env", "sudo", "doas", "nohup", "time", "command", "exec", "xargs"]);
 var WRAPPER_VALUE_FLAGS = /* @__PURE__ */ new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"]);
+var GIT_VALUE_FLAGS = /* @__PURE__ */ new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--exec-path",
+  "--config-env"
+]);
+var GIT_GLOBAL_FLAGS = /* @__PURE__ */ new Set([
+  "--bare",
+  "--no-pager",
+  "--paginate",
+  "--no-replace-objects",
+  "--no-optional-locks",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--icase-pathspecs"
+]);
 function skipPrefixes(tokens) {
   let i = 0;
   for (; ; ) {
@@ -169,6 +197,26 @@ function stripPrefixes(segment) {
   const slash = Math.max(rest[0].lastIndexOf("/"), rest[0].lastIndexOf("\\"));
   if (slash !== -1) rest[0] = rest[0].slice(slash + 1);
   return rest.join(" ");
+}
+function gitSubcommand(segment) {
+  const tokens = tokenize(segment);
+  let i = skipPrefixes(tokens);
+  if (i >= tokens.length) return null;
+  if (!/(^|[\\/])git(\.exe)?$/i.test(tokens[i])) return null;
+  i++;
+  while (i < tokens.length) {
+    const flag = tokens[i];
+    if (GIT_VALUE_FLAGS.has(flag)) {
+      i += 2;
+      continue;
+    }
+    if (/^--[A-Za-z][\w-]*=/.test(flag) || GIT_GLOBAL_FLAGS.has(flag)) {
+      i++;
+      continue;
+    }
+    break;
+  }
+  return tokens[i] ?? null;
 }
 var SHELL_BIN = /(^|[\\/])(sh|bash|zsh|dash|ksh)(\.exe)?$/i;
 var MAX_SHELL_DEPTH = 2;
@@ -218,7 +266,18 @@ var BASH_RULES = [
   {
     name: "history rewrite",
     scope: "segment",
-    test: /^git\s+(reset\s+--hard|clean\s+-[a-zA-Z]*f|rebase\s+.*--force)/i,
+    // The subcommand is resolved rather than read off the front of the text,
+    // because git takes options before it: `git -C /repo reset --hard` is the
+    // same command as `git reset --hard`, and a rule anchored at `^git` is
+    // defeated by every one of them. `gitSubcommand` already knows which
+    // options take a value and which ones are global.
+    check: (text) => {
+      const sub = gitSubcommand(text);
+      if (sub === "reset") return /(^|\s)--hard(\s|$)/.test(text);
+      if (sub === "clean") return /(^|\s)-[a-zA-Z]*f/.test(text);
+      if (sub === "rebase") return /(^|\s)--force/.test(text);
+      return false;
+    },
     why: "destroys work that only exists locally"
   }
 ];
