@@ -14,7 +14,29 @@ is not happening.
 
 ## [Unreleased]
 
-## [0.3.2] — 2026-10-20
+## [0.3.3] — 2026-10-20
+
+> 0.3.2 was never published: it carried the fix below, but the publish it
+> needed had not been set up yet. It is folded into this release.
+
+### Added
+
+- **The publish job can use npm trusted publishing (OIDC), so the repository
+  needs no npm secret at all.** npm exchanges the runner's OIDC identity for a
+  short-lived publish token, scoped to the workflow that asked for it. There
+  is no long-lived token in the repository to leak, rotate or expire - and npm
+  is revoking the legacy automation tokens anyway.
+  - The job installs npm 11.5.1 or later, which is what OIDC needs and what
+    node 22 does not ship.
+  - The registry is configured by hand instead of through `setup-node`'s
+    `registry-url`, because that helper always writes an auth line, and an
+    empty auth line makes npm believe it is authenticated and skip the OIDC
+    exchange entirely.
+  - The credential check is conditional: `npm whoami` is the right check for
+    a token, and **the wrong** one for OIDC, because an OIDC identity is not
+    reflected by `npm whoami` at all. Asking it unconditionally failed a
+    publish that would have worked.
+  - A token still works: if `NPM_TOKEN` is set, the job uses it.
 
 ### Fixed
 
@@ -261,8 +283,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.2...HEAD
-[0.3.2]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.2
+[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.3
 [0.3.1]: https://github.com/pham-canh/space-harness/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/pham-canh/space-harness/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pham-canh/space-harness/compare/v0.2.0...v0.2.1
