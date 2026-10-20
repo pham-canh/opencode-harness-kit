@@ -129,6 +129,12 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
 
         // 1. The session's own model. When it is spent, the profile's
         //    fallback queue names the profiles that can take over.
+        //
+        //    A fleet keeps its lanes. Every lane has its own chain, and step 2
+        //    moves a lane down that chain when its route is spent, so
+        //    overwriting the lanes here would collapse ten jobs onto one
+        //    model and throw away the chain that was supposed to survive the
+        //    outage. Only the session model moves.
         const baseKey = `opencode/${profile.model}`
         if (health.unhealthy?.[baseKey]) {
           const queue = [id, ...(profile.fallback ?? [])]
@@ -142,7 +148,15 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
             }
             const key = `opencode/${fallback.model}`
             if (health.unhealthy?.[key]) continue
-            applyProfileToConfig(cfg, fallback)
+            const fleet = isFleet(profile)
+            applySessionModel(cfg, fallback, {
+              keepLanes: fleet,
+              // The lanes did not change, so the numbers derived from them did
+              // not change either.
+              profileId: fleet ? profile.id : fallback.id,
+              reserved: fleet ? reservedTokens(profile) : undefined,
+              threshold: fleet ? pruneThreshold(profile) : undefined,
+            })
             health.active = candidate
             writeHealth(worktree, health)
             break
@@ -218,14 +232,39 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
 }
 
 /**
- * Point the config at another profile, including its derived numbers.
- *
- * This is the whole-profile move, used when the session's own model is spent.
- * A fleet profile keeps its lanes: the fallback profile is applied as the
- * session model and its own lanes, and the lanes of the profile being
- * replaced are not silently collapsed onto one model.
+ * Whether a profile runs more than one model behind its lanes.
+ * @param {any} profile
+ * @returns {boolean}
  */
-function applyProfileToConfig(cfg: Record<string, any>, profile: any) {
+function isFleet(profile: any): boolean {
+  return Object.keys(profile?.roleModels ?? {}).length > 0
+}
+
+/**
+ * Move the SESSION onto another profile's model.
+ *
+ * A fleet keeps its lanes. The lanes have their own chains, and the config
+ * hook has already moved each one down its chain past a spent route, so
+ * overwriting them here would collapse ten jobs onto one model and discard
+ * the chain that was supposed to survive the outage.
+ *
+ * A profile with no lanes of its own is a single-model profile: there is
+ * nothing to keep, so the fallback takes the lanes too.
+ *
+ * The session model is published on `harness.sessionModel` so the effort hook
+ * - which runs after this one - pins the session to the model that was chosen
+ * here rather than back to the base model that is spent.
+ */
+function applySessionModel(
+  cfg: Record<string, any>,
+  profile: any,
+  opts: {
+    keepLanes?: boolean
+    profileId?: string
+    reserved?: number
+    threshold?: number
+  } = {},
+) {
   try {
     const model = `${profile.provider}/${profile.model}`
     cfg.model = model
@@ -234,19 +273,26 @@ function applyProfileToConfig(cfg: Record<string, any>, profile: any) {
     if (profile.effort?.levels?.length && variant) cfg.variant = variant
     else delete cfg.variant
 
-    for (const [lane, want] of Object.entries(profile.roles ?? {})) {
-      const agent = cfg.agent ?? (cfg.agent = {})
-      const existing = agent[lane] ?? (agent[lane] = {})
-      existing.model = model
-      const level = resolveEffort(profile.effort?.levels ?? [], want as any)
-      if (level) existing.variant = level
-      else delete existing.variant
+    if (!opts.keepLanes) {
+      for (const [lane, want] of Object.entries(profile.roles ?? {})) {
+        const agent = cfg.agent ?? (cfg.agent = {})
+        const existing = agent[lane] ?? (agent[lane] = {})
+        existing.model = model
+        const level = resolveEffort(profile.effort?.levels ?? [], want as any)
+        if (level) existing.variant = level
+        else delete existing.variant
+      }
     }
     if (cfg.compaction) {
       cfg.compaction.prune = true
-      cfg.compaction.reserved = reservedTokens(profile)
+      cfg.compaction.reserved = opts.reserved ?? reservedTokens(profile)
     }
-    cfg.harness = { ...(cfg.harness ?? {}), profile: profile.id, threshold: pruneThreshold(profile) }
+    cfg.harness = {
+      ...(cfg.harness ?? {}),
+      profile: opts.profileId ?? profile.id,
+      threshold: opts.threshold ?? pruneThreshold(profile),
+      sessionModel: model,
+    }
   } catch {
     // Leave the config alone if the fallback profile cannot be read.
   }

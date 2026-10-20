@@ -11,7 +11,7 @@
 // the lane actually runs on, so a lane asking for `max` on a model without
 // `max` gets the nearest level that actually exists.
 
-import { loadProfile, resolveRoles, resolveDefaultVariant, resolveLaneModel } from "./profile.js"
+import { loadProfile, resolveRoles, resolveDefaultVariant, resolveLaneModel, LANE_NAMES } from "./profile.js"
 
 /**
  * @typedef {import("./profile.js").Profile} Profile
@@ -28,19 +28,14 @@ import { loadProfile, resolveRoles, resolveDefaultVariant, resolveLaneModel } fr
 
 /**
  * The lanes a profile manages. A lane a profile does not mention is left alone.
+ *
+ * This used to be a hand-written list of nine lanes, and it drifted: the
+ * fleet has ten, and `longform` was missing. A second list of lane names is a
+ * second source of truth, and the lane table in `lanes.json` is the first one.
+ *
  * @type {string[]}
  */
-export const MANAGED_ROLES = [
-  "build",
-  "plan",
-  "reviewer",
-  "locate",
-  "verify",
-  "vision",
-  "doc",
-  "schema",
-  "sweep",
-]
+export const MANAGED_ROLES = LANE_NAMES
 
 /**
  * @param {string} profileId
@@ -87,7 +82,7 @@ export function planEffort(profileId, opts = {}) {
  *
  * `AgentConfig.variant` only applies to the agent's own configured model, so
  * the model is written alongside the variant instead of relying on the global
- * default. That is also what makes per-role effort work at all.
+ * default. That is also what makes per-lane effort work at all.
  *
  * The model is only filled in when the agent does not have one. A fleet puts
  * ten different models behind ten agents, and overwriting them with the
@@ -95,15 +90,23 @@ export function planEffort(profileId, opts = {}) {
  *
  * @param {Config} config
  * @param {EffortResult} result
- * @param {{ fallbackProfileId?: string }} [opts]
+ * @param {{ fallbackProfileId?: string, sessionModel?: string }} [opts]
  * @returns {Config}
  */
 export function applyEffort(config, result, opts = {}) {
   const cfg = /** @type {Record<string, any>} */ (config)
 
+  // The session model is the profile's base, unless the router moved it. A
+  // fleet whose base route is spent keeps its lanes and moves the session
+  // onto a fallback; pinning the base back here would undo that failover and
+  // send the session back to the dead route.
+  const sessionModel =
+    typeof opts.sessionModel === "string" && opts.sessionModel
+      ? opts.sessionModel
+      : result.model
   // Always pin the session model. When the model has no tunable effort we
   // still set it and simply omit `variant` below.
-  cfg.model = result.model
+  cfg.model = sessionModel
 
   cfg.agent = cfg.agent ?? {}
   for (const [role, level] of Object.entries(result.roles)) {
@@ -119,9 +122,14 @@ export function applyEffort(config, result, opts = {}) {
     cfg.agent[role] = existing
   }
 
-  cfg.harness = opts.fallbackProfileId
-    ? { profile: result.profileId, fallback: opts.fallbackProfileId }
-    : { profile: result.profileId }
+  // The router publishes `sessionModel` and `threshold` on the same object.
+  // Replacing the whole thing here dropped them, which is how a fleet that
+  // had failed over ended up with a session model nobody chose.
+  cfg.harness = {
+    ...(cfg.harness ?? {}),
+    profile: result.profileId,
+    ...(opts.fallbackProfileId ? { fallback: opts.fallbackProfileId } : {}),
+  }
 
   return config
 }

@@ -1,5 +1,5 @@
 {
-  "$comment": "Profiles verified against live provider metadata. `retention` must come from retention.yml; a model missing there cannot enter this list. The default is a fleet, because a fleet is the point: ten jobs, ten models, one session.",
+  "$comment": "Profiles verified against live provider metadata. `retention` must come from retention.yml; a model missing there cannot enter this list. The default is a fleet, because a fleet is the point: ten jobs, ten models, one session. `context` is the input cap the config can actually use: the narrowest lane model's on a fleet, the model's own on a single-model profile. `oc-harness list` recomputes it from the profile rather than trusting this copy.",
   "default": "fleet-safe",
   "profiles": [
     {
@@ -11,7 +11,7 @@
       "topEffort": "max",
       "context": 200000,
       "default": true,
-      "note": "The default. Every lane resolves to a provider with a zero-retention policy, at the cost of four jobs not getting the model built for them."
+      "note": "The default. Every lane resolves to a provider with a zero-retention policy, at the cost of six jobs not getting the model built for them."
     },
     {
       "id": "fleet-all",
@@ -20,7 +20,7 @@
       "retention": "may-train",
       "free": true,
       "topEffort": "max",
-      "context": 200000,
+      "context": 160000,
       "default": false,
       "note": "Every lane gets the model built for it. Five of the ten providers may use the data to improve the model, so the whole profile is may-train."
     },
@@ -130,7 +130,7 @@
       "retention": "may-train",
       "free": true,
       "topEffort": null,
-      "context": 200000,
+      "context": 160000,
       "default": false,
       "note": "Stealth model, no public identity, no effort levels, no image input. The provider may train on it during its free period."
     }

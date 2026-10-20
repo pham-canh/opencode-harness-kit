@@ -157,9 +157,12 @@ test("config hook applies the profile's effort to the real config shape", async 
   assert.equal(config.agent.plan.variant, "max")
   assert.equal(config.agent.reviewer.variant, "max")
   assert.equal(config.agent.build.variant, "max")
-  // The locate lane fell back to a model with no effort levels, so it has no
-  // variant at all rather than a level that model does not publish.
-  assert.equal(config.agent.locate.variant, undefined)
+  // `locate` is on a model that publishes a `low` level, so it gets one.
+  assert.equal(config.agent.locate.variant, "low")
+  // The sweep lane asked for `none` and landed on a model that publishes no
+  // effort levels at all, so it has no variant rather than a level that model
+  // does not publish.
+  assert.equal(config.agent.sweep.variant, undefined)
   // Every lane carries its own model.
   for (const agent of Object.values(config.agent)) {
     assert.ok(agent.model, "every lane must name a model")
@@ -331,7 +334,46 @@ test("router walks the fallback queue when the session route is marked down", as
   const config = { harness: { profile: "fleet-safe" } }
   await hooks.config(config)
   assert.equal(config.model, "opencode/deepseek-v4.1-flash-free", "should move to the next profile")
-  assert.equal(config.harness.profile, "deepseek-v4.1-flash-free")
+  // A fleet is ten jobs. The session model moves onto a fallback, but the
+  // fleet is still the active profile: the lanes have their own chains and
+  // the chain that was supposed to survive the outage is not the session's.
+  assert.equal(config.harness.profile, "fleet-safe")
+  assert.equal(config.harness.sessionModel, "opencode/deepseek-v4.1-flash-free")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a spent session model does not collapse the fleet onto one model", async () => {
+  // The failure this pins: a spent base route replaced the whole profile,
+  // which set every lane of the fallback profile onto one model and left the
+  // other five lanes pointing at routes that were also spent. A fleet has ten
+  // models, so one dead route must cost one lane, not the fleet.
+  const dir = workspace()
+  writeFileSync(
+    join(dir, ".space", "health.json"),
+    JSON.stringify({
+      unhealthy: {
+        "opencode/minimax-m3.1-flash-free": { at: "2026-10-07T00:00:00Z", reason: "429" },
+      },
+    }),
+  )
+  const hooks = await harness(dir)
+  const config = {
+    harness: { profile: "fleet-safe" },
+    agent: {
+      build: { model: "opencode/minimax-m3.1-flash-free", variant: "max" },
+      doc: { model: "opencode/glm-5.3-flash-free" },
+      longform: { model: "opencode/longcat-2.5-preview-free" },
+    },
+  }
+  await hooks.config(config)
+
+  // The session moved off the dead route...
+  assert.equal(config.model, "opencode/deepseek-v4.1-flash-free")
+  // ...the lane that used it moved down its own chain...
+  assert.equal(config.agent.build.model, "opencode/deepseek-v4.1-flash-free")
+  // ...and the other lanes kept the models they had.
+  assert.equal(config.agent.doc.model, "opencode/glm-5.3-flash-free")
+  assert.equal(config.agent.longform.model, "opencode/longcat-2.5-preview-free")
   rmSync(dir, { recursive: true, force: true })
 })
 
