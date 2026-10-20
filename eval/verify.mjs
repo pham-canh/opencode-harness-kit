@@ -59,11 +59,29 @@ export function extractRefs(text) {
   for (const m of text.matchAll(/([\w./@~-]+\.[A-Za-z0-9]+):(\d+)/g)) push(m[1], m[2])
 
   // path ... line 214
-  for (const m of text.matchAll(/([\w./@~-]+\.[A-Za-z0-9]+)[^\n]{0,30}?\blines?\s*:?\s*[*:_`\s]*(\d+)/gi)) push(m[1], m[2])
+  //
+  // The gap may CROSS A NEWLINE. An agent that answers in a markdown field
+  // writes the file on one line and the number on the next:
+  //
+  //     **File:** `src/profile.js`
+  //     **Line:** 105
+  //
+  // and a gap that stops at the newline never pairs them, so the citation is
+  // lost and a correct answer is scored wrong. That is not a rare shape - it
+  // is the shape most of the answers took.
+  for (const m of text.matchAll(/([\w./@~-]+\.[A-Za-z0-9]+)[\s\S]{0,60}?\blines?\s*:?\s*[*:_`\s]*(\d+)/gi))
+    push(m[1], m[2])
+
+  // The markdown field form, paired explicitly: the file and the number are
+  // named as fields, so the pairing does not depend on how far apart they are.
+  for (const m of text.matchAll(
+    /[*_`]{0,2}[Ff]ile[*_`]{0,2}\s*:?\s*[*_`]*([\w@~-]+(?:\/[\w.@~-]+)*\.[A-Za-z0-9]+)[*_`]*[\s\S]{0,80}?[*_`]{0,2}[Ll]ine[*_`]{0,2}\s*:?\s*[*_`\s]*(\d+)/g,
+  ))
+    push(m[1], m[2])
 
   // Markdown emphasis between the words, which is what a model writes when it
   // answers: **File:** `agent/score.py` **Line:** 214
-  for (const m of text.matchAll(/\*{0,2}[Ll]ines?\*{0,2}\s*:?\s*[*`_\s]*(\d+)[^\n]{0,30}?([\w@~-]+(?:\/[\w.@~-]+)*\.[A-Za-z0-9]+)/g))
+  for (const m of text.matchAll(/\*{0,2}[Ll]ines?\*{0,2}\s*:?\s*[*`_\s]*(\d+)[\s\S]{0,40}?([\w@~-]+(?:\/[\w.@~-]+)*\.[A-Za-z0-9]+)/g))
     push(m[2], m[1])
 
   // path (214)
