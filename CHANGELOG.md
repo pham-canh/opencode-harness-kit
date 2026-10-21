@@ -12,25 +12,31 @@ is not happening.
 
 ---
 
-## [0.5.2] — 2026-10-21
+## [0.5.4] — 2026-10-21
 
-**Not published.** The tag was cut and pushed, the publish job ran, and npm
-refused the publish - so there is no 0.5.2 on the registry. The changes
-written for it shipped in 0.5.3.
+Published. The tag is what cut it: `git tag v0.5.4 && git push origin main
+v0.5.4`, and the publish job watches for exactly that.
 
-What npm said was `OIDC token exchange error - package not found`, which
-reads like a missing package. The package was there; the trusted publisher
-was not, because npm looks a publisher up by (package, repository) and the
-repository had just been renamed. The stored entry still named
-`pham-canh/space-harness`; the claim the runner presents names
-`pham-canh/opencode-harness-kit`. The package's name is in the error, and
-the field that was wrong is not.
+A patch, and the patch is the publish path. 0.5.3 was the first release to
+reach the registry since the rename, and it reached it through trusted
+publishing with a signed provenance statement - so the path works, and this
+release is the one that says so where a reader will look for it.
 
-The entry this release was going to carry said that "the npm trusted
-publisher was re-pointed at the new name". It had not been. The re-point is
-an account change on npm and it needs the account's second factor, and a
-changelog that says a thing has been done that has not been done is worse
-than one that says nothing.
+### Changed
+
+- **The npm trusted publisher is configured for
+  `pham-canh/opencode-harness-kit`**: `ci.yml`, no environment, publish and
+  stage. It is the one thing that was missing when 0.5.2 was refused, and it
+  is set now. The re-point is an account change on npm, so it needed the
+  account's second factor - and a rename is not a thing npm does for you.
+
+- **The publish token secret is gone.** The job can publish with a token
+  when there is one, and the secret was set while 0.5.3 was cut, because a
+  release that cannot publish is not a release. It is removed now that the
+  OIDC path is proven: a long-lived token in the repository is a secret to
+  rotate for a path that is not being used, and npm is restricting the
+  tokens that bypass two-factor authentication for direct publishing in
+  January 2027, so the token path was on its way out anyway.
 
 ## [0.5.3] — 2026-10-21
 
@@ -89,6 +95,25 @@ rename was written for - never reached the registry.
   demo, which is a shell file with one machine's paths in it and goes stale
   the moment the thing it films changes. The recording guide is on the
   machine that records.
+
+## [0.5.2] — 2026-10-21
+
+**Not published.** The tag was cut and pushed, the publish job ran, and npm
+refused the publish - so there is no 0.5.2 on the registry. The changes
+written for it shipped in 0.5.3.
+
+What npm said was `OIDC token exchange error - package not found`, which
+reads like a missing package. The package was there. The trusted publisher
+was not: npm reports no trusted publisher configured for this package, and
+the repository had been renamed, so a publisher that named the old
+repository would not have matched the claim the runner presents either. The
+package's name is in the error, and the field that was wrong is not.
+
+The entry this release was going to carry said that "the npm trusted
+publisher was re-pointed at the new name". It had not been. The re-point is
+an account change on npm and it needs the account's second factor, and
+nothing had done it. A changelog that says a thing has been done that has
+not been done is worse than one that says nothing.
 
 ## [0.5.1] — 2026-10-21
 
@@ -1208,7 +1233,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.0...v0.5.1
