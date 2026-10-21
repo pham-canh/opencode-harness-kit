@@ -7,7 +7,16 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -153,4 +162,42 @@ test("a zero-retention profile installs without a retention warning", () => {
 
   assert.equal(r.exit, 0, `the run must succeed:\n${r.out}`)
   assert.ok(!r.out.includes(ASK), "nothing here may train, so saying it would be noise")
+})
+
+// A link whose source has MOVED is still this installer's to replace.
+//
+// The repository was renamed, and every skill, prompt and rule in the
+// config dir kept pointing at the old path. `install` said "installed", and
+// `verify` then found seventeen broken paths. The cause: `existsSync`
+// follows a symlink, so a link whose target no longer exists reads as "not
+// there" - and the code that replaces what the installer put there was
+// never reached.
+test("install re-points a link whose source has moved", () => {
+  const dir = mkdtemp("oc-moved-")
+  const cfg = join(dir, "opencode")
+  mkdirSync(join(cfg, "skills"), { recursive: true })
+  mkdirSync(join(cfg, "prompts"), { recursive: true })
+
+  // A link that points nowhere: the shape a renamed repository leaves behind.
+  const dangling = join(cfg, "skills", "space-review")
+  symlinkSync(join(dir, "the-old-name", "skills", "space-review"), dangling)
+  assert.equal(
+    existsSync(dangling),
+    false,
+    "the fixture has to be a DANGLING link, or the test proves nothing",
+  )
+
+  const r = run(["install"], { OPENCODE_CONFIG_DIR: cfg })
+  assert.equal(r.exit, 0, r.out)
+
+  // The link now resolves, and it points at this repository's skill.
+  assert.ok(
+    existsSync(join(cfg, "skills", "space-review", "SKILL.md")),
+    `the dangling link was not repaired: ${r.out}`,
+  )
+  const target = realpathSync(join(cfg, "skills", "space-review"))
+  assert.ok(
+    target.startsWith(realpathSync(join(ROOT, "skills"))),
+    `the link points somewhere else: ${target}`,
+  )
 })
