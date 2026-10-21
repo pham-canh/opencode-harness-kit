@@ -12,7 +12,14 @@ is not happening.
 
 ---
 
-## [Unreleased]
+## [0.5.1] — 2026-10-21
+
+Published. The tag is what cut it: `git tag v0.5.1 && git push origin main
+v0.5.1`, and the publish job watches for exactly that.
+
+A patch, and it is a patch because nothing a user does differently is in
+here: the grader was stricter than it said, and five tests were reporting
+green with the behaviour they name broken.
 
 ### Fixed
 
