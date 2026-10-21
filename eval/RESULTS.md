@@ -221,11 +221,11 @@ pristine subject file by file, and the answer is graded by citation.
 | metric (median of 2 runs per arm) | kit on | kit off |
 | --- | --- | --- |
 | **correct** | **2/2** | **2/2** |
-| tool calls | 51 | 39.5 |
-| read calls | 18.5 | 13.5 |
-| input tokens | 84,325 | 41,291 |
-| final context | 75,705 | 45,647 |
-| wall seconds | 123.5 | 104.8 |
+| tool calls | 47 | 46 |
+| read calls | 12 | 18 |
+| input tokens | 78,280 | 37,171 |
+| final context | 68,794 | 42,732 |
+| wall seconds | 121.4 | 104.7 |
 
 ### What the long task found, and what it cost to fix
 
@@ -259,8 +259,8 @@ The context is bigger and the work is not repeated. That is the trade the
 kit was making badly, and it was making it without saying.
 
 **What is left is the instructions, not the pruner.** With the rule on, the
-kit's arm makes the same number of tool calls as the arm without the kit
-(51 against 39.5, against 67.5 before the fix) and takes 1.2x the wall time.
+kit's arm makes the SAME number of tool calls as the arm without the kit -
+47 against 46, against 67.5 before the fix - and takes 1.2x the wall time.
 The remaining cost is the fixed overhead of carrying the kit's rules, and
 that is the trade the README describes.
 
