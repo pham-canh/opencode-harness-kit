@@ -37,7 +37,16 @@ const flag = (...n) => {
   return i >= 0 ? args[i + 1] : undefined
 }
 const wantJson = args.includes("--json")
-const reps = Math.max(1, Number(flag("--reps") ?? 3))
+// The rep count is validated rather than coerced. `Math.max(1, NaN)` is
+// NaN, a loop with a NaN bound runs zero times, and the script would print
+// an empty table and report success - a measurement of nothing that looks
+// like a measurement. Zero reps is the same thing with better manners.
+const repsRaw = flag("--reps")
+const reps = repsRaw === undefined ? 3 : Number(repsRaw)
+if (!Number.isFinite(reps) || reps < 1) {
+  console.error(`--reps must be a number of at least 1, not ${JSON.stringify(repsRaw)}`)
+  process.exit(1)
+}
 const withEffort = args.includes("--effort")
 const only = flag("--model")
 

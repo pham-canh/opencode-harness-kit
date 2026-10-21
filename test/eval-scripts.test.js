@@ -153,3 +153,26 @@ test("the pruner measurement refuses a mistyped flag", () => {
   assert.notEqual(r.status, 0, "a mistyped gate was accepted")
   assert.match(`${r.stdout}${r.stderr}`, /must be a number/)
 })
+
+test("the model measurement runs, and a mistyped rep count is refused", () => {
+  // The script spawns real agents, so it cannot be measured here. What CAN
+  // be checked offline is that it starts, that it reads its flags, and that
+  // a mistyped flag is an error rather than a measurement of nothing.
+  const r = spawnSync(
+    "node",
+    [join(ROOT, "eval", "models.mjs"), "--reps", "abc"],
+    { encoding: "utf8", timeout: 60_000 },
+  )
+  assert.notEqual(r.status, 0, "a mistyped rep count was accepted")
+})
+
+test("the model measurement refuses to measure nothing", () => {
+  // `--reps 0` would print an empty table and report success, which is a
+  // measurement of nothing that looks like a measurement.
+  const r = spawnSync(
+    "node",
+    [join(ROOT, "eval", "models.mjs"), "--reps", "0"],
+    { encoding: "utf8", timeout: 60_000 },
+  )
+  assert.notEqual(r.status, 0, "an empty measurement was accepted")
+})
