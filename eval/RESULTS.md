@@ -154,6 +154,12 @@ costs; it shrinks what the agent drags along behind it.
 above is Python, which is the wrong language for judging the code. This closes
 the gap just enough to say whether the harness works there.
 
+**And not a checkable one.** The subject is a private repository, so nobody
+can repeat this run - which is the same reason the self-suite below exists
+and the same thing this suite cannot be. It is here because the question
+was worth asking once, not because the number is a result. The repeatable
+measurement is the self-suite.
+
 Subject: `vendor/gibwork-sentinel` from `gibwork-agent-harness` - 692 lines of
 TypeScript in seven modules, shipped beside compiled JavaScript in `dist/`. Every
 answer occurs in `src/` *and again* in `dist/`, so each task says "in the

@@ -2,6 +2,8 @@
   "$comment": [
     "TypeScript subject. The kit is TypeScript and the Python suite in tasks.json",
     "never tested that, which is the gap this file exists to close.",
+    "The subject is a PRIVATE repository, so this suite is a pilot that",
+    "nobody can repeat. The repeatable one is tasks-self.json.",
     "",
     "Subject is vendor/gibwork-sentinel from gibwork-agent-harness: 692 lines of",
     "TypeScript across 7 modules, shipped alongside compiled JavaScript in dist/.",
@@ -36,8 +38,12 @@
       "task": "In the TypeScript source of this package, the Solana verifier defaults to the mainnet RPC endpoint. Change that default to the devnet endpoint at https://api.devnet.solana.com. Make no other changes and do not reformat anything.",
       "mutate": {
         "file": "src/solana.ts",
-        "mustContain": ["api.devnet.solana.com"],
-        "mustNotContain": ["api.mainnet-beta.solana.com"]
+        "mustContain": [
+          "api.devnet.solana.com"
+        ],
+        "mustNotContain": [
+          "api.mainnet-beta.solana.com"
+        ]
       }
     }
   ]

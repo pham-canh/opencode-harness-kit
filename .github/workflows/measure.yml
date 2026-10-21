@@ -77,6 +77,12 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           export SPACE_HARNESS_SCRATCH="$RUNNER_TEMP/subjects"
+          # The kit has to be INSTALLED before the A/B, or the "kit on" arm is
+          # not the kit-on arm: the on arm reads the live config, and on a
+          # runner with no install there is no kit in it. Both arms would be
+          # plain opencode, and the measurement would be of nothing.
+          node bin/oc-harness.mjs use fleet-safe --yes
+          node bin/oc-harness.mjs install
           node eval/prepare.mjs --repo . --ref HEAD --name ab
           node eval/ab.mjs \
             --target "$SPACE_HARNESS_SCRATCH/ab" \
