@@ -12,6 +12,18 @@ is not happening.
 
 ---
 
+## [0.4.6] — 2026-10-21
+
+Published. The tag is what cut it: `git tag v0.4.6 && git push origin main
+v0.4.6`, and the publish job watches for exactly that.
+
+### Fixed
+
+- **The model measurement table said `0 null`** when a model that publishes
+  a `low` effort level failed every request for that variant. A row of
+  zeroes reads like a measurement of nothing; a row that says the request
+  failed says what happened.
+
 ## [0.4.5] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.4.5 && git push origin main
