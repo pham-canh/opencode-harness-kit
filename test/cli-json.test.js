@@ -27,7 +27,14 @@ function run(args, opts = {}) {
     encoding: "utf8",
     cwd: opts.cwd ?? dir,
   })
-  return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" }
+  return {
+    code: r.status,
+    stdout: r.stdout ?? "",
+    stderr: r.stderr ?? "",
+    // The reason the process did not run at all, if it did not run. Without
+    // it, "no output" and "could not start" look the same to a reader.
+    error: r.error ? String(r.error) : null,
+  }
 }
 
 /**
@@ -53,13 +60,16 @@ function catalogue(dir) {
  * @param {string} stdout
  * @returns {any}
  */
-function parseOnly(stdout) {
+function parseOnly(stdout, run) {
   let parsed
   try {
     parsed = JSON.parse(stdout)
   } catch (err) {
     assert.fail(
-      `stdout is not JSON on its own: ${err.message}\n---\n${stdout.slice(0, 400)}\n---`,
+      `stdout is not JSON on its own: ${err.message}\n` +
+        `--- stdout ---\n${stdout.slice(0, 400)}\n` +
+        `--- stderr ---\n${(run?.stderr ?? "").slice(0, 400)}\n` +
+        `--- spawn ---\n${run?.error ?? "the process ran"}\n---`,
     )
   }
   return parsed
@@ -68,7 +78,7 @@ function parseOnly(stdout) {
 test("doctor --json prints the report and nothing else", () => {
   const dir = mkdtemp("ock-json-")
   const r = run(["doctor", "--json"], { dir, env: { OPENCODE_HARNESS_CATALOG_URL: catalogue(dir) } })
-  const report = parseOnly(r.stdout)
+  const report = parseOnly(r.stdout, r)
   assert.equal(typeof report.ok, "boolean")
   assert.equal(typeof report.problems, "number")
   assert.equal(typeof report.drift, "number")
@@ -80,7 +90,8 @@ test("doctor --json prints the report and nothing else", () => {
 test("doctor --json says the same thing as the human report", () => {
   const dir = mkdtemp("ock-json-")
   const env = { OPENCODE_HARNESS_CATALOG_URL: catalogue(dir) }
-  const j = parseOnly(run(["doctor", "--json"], { dir, env }).stdout)
+  const dr = run(["doctor", "--json"], { dir, env })
+  const j = parseOnly(dr.stdout, dr)
   const human = run(["doctor"], { dir, env }).stdout
   assert.match(human, /doctor/)
   // Whatever the human report counts, the JSON counts the same way.
@@ -101,7 +112,8 @@ test("show --json prints the resolved profile and nothing else", () => {
 })
 
 test("show --json names every lane, and the same lanes the human report does", () => {
-  const p = parseOnly(run(["show", "fleet-safe", "--json"]).stdout)
+  const sr = run(["show", "fleet-safe", "--json"])
+  const p = parseOnly(sr.stdout, sr)
   const human = run(["show", "fleet-safe"]).stdout
   for (const lane of Object.keys(p.lanes)) {
     assert.ok(human.includes(lane), `the human report is missing the lane ${lane}`)
@@ -114,7 +126,7 @@ test("a JSON command that fails still prints JSON", () => {
   // something it can read, rather than a parse failure.
   const r = run(["show", "no-such-profile", "--json"])
   assert.notEqual(r.code, 0)
-  const parsed = parseOnly(r.stdout)
+  const parsed = parseOnly(r.stdout, r)
   assert.equal(parsed.ok, false)
   assert.match(parsed.error, /no profile named/)
 })
