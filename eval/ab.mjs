@@ -81,6 +81,9 @@ const suitePath = flag("--suite")
 // has been wrong five times in this repo and every fix would otherwise have
 // cost another twenty runs.
 const rescoreDir = flag("--rescore")
+// The lane to run, for a suite that measures the kit's PROCESS rather than
+// its answers: a reviewer that does not edit, a verify that does not fix.
+const agent = flag("--agent")
 // One pathological run burned 4.4 minutes once. Without a ceiling a single bad
 // arm can hold the whole suite open indefinitely.
 //
@@ -523,7 +526,14 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
   // --dir is not optional. Nested inside an opencode session, `opencode run`
   // otherwise inherits the *parent* session's project directory and reads the
   // wrong repository entirely - which it did on the first pilot.
-  const res = spawnSync("opencode", ["run", "--dir", runDir, "--format", "json", prompt], {
+  // The LANE, when the suite wants one. The kit-off arm has no kit and
+  // therefore no lanes, so the flag is only for the arm that has them - which
+  // is the point: the lane is part of the kit, and measuring it means
+  // measuring the kit.
+  const argv = ["run", "--dir", runDir, "--format", "json"]
+  if (arm === "on" && agent) argv.push("--agent", agent)
+  argv.push(prompt)
+  const res = spawnSync("opencode", argv, {
     cwd: runDir, env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024,
     timeout: runTimeoutMs, killSignal: "SIGKILL",
   })
