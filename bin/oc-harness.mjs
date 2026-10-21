@@ -706,19 +706,32 @@ function linkOne(src, dest) {
   }
   if (ours) return
 
-  if (existsSync(dest)) {
+  if (isLink) {
+    // A symlink is a symlink whether or not its target exists, and a
+    // DANGLING one is still this installer's to replace.
+    //
+    // `existsSync` follows the link, so it says false for a link whose
+    // source has moved - the repository was renamed, or the kit was
+    // reinstalled somewhere else. The old code asked `existsSync` whether
+    // the destination was taken, got "no", and then tried to create a link
+    // over an existing one: EEXIST, printed as a warning nobody reads, and
+    // the install reported success. Every skill, prompt and rule kept
+    // pointing at a directory that is no longer there, and `verify` found
+    // seventeen broken paths afterwards.
+    //
+    // The test that decides whether to replace something is `lstat`, which
+    // does not follow the link.
+    rmSync(dest, { force: true })
+  } else if (existsSync(dest)) {
     // Replace only what this installer put there. The old code treated "not
     // already our link" as "safe to delete" and called `rmSync` with
     // `recursive: false`, which succeeds on a plain file: a hand-written
     // agent was deleted and replaced by a symlink without a word. A real
     // directory is left alone too -- unlinking it is not this installer's
     // call to make.
-    if (!isLink) {
-      const kind = lstatSync(dest).isDirectory() ? "directory" : "file"
-      console.log(`  ${yellow("!")} ${stamp(`left alone: ${dest} is a real ${kind} and was not ours to replace`)}`)
-      return
-    }
-    rmSync(dest, { force: true })
+    const kind = lstatSync(dest).isDirectory() ? "directory" : "file"
+    console.log(`  ${yellow("!")} ${stamp(`left alone: ${dest} is a real ${kind} and was not ours to replace`)}`)
+    return
   }
 
   try {
