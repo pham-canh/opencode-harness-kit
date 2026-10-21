@@ -76,7 +76,8 @@ export const ROOT = findRoot(resolve(HERE, ".."))
  * @property {Record<string, EffortRequest>} [roles]
  * @property {Record<string, RoleModel>} [roleModels]
  * @property {{ enabled?: boolean, keepRecentToolCalls?: number,
- *             keepRecentTurns?: number, keepUserMessages?: boolean }} [prune]
+ *             keepRecentTurns?: number, keepUserMessages?: boolean,
+ *             keepDistinctOutputs?: boolean }} [prune]
  * @property {string[]} [fallback]
  * @typedef {{ retention: Retention, note?: string, verified?: string, source?: string }} RetentionRecord
  */
@@ -202,6 +203,7 @@ export function normalize(p) {
       keepRecentToolCalls: p.prune?.keepRecentToolCalls ?? 6,
       keepRecentTurns: p.prune?.keepRecentTurns ?? 3,
       keepUserMessages: p.prune?.keepUserMessages ?? true,
+      keepDistinctOutputs: p.prune?.keepDistinctOutputs ?? true,
     },
     fallback: p.fallback ?? [],
   }
@@ -664,6 +666,12 @@ export function validate(p, path = "<memory>") {
     }
     if (prune.keepUserMessages !== undefined && typeof prune.keepUserMessages !== "boolean") {
       throw new ProfileError(`${where}: prune.keepUserMessages must be a boolean`)
+    }
+    if (
+      prune.keepDistinctOutputs !== undefined &&
+      typeof prune.keepDistinctOutputs !== "boolean"
+    ) {
+      throw new ProfileError(`${where}: prune.keepDistinctOutputs must be a boolean`)
     }
     if (prune.enabled !== undefined && typeof prune.enabled !== "boolean") {
       throw new ProfileError(`${where}: prune.enabled must be a boolean`)

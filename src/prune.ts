@@ -67,6 +67,27 @@ interface StubStats {
 }
 
 /** Rough size of a part, used only for the stats line. */
+/**
+ * The identity of a tool call's output: the tool and what it was asked for.
+ *
+ * Two calls with the same tool and the same input have the same output, so
+ * this is what says "the agent already has this".
+ *
+ * @param {any} part
+ * @returns {string | null}
+ */
+function toolSignature(part: any): string | null {
+  const tool = part?.state?.tool ?? part?.tool
+  if (!tool) return null
+  let input: string
+  try {
+    input = JSON.stringify(part?.state?.input ?? {})
+  } catch {
+    return null
+  }
+  return `${tool} ${input}`
+}
+
 function sizeOf(part: any): number {
   // CHARACTERS, not bytes. A UTF-8 character is more than one byte, and a
   // report that says "bytes" and counts characters is off by a factor on
@@ -128,6 +149,9 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
     keepCalls: number
     keepTurns: number
     keepUsers: boolean
+    // Whether the newest copy of each DISTINCT tool output survives, even
+    // when it is older than the recent-calls window.
+    keepDistinct: boolean
     threshold: number
   }
   const DISABLED: Resolved = {
@@ -135,6 +159,7 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
     keepCalls: 0,
     keepTurns: 0,
     keepUsers: true,
+    keepDistinct: false,
     threshold: 0,
   }
   // Only a SUCCESSFUL lookup is cached. A lookup that found nothing is
@@ -157,6 +182,7 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
       keepCalls: profile.prune.keepRecentToolCalls ?? 6,
       keepTurns: profile.prune.keepRecentTurns ?? 3,
       keepUsers: profile.prune.keepUserMessages ?? true,
+      keepDistinct: profile.prune.keepDistinctOutputs ?? true,
       threshold: pruneThreshold(profile),
     }
     return cached
@@ -165,7 +191,7 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
   return {
     "experimental.chat.messages.transform": async (_input: any, output: any) => {
       try {
-        const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve()
+        const { profile, keepCalls, keepTurns, keepUsers, keepDistinct, threshold } = resolve()
         if (!profile) return
         const messages = output.messages
         if (!Array.isArray(messages) || messages.length === 0) return
@@ -188,6 +214,38 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
             if (seen >= keepCalls) break
             keepToolMessageIds.add(msg.info?.id ?? String(i))
             seen++
+          }
+        }
+
+        // The newest copy of each DISTINCT tool output survives, however old
+        // it is.
+        //
+        // The recent-calls window is a window on RECENCY, and a long session
+        // walks straight out of it: after six more tool calls, the one and
+        // only copy of a file the agent read is gone, and the agent reads it
+        // again. The long-task A/B measured it - seventeen re-reads, five
+        // times the input tokens, and the same final context at the end.
+        //
+        // What the agent needs is the file, not the freshness of the copy.
+        // So a distinct output is kept once, at its newest occurrence, and
+        // only the REPEATS of it are stubbed. The context grows by the size
+        // of the distinct outputs; the re-reads stop.
+        //
+        // The signature is the tool and its input, because two calls with the
+        // same input have the same output.
+        if (keepDistinct) {
+          const seenSignatures = new Set<string>()
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i]
+            if (!msg?.parts) continue
+            for (const part of msg.parts) {
+              if (part?.type !== "tool") continue
+              if (part.state?.status !== "completed") continue
+              const sig = toolSignature(part)
+              if (!sig || seenSignatures.has(sig)) continue
+              seenSignatures.add(sig)
+              keepToolMessageIds.add(msg.info?.id ?? String(i))
+            }
           }
         }
 

@@ -262,6 +262,11 @@
           "type": "boolean",
           "default": true,
           "description": "Never stub anything inside a user message. Their instructions are the point of the session. This covers a tool result a user attached as well as their text: user text is kept either way, because prose is kept everywhere."
+        },
+        "keepDistinctOutputs": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep the newest copy of each DISTINCT tool output, however old it is. The recent-calls window is a window on recency, and a long session walks out of it: after six more tool calls the only copy of a file the agent read is gone, and the agent reads it again. The long-task A/B measured seventeen re-reads and five times the input tokens for the same answer."
         }
       }
     },

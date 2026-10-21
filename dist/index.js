@@ -670,7 +670,8 @@ function normalize(p) {
       enabled: p.prune?.enabled ?? false,
       keepRecentToolCalls: p.prune?.keepRecentToolCalls ?? 6,
       keepRecentTurns: p.prune?.keepRecentTurns ?? 3,
-      keepUserMessages: p.prune?.keepUserMessages ?? true
+      keepUserMessages: p.prune?.keepUserMessages ?? true,
+      keepDistinctOutputs: p.prune?.keepDistinctOutputs ?? true
     },
     fallback: p.fallback ?? []
   };
@@ -942,6 +943,9 @@ function validate(p, path = "<memory>") {
     if (prune.keepUserMessages !== void 0 && typeof prune.keepUserMessages !== "boolean") {
       throw new ProfileError(`${where}: prune.keepUserMessages must be a boolean`);
     }
+    if (prune.keepDistinctOutputs !== void 0 && typeof prune.keepDistinctOutputs !== "boolean") {
+      throw new ProfileError(`${where}: prune.keepDistinctOutputs must be a boolean`);
+    }
     if (prune.enabled !== void 0 && typeof prune.enabled !== "boolean") {
       throw new ProfileError(`${where}: prune.enabled must be a boolean`);
     }
@@ -1166,6 +1170,17 @@ function activeProfileId(worktree) {
   return null;
 }
 var REASONING_STUB = "[reasoning] dropped from context - it was from an earlier turn and is stale.";
+function toolSignature(part) {
+  const tool = part?.state?.tool ?? part?.tool;
+  if (!tool) return null;
+  let input;
+  try {
+    input = JSON.stringify(part?.state?.input ?? {});
+  } catch {
+    return null;
+  }
+  return `${tool} ${input}`;
+}
 function sizeOf(part) {
   if (typeof part?.text === "string") return part.text.length;
   if (typeof part?.state?.output === "string") return part.state.output.length;
@@ -1197,6 +1212,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
     keepCalls: 0,
     keepTurns: 0,
     keepUsers: true,
+    keepDistinct: false,
     threshold: 0
   };
   let cached = null;
@@ -1215,6 +1231,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
       keepCalls: profile.prune.keepRecentToolCalls ?? 6,
       keepTurns: profile.prune.keepRecentTurns ?? 3,
       keepUsers: profile.prune.keepUserMessages ?? true,
+      keepDistinct: profile.prune.keepDistinctOutputs ?? true,
       threshold: pruneThreshold(profile)
     };
     return cached;
@@ -1222,7 +1239,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
-        const { profile, keepCalls, keepTurns, keepUsers, threshold } = resolve4();
+        const { profile, keepCalls, keepTurns, keepUsers, keepDistinct, threshold } = resolve4();
         if (!profile) return;
         const messages = output.messages;
         if (!Array.isArray(messages) || messages.length === 0) return;
@@ -1237,6 +1254,21 @@ var PrunePlugin = async ({ worktree, directory }) => {
             if (seen >= keepCalls) break;
             keepToolMessageIds.add(msg.info?.id ?? String(i));
             seen++;
+          }
+        }
+        if (keepDistinct) {
+          const seenSignatures = /* @__PURE__ */ new Set();
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
+            if (!msg?.parts) continue;
+            for (const part of msg.parts) {
+              if (part?.type !== "tool") continue;
+              if (part.state?.status !== "completed") continue;
+              const sig = toolSignature(part);
+              if (!sig || seenSignatures.has(sig)) continue;
+              seenSignatures.add(sig);
+              keepToolMessageIds.add(msg.info?.id ?? String(i));
+            }
           }
         }
         const stats = {
