@@ -54,6 +54,7 @@ export type Profile = {
         keepRecentToolCalls?: number;
         keepRecentTurns?: number;
         keepUserMessages?: boolean;
+        keepDistinctOutputs?: boolean;
     };
     fallback?: string[];
 };
@@ -86,7 +87,8 @@ export type RetentionRecord = {
  * @property {Record<string, EffortRequest>} [roles]
  * @property {Record<string, RoleModel>} [roleModels]
  * @property {{ enabled?: boolean, keepRecentToolCalls?: number,
- *             keepRecentTurns?: number, keepUserMessages?: boolean }} [prune]
+ *             keepRecentTurns?: number, keepUserMessages?: boolean,
+ *             keepDistinctOutputs?: boolean }} [prune]
  * @property {string[]} [fallback]
  * @typedef {{ retention: Retention, note?: string, verified?: string, source?: string }} RetentionRecord
  */
