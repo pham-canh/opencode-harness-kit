@@ -12,6 +12,48 @@ is not happening.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **The grader accepted a field the agent added.** The comparison with the
+  pristine subject looked at the keys the original had, so an agent that made
+  the right change and also added a field of its own was graded correct. The
+  added key is a change like any other, and the grader says so.
+
+- **`isExcluded` did not normalise the path.** The same file is written
+  several ways - "./dist/index.js", "dist/index.js", "src/../dist/index.js" -
+  and the check only caught one spelling. The grader was saved by also
+  checking the resolved path; the exported helper was not, and it is the
+  helper a caller would reach for.
+
+### Test suite
+
+Five tests could not fail, and each was found by breaking the code on
+purpose and watching the test stay green:
+
+- **"a many-file change that reordered the list" did not test reordering.**
+  The fixture put the appended entry first, so a different check caught it
+  and the assertion matched both reasons. The comparison with the original -
+  the check that matters - was never exercised. There are two tests now.
+- **"the pruner changes nothing when there is no profile" could not fail.**
+  The prunable window was empty, and ten DISTINCT outputs all survive
+  anyway. It uses repeated outputs now, with a control case.
+- **"a pruner that throws does not break the turn" never reached the
+  catch.** A string is iterable in JavaScript, so it yielded characters and
+  never threw.
+- **The measurement test did not assert that the measurement measured
+  anything.** It ran behind a gate that can never fail and only matched the
+  header, so a pruner that measured nothing passed.
+- **The python-fallback test never removed the sqlite3 CLI**, so the
+  fallback it was about never ran on a runner that has it.
+
+Also fixed: a lane loop that could iterate zero times; two escape hatches
+that made a test assert nothing at all; a git-root test that used the
+checkout and so failed in a source tarball; seventeen temporary directories
+leaked a run; and a profile index read with a fallback that made a missing
+key mean "no entries" rather than a failure.
+
 ## [0.5.0] — 2026-10-21
 
 A MINOR release, and the reason is the pruner: the rule that decides what
