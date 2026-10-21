@@ -11,7 +11,7 @@
 //
 // The file is a JSONL in the project, gitignored, and never a network call.
 
-import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, rmSync, statSync, renameSync } from "node:fs"
 import { join } from "node:path"
 
 /** Rotate above this, so a long-running project cannot fill its disk. */
@@ -33,10 +33,33 @@ export function logFiles(dir: string): string[] {
   return out
 }
 
-/** Rotate by size so a long-running project cannot fill its disk. */
-function rotate(file: string) {
+/**
+ * Rotate by size so a long-running project cannot fill its disk.
+ *
+ * THREE generations are kept: the current file, `.1` and `.2`. The reader
+ * enumerates all three, so the writer has to produce all three.
+ *
+ * The rotation used to rename the current file straight to `.1`, and a
+ * rename REPLACES the destination on POSIX - so the previous generation was
+ * destroyed on every rotation and `.2` never came into existence. Two
+ * rotations after the fact, the oldest history was gone and the third
+ * generation the reader looks for was missing: the history a project lost
+ * was lost on a schedule nobody was watching.
+ *
+ * So the oldest is shifted out of the way first, and the oldest of the
+ * three is dropped - the disk use stays bounded at three files, and the
+ * generation that is dropped is the one that was already two rotations
+ * old.
+ *
+ * @param file the file to rotate
+ * @param maxBytes the size above which it is rotated
+ */
+export function rotate(file: string, maxBytes: number = MAX_BYTES) {
   try {
-    if (existsSync(file) && statSync(file).size > MAX_BYTES) {
+    if (existsSync(file) && statSync(file).size > maxBytes) {
+      const oldest = `${file}.2`
+      if (existsSync(oldest)) rmSync(oldest, { force: true })
+      if (existsSync(`${file}.1`)) renameSync(`${file}.1`, oldest)
       renameSync(file, `${file}.1`)
     }
   } catch {

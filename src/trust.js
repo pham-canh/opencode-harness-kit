@@ -32,6 +32,12 @@ import { fileURLToPath } from "node:url"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
+/** How long the two-factor wait polls for an answer. */
+const POLL_MS = 5000
+
+/** The window the two-factor wait is allowed to take, in seconds. */
+const DEFAULT_WAIT_SECONDS = 600
+
 /** @param {string} s */
 const bold = (s) => `\x1b[1m${s}\x1b[0m`
 /** @param {string} s */
@@ -52,12 +58,20 @@ const dim = (s) => `\x1b[2m${s}\x1b[0m`
  * that form - and getting it wrong is one of the ways a configuration ends up
  * not matching.
  *
+ * Every form git and npm both accept is read here: an https URL, an ssh URL,
+ * and the `github:owner/repo` shorthand npm itself understands. A trailing
+ * slash does not make a different repository either, and it used to throw on
+ * one - so a package whose `repository` field ended in a slash could not be
+ * set up at all, and the failure was a stack trace rather than a sentence.
+ *
  * @param {any} repository
  * @returns {string}
  */
 export function repoOf(repository) {
   const url = typeof repository === "string" ? repository : repository?.url ?? ""
-  const m = url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/)
+  const m =
+    url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/) ??
+    url.match(/^github:([^/]+)\/([^/]+?)(?:\.git)?\/?$/)
   if (!m) throw new Error(`cannot read a GitHub repository out of ${JSON.stringify(repository)}`)
   return `${m[1]}/${m[2]}`
 }
@@ -163,8 +177,15 @@ async function npmWithOtp(args, state = {}) {
   // JSON body. Without this flag the create cannot be completed at all, and
   // the failure says nothing about why.
   const withJson = args.includes("--json") ? [] : ["--json"]
-  const userOtp = state.otp ? [`--otp=${state.otp}`] : []
-  let result = npmCaptured([...args, ...withJson], userOtp)
+  // The call is made WITHOUT a code first.
+  //
+  // npm sends a code with the request that was CHALLENGED, and the code used
+  // to be attached to every call in the chain instead. So a code was spent on
+  // a call that never needed it, and the call that DID need it got a fresh
+  // challenge - which the tool then answered with another browser flow. The
+  // chain was: challenge, spend the code, challenge again, spend it again,
+  // and one browser tab per challenge.
+  let result = npmCaptured([...args, ...withJson])
   if (result.code === 0) return result
 
   // The URLs come FROM the body, not from a guess. Guessing the done URL
@@ -172,50 +193,85 @@ async function npmWithOtp(args, state = {}) {
   // answers "forbidden" - which is not a token, so the wait runs its full
   // length and then reports that nobody answered.
   const done = /"doneUrl"\s*:\s*"([^"]+)"/.exec(result.out)
-  if (!done) return result
-  const doneUrl = done[1]
-  const auth = /"authUrl"\s*:\s*"([^"]+)"/.exec(result.out)
-  const authId = /authId=([a-f0-9-]+)/.exec(doneUrl)
-  const authUrl = auth ? auth[1] : `https://www.npmjs.com/auth/cli/${authId?.[1] ?? ""}`
+  if (done) {
+    const doneUrl = done[1]
+    const auth = /"authUrl"\s*:\s*"([^"]+)"/.exec(result.out)
+    const authId = /authId=([a-f0-9-]+)/.exec(doneUrl)
+    const authUrl = auth ? auth[1] : `https://www.npmjs.com/auth/cli/${authId?.[1] ?? ""}`
 
-  // Open it if this machine can. The URL is printed either way, because a
-  // browser that cannot be opened here can be opened anywhere.
-  //
-  // OC_TRUST_NO_BROWSER turns the opening off, which is what a test needs:
-  // a test that opens a browser on the machine it runs on is a test that
-  // breaks whatever the person at the keyboard was doing.
-  let opened = false
-  if (!process.env.OC_TRUST_NO_BROWSER) {
-    opened = openBrowser(authUrl)
-  }
-  console.error("")
-  console.error(bold("  npm needs to confirm it is you."))
-  console.error(`  ${authUrl}`)
-  console.error(dim("  Answer there however your npm account is set up - an authenticator"))
-  console.error(dim("  app, a security key, or a code sent to your email."))
-  // Saying the page is open when it is not sends the person looking for a
-  // browser window that was never opened.
-  console.error(
-    dim(
-      opened
-        ? "  This page is open in a browser, or copy the URL above."
-        : "  Open this page in a browser: the URL above is the way in.",
-    ),
-  )
-  console.error("")
+    // Open it if this machine can. The URL is printed either way, because a
+    // browser that cannot be opened here can be opened anywhere.
+    //
+    // OC_TRUST_NO_BROWSER turns the opening off, which is what a test needs:
+    // a test that opens a browser on the machine it runs on is a test that
+    // breaks whatever the person at the keyboard was doing.
+    let opened = false
+    if (!process.env.OC_TRUST_NO_BROWSER) {
+      opened = openBrowser(authUrl)
+    }
+    console.error("")
+    console.error(bold("  npm needs to confirm it is you."))
+    console.error(`  ${authUrl}`)
+    console.error(dim("  Answer there however your npm account is set up - an authenticator"))
+    console.error(dim("  app, a security key, or a code sent to your email."))
+    // Saying the page is open when it is not sends the person looking for a
+    // browser window that was never opened.
+    console.error(
+      dim(
+        opened
+          ? "  This page is open in a browser, or copy the URL above."
+          : "  Open this page in a browser: the URL above is the way in.",
+      ),
+    )
+    console.error("")
 
-  const token = await waitForToken(doneUrl)
-  if (!token) {
-    console.error(red("  no answer came back, so nothing was changed."))
+    const token = await waitForToken(doneUrl)
+    if (!token) {
+      console.error(
+        red(`  no answer came back within ${waitSeconds()}s, so nothing was changed.`),
+      )
+      return result
+    }
+    // The code is used for THIS call only.
+    result = npmCaptured([...args, ...withJson], [`--otp=${token}`])
     return result
   }
-  // The code is used for THIS call only.
-  result = npmCaptured([...args, ...withJson], [`--otp=${token}`])
+
+  // The registry wants an authenticator code rather than a browser, and the
+  // user gave one.
+  //
+  // The code answers THIS challenge and is spent by it, so it is not carried
+  // to the next call in the chain: a spent code is not accepted, and sending
+  // one produces a fresh challenge rather than the answer.
+  if (state.otp && /EOTP|one-time password|need otp/i.test(result.out)) {
+    const otp = state.otp
+    state.otp = undefined
+    result = npmCaptured([...args, ...withJson], [`--otp=${otp}`])
+  }
   return result
 }
 
 /**
+ * The window the two-factor wait is allowed to take.
+ *
+ * @returns {number} seconds
+ */
+function waitSeconds() {
+  const seconds = Number(process.env.OC_TRUST_WAIT_SECONDS ?? DEFAULT_WAIT_SECONDS)
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_WAIT_SECONDS
+}
+
+/**
  * Wait for the browser to answer.
+ *
+ * The wait is BOUNDED by the configured window, and the bound covers the
+ * request as well as the number of attempts.
+ *
+ * The request had no timeout of its own, and undici's default body timeout
+ * is five minutes - so an endpoint that sent its headers and then never
+ * ended its body held the command open for minutes per attempt, and the
+ * loop's own attempt count did not bound it at all. At the default window
+ * the worst case was hours, with nothing said about the wait.
  *
  * @param {string} doneUrl
  * @returns {Promise<string | null>}
@@ -224,19 +280,78 @@ async function waitForToken(doneUrl) {
   // How long to wait for a human. The window is generous, because the person
   // may be answering an email, and it is configurable so a CI run does not
   // hang on it.
-  const seconds = Number(process.env.OC_TRUST_WAIT_SECONDS ?? 600)
-  const attempts = Math.max(1, Math.round(seconds / 5))
-  for (let i = 0; i < attempts; i++) {
+  const deadline = Date.now() + waitSeconds() * 1000
+  while (Date.now() < deadline) {
+    // The remaining budget bounds the request itself, so a server that sends
+    // its headers and never ends its body cannot hold the command open past
+    // the window.
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), Math.max(1, deadline - Date.now()))
     try {
-      const res = await fetch(doneUrl)
+      const res = await fetch(doneUrl, { signal: controller.signal })
       const body = /** @type {any} */ (await res.json())
       if (body && typeof body.token === "string" && body.token) return body.token
     } catch {
       // Not ready yet, or the network blipped. Try again.
+    } finally {
+      clearTimeout(timer)
     }
-    await new Promise((r) => setTimeout(r, 5000))
+    // Wait for the next attempt, but never past the deadline.
+    const wait = Math.min(POLL_MS, deadline - Date.now())
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait))
   }
   return null
+}
+
+/**
+ * The configurations in npm's own answer.
+ *
+ * npm prints ONE JSON OBJECT PER CONFIGURATION - one object per line, not
+ * an array of objects. The answer was parsed as a single JSON document, so a
+ * package with two configurations could not be read at all, and the tool
+ * said "could not read the trusted publisher configuration" about a package
+ * that had one. That is the opposite of a diagnostic: it hides the
+ * configuration the tool exists to repair.
+ *
+ * Both shapes are read: the ndjson npm actually prints, and the single
+ * object or array that other versions print.
+ *
+ * @param {string} out npm's answer
+ * @returns {{ configs: any[], failed: boolean, detail?: string }}
+ */
+export function parseTrustList(out) {
+  const text = String(out ?? "").trim()
+  if (!text) return { configs: [], failed: false }
+
+  // One document first: a single object, or an array, on one line or
+  // pretty-printed over several.
+  let whole = null
+  try {
+    whole = JSON.parse(text)
+  } catch {
+    // Not one document. npm prints one object per line when a package has
+    // more than one configuration, and that is ndjson - not JSON.
+  }
+  const documents = whole === null ? text.split("\n").map((l) => l.trim()).filter(Boolean) : [text]
+
+  /** @type {any[]} */
+  const items = []
+  for (const doc of documents) {
+    let parsed
+    try {
+      parsed = JSON.parse(doc)
+    } catch {
+      // A line that is not JSON is npm's own noise, and an answer that
+      // cannot be read is a FAILURE - not an empty list. An empty list
+      // would say "no trusted publisher is configured", and the tool would
+      // then create one that already exists.
+      return { configs: [], failed: true, detail: out }
+    }
+    if (Array.isArray(parsed)) items.push(...parsed)
+    else if (parsed && Array.isArray(parsed.configs)) items.push(...parsed.configs)
+    else items.push(parsed)
+  }
+  return { configs: items.filter(Boolean), failed: false }
 }
 
 /**
@@ -259,14 +374,7 @@ async function listConfigs(name, state = {}) {
     return { configs: [], failed: true, detail: out }
   }
   if (!out.trim()) return { configs: [], failed: false }
-  let parsed
-  try {
-    parsed = JSON.parse(out)
-  } catch {
-    return { configs: [], failed: true, detail: out }
-  }
-  const items = Array.isArray(parsed) ? parsed : parsed.configs ?? [parsed]
-  return { configs: items.filter(Boolean), failed: false }
+  return parseTrustList(out)
 }
 
 /**
@@ -289,11 +397,31 @@ function describe(config) {
 export async function main(argv = []) {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"))
   const name = pkg.name
-  const repo = repoOf(pkg.repository)
+  let repo
+  try {
+    repo = repoOf(pkg.repository)
+  } catch (err) {
+    // A diagnostic, not a stack trace.
+    //
+    // The throw used to escape the command and kill it with a JavaScript
+    // stack trace, which says nothing about the package.json field that
+    // was wrong - and the person reading it had to work out that the
+    // release tool was the thing that died.
+    console.error(red(`cannot work out the GitHub repository of ${name}.`))
+    console.error(dim(`  ${err instanceof Error ? err.message : String(err)}`))
+    console.error(dim("  the `repository` field of package.json has to point at a GitHub repository."))
+    return 1
+  }
   const file = process.env.TRUSTED_PUBLISHER_FILE ?? "ci.yml"
   const checkOnly = argv.includes("--check")
-  // A code given on the command line is used as-is. A code given at the
-  // prompt is remembered for the rest of the run, so the user types it once.
+  // A code given on the command line is used as-is, and only for the call
+  // that was challenged.
+  //
+  // There is no prompt for a code. The challenge is answered in a browser,
+  // and npm's own helper only offers that when stdin AND stdout are both
+  // terminals - which a piped command is not. A code typed at a prompt would
+  // never arrive, so the comment about remembering it described a prompt
+  // that no longer existed.
   const state = { otp: argv.find((a) => a.startsWith("--otp="))?.slice("--otp=".length) }
 
   console.log(`\n${bold("npm trusted publishing")}  ${dim(`${name} · ${repo} · ${file}`)}\n`)

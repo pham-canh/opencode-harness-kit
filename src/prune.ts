@@ -66,7 +66,6 @@ interface StubStats {
   bytesAfter: number
 }
 
-/** Rough size of a part, used only for the stats line. */
 /**
  * The identity of a tool call's output: the tool and what it was asked for.
  *
@@ -88,14 +87,37 @@ function toolSignature(part: any): string | null {
   return `${tool} ${input}`
 }
 
-function sizeOf(part: any): number {
-  // CHARACTERS, not bytes. A UTF-8 character is more than one byte, and a
-  // report that says "bytes" and counts characters is off by a factor on
-  // any text that is not ASCII - which is most of the code in a repository.
-  // The field is named for what it measures.
-  if (typeof part?.text === "string") return part.text.length
-  if (typeof part?.state?.output === "string") return part.state.output.length
-  return 0
+/**
+ * The size of a PART, as it sits in the request.
+ *
+ * The whole part, not the text inside it. The saving this plugin reports is
+ * a claim about the REQUEST, and the request is built out of parts - so
+ * measuring `part.text` measured a piece of a part and called the difference
+ * a saving. The stub replaces a tool result with a new state object that
+ * carries its own metadata, and that metadata was invisible to the measure,
+ * so a turn whose request GREW was reported as a saving of the difference
+ * between two texts. That is the worst bug this plugin can have: a number
+ * that says "I saved you 322 characters" for a request that grew by 406.
+ *
+ * The metadata the stub adds is counted as part of the stub, deliberately:
+ * it is bytes the request really does carry, so a stub that costs more than
+ * the output it replaced has to show up as a cost rather than as a saving.
+ *
+ * CHARACTERS, not bytes. A UTF-8 character is more than one byte, and a
+ * report that says "bytes" and counts characters is off by a factor on
+ * any text that is not ASCII - which is most of the code in a repository.
+ * The field is named for what it measures.
+ */
+function partSize(part: any): number {
+  try {
+    const json = JSON.stringify(part)
+    return typeof json === "string" ? json.length : 0
+  } catch {
+    // A part that cannot be serialised cannot be measured either. It counts
+    // as zero rather than throwing: a prune that cannot measure itself must
+    // still prune.
+    return 0
+  }
 }
 
 /**
@@ -261,7 +283,7 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
           if (!msg?.parts) continue
           const isUser = msg.info?.role === "user"
           for (const part of msg.parts) {
-            const size = sizeOf(part)
+            const size = partSize(part)
             stats.bytesBefore += size
 
             if (isUser && keepUsers) {
@@ -295,8 +317,14 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
                 // part schema has no signature, so replacing its text is
                 // safe. A part that grew one would have to be removed rather
                 // than rewritten.
+                //
+                // There is NO floor under which a reasoning part is left
+                // alone. A short one is replaced too, and the stub is about
+                // seventy-eight characters - so a reasoning part shorter
+                // than that makes the request BIGGER. The log says so,
+                // because the log is a measurement and not a claim.
                 part.text = REASONING_STUB
-                stats.bytesAfter += sizeOf(part)
+                stats.bytesAfter += partSize(part)
                 stats.stubbed++
                 break
               }
@@ -310,6 +338,15 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
                   stats.kept++
                   break
                 }
+                // The stub is a NEW state object, and the new state carries
+                // its own metadata: a flag and a timestamp, about fifty
+                // characters per stubbed part.
+                //
+                // Those characters are part of the stub, and they are
+                // measured as part of it. They used to be invisible to the
+                // measurement, so the log reported the difference between
+                // two TEXTS while the request carried the metadata as well -
+                // and a request that grew was reported as a saving.
                 part.state = {
                   status: "completed",
                   input: state.input,
@@ -318,7 +355,7 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
                   time: state.time,
                   metadata: { ...(state.metadata ?? {}), pruned: true, prunedAt: new Date().toISOString() },
                 }
-                stats.bytesAfter += sizeOf(part)
+                stats.bytesAfter += partSize(part)
                 stats.stubbed++
                 break
               }
@@ -336,7 +373,15 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
         }
 
         if (stats.stubbed > 0) {
-          const saved = Math.max(0, stats.bytesBefore - stats.bytesAfter)
+          // The delta of the REQUEST, exactly, and not floored at zero.
+          //
+          // The saving is a claim about the request, and a request that grew
+          // has to say so. A zero would be read as "nothing was saved" and
+          // would hide the fact that the pruner made the request BIGGER -
+          // which is the failure this number exists to prevent. The line is
+          // still logged either way, because a part was stubbed, and that is
+          // the event worth recording.
+          const saved = stats.bytesBefore - stats.bytesAfter
           await logPrune(project, profile.id, {
             ...stats,
             saved,
