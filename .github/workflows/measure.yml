@@ -83,6 +83,11 @@ jobs:
         with:
           node-version: "22.x"
       - run: npm ci --no-audit --no-fund
+      # The A/B spawns `opencode run`. A runner has no opencode, so without
+      # this the measurement starts, produces nothing, and reports every run
+      # as "no output, not scored" - in seventeen seconds, and green.
+      - name: install opencode
+        run: npm install -g opencode-ai@1.19.3
       - name: the A/B, against this repository at a pinned commit
         # A missing key is not a failure of the measurement - it is a
         # measurement nobody could take. The step says so and the run stays
