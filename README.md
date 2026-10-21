@@ -362,6 +362,17 @@ oc-harness baseline   measure the current install
 oc-harness run        drive .space/tasks.md to done with the build agent
 ```
 
+The measurement scripts are in `eval/`, and each one says what it measures
+at the top of the file:
+
+```
+node eval/run.mjs               the pruner and the allowlist
+node eval/measure-prune.mjs     the pruner, on real sessions
+node eval/measure-install.mjs   before and after the install
+node eval/models.mjs            every model on the tier, one line each
+node eval/ab.mjs                the A/B: the same task with and without the kit
+```
+
 Every flag accepts both spellings: `--profile fleet-safe` and
 `--profile=fleet-safe` are the same flag.
 

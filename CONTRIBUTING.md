@@ -69,6 +69,13 @@ config, run the layers individually and say so in the PR.
 not part of any check, and a PR does not need it. `npm run measure` does not
 spawn an agent either — it queries the install database read-only.
 
+`eval/models.mjs` spawns real agents too, one line each, against the live
+tier: it is what the routing table in `docs/ROUTING.md` is measured with,
+and it costs a request per model per rep. It is not part of any check
+either. If you change a lane, a model or a threshold, run it and put the
+new numbers in the same commit — a routing table with numbers from a
+different day is a table nobody can check.
+
 ## House rules
 
 - Node 22 or newer. The CLI uses `node:` prefixed builtins, so an older Node
