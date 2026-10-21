@@ -1169,20 +1169,20 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/space-harness/compare/v0.4.3...HEAD
-[0.4.4]: https://github.com/pham-canh/space-harness/compare/v0.4.3...v0.4.4
-[0.4.3]: https://github.com/pham-canh/space-harness/compare/v0.4.2...v0.4.3
-[0.4.2]: https://github.com/pham-canh/space-harness/compare/v0.4.1...v0.4.2
-[0.4.1]: https://github.com/pham-canh/space-harness/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/pham-canh/space-harness/compare/v0.3.9...v0.4.0
-[0.3.9]: https://github.com/pham-canh/space-harness/compare/v0.3.8...v0.3.9
-[0.3.8]: https://github.com/pham-canh/space-harness/compare/v0.3.7...v0.3.8
-[0.3.7]: https://github.com/pham-canh/space-harness/compare/v0.3.6...v0.3.7
-[0.3.6]: https://github.com/pham-canh/space-harness/compare/v0.3.5...v0.3.6
-[0.3.5]: https://github.com/pham-canh/space-harness/compare/v0.3.4...v0.3.5
-[0.3.4]: https://github.com/pham-canh/space-harness/compare/v0.3.1...v0.3.4
-[0.3.1]: https://github.com/pham-canh/space-harness/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/pham-canh/space-harness/compare/v0.2.1...v0.3.0
-[0.2.1]: https://github.com/pham-canh/space-harness/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/pham-canh/space-harness/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.3...HEAD
+[0.4.4]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.3.9...v0.4.0
+[0.3.9]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.3.8...v0.3.9
+[0.3.8]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.3.7...v0.3.8
+[0.3.7]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.3.6...v0.3.7
+[0.3.6]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.3.5...v0.3.6
+[0.3.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.3.1...v0.3.4
+[0.3.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pham-canh/space-harness/releases/tag/v0.1.0
