@@ -12,7 +12,14 @@ is not happening.
 
 ---
 
-## [Unreleased]
+## [0.4.5] — 2026-10-21
+
+Published. The tag is what cut it: `git tag v0.4.5 && git push origin main
+v0.4.5`, and the publish job watches for exactly that.
+
+This release is the measurement side of the kit: the numbers in the routing
+table were taken once, by hand, and could not be taken again. Now they can
+be, and the page that carries them says which measurement it is holding.
 
 ### Added
 
