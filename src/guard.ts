@@ -32,11 +32,49 @@ export const MARKER = "[opencode-harness-kit] blocked"
 const WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "patch"])
 
 /**
+ * Whether a hunk header follows, before another file's headers do.
+ *
+ * A `---`/`+++` pair is the header pair of a file only when a hunk header
+ * (`@@`) comes after it. That is the difference between the headers of a
+ * diff and two body lines that happen to look like one, and it is the same
+ * thing a reader of the diff does.
+ *
+ * @param {string[]} lines
+ * @param {number} from the line to start looking at
+ * @returns {boolean}
+ */
+function hunkFollows(lines: string[], from: number): boolean {
+  for (let i = from; i < lines.length; i++) {
+    if (/^@@/.test(lines[i])) return true
+    // Another pair of headers starts here, so this pair was not followed by
+    // a hunk of its own.
+    if (/^(?:---|\+\+\+)\s/.test(lines[i])) return false
+  }
+  return false
+}
+
+/**
  * The files a patch touches.
  *
  * `apply_patch` sends a patch, not a path, so the paths have to be read out
  * of it. Two formats are in use: opencode's own `*** Update File: path`
- * markers, and a plain unified diff with `+++ b/path` headers.
+ * markers, and a plain unified diff with `--- a/path` and `+++ b/path`
+ * headers.
+ *
+ * A unified diff names the file TWICE: `--- a/path` is where the change
+ * comes FROM, `+++ b/path` is where it goes TO. A deletion is `--- a/path`
+ * and `+++ /dev/null`, so the path that has to be scope-checked is the one
+ * in the `---` header and nowhere else. Reading only the `+++` header meant
+ * a patch that deleted a file outside the project was checked against
+ * nothing at all - and a patch that deletes a file is exactly the shape
+ * that reaches outside the project.
+ *
+ * The headers of a diff come BEFORE its first hunk, and a body line can
+ * look like a header: a removed line whose content is "-- foo" renders as
+ * "--- foo", and an added line "++ bar" renders as "+++ bar". Reading
+ * those as the headers of a file collected two words as paths, and a path
+ * that is not a path is a write the guard refuses for a reason nobody can
+ * find.
  *
  * @param {string} text
  * @returns {string[]}
@@ -44,16 +82,49 @@ const WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "patch"])
 export function pathsInPatch(text: string): string[] {
   const out: string[] = []
   const push = (p: string) => {
-    const v = p.trim()
+    // A unified diff header can end in a timestamp: `--- a/file\t2026-01-01`.
+    const v = p.split("\t")[0].trim()
     if (!v) return
     if (v === "/dev/null") return
     if (!out.includes(v)) out.push(v)
   }
-  for (const m of text.matchAll(/^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/gm)) {
-    push(m[1])
-  }
-  for (const m of text.matchAll(/^\+\+\+\s+(?:b\/)?(.+)$/gm)) {
-    push(m[1])
+  const lines = text.split("\n")
+  // Whether a hunk header has been seen. After one, a `+++` line is added
+  // content and not the header of another file.
+  let seenHunk = false
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const marker = /^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/.exec(line)
+    if (marker) {
+      push(marker[1])
+      continue
+    }
+    if (/^@@/.test(line)) {
+      seenHunk = true
+      continue
+    }
+    // The `---` and `+++` headers of a unified diff are one pair: the
+    // first names where the change comes FROM, the second where it goes
+    // TO. They are read together so a body line that looks like a header
+    // is not mistaken for one.
+    const minus = /^---\s+(?:a\/)?(.+)$/.exec(line)
+    const next = i + 1 < lines.length ? /^\+\+\+\s+(?:b\/)?(.+)$/.exec(lines[i + 1]) : null
+    if (minus && next) {
+      // A pair is a header pair only when a hunk header follows it.
+      if (hunkFollows(lines, i + 2)) {
+        push(minus[1])
+        push(next[1])
+      }
+      // The `+++` line is consumed either way: it is the other half of the
+      // pair, and not a header of its own.
+      i++
+      continue
+    }
+    // A diff that carries only the `+++` header still names its file. It
+    // only names one while no hunk has been seen - after a hunk, a `+++`
+    // line is added content.
+    const plus = /^\+\+\+\s+(?:b\/)?(.+)$/.exec(line)
+    if (plus && !seenHunk) push(plus[1])
   }
   return out
 }
