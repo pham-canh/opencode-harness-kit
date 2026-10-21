@@ -99,8 +99,9 @@ test("doctor --json says the same thing as the human report", () => {
   const human = run(["doctor"], { dir, env }).stdout
   assert.match(human, /doctor/)
   // Whatever the human report counts, the JSON counts the same way.
-  const drift = Number(/(\d+) profile\(s\) drifted/.exec(human)?.[1] ?? 0)
-  assert.equal(j.drift, drift)
+  const m = /(\d+) profile\(s\) drifted/.exec(human)
+  assert.ok(m, `the human report does not say how many drifted: ${human}`)
+  assert.equal(j.drift, Number(m[1]))
 })
 
 test("show --json prints the resolved profile and nothing else", () => {
@@ -112,6 +113,10 @@ test("show --json prints the resolved profile and nothing else", () => {
   assert.equal(typeof p.input_cap, "number")
   assert.equal(typeof p.prune_at, "number")
   assert.ok(p.lanes && typeof p.lanes === "object")
+  // The loop below must actually run. An empty object satisfies the check
+  // above and makes the loop iterate zero times, so the test passed with no
+  // lanes at all.
+  assert.ok(Object.keys(p.lanes).length > 0, "the profile resolved no lanes")
   assert.ok(p.effort && typeof p.effort === "object")
 })
 

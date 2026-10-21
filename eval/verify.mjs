@@ -180,14 +180,31 @@ export function resolveInTarget(target, ref) {
  * @returns {boolean}
  */
 export function isExcluded(file, exclude = []) {
-  const base = file.split("/").pop()
+  // The path is NORMALISED, because the same file is written several ways:
+  // "./dist/index.js", "dist/index.js" and "src/../dist/index.js" are one
+  // file, and a check that only catches one spelling is not a check.
+  const norm = String(file ?? "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^\.\//g, "")
+  const parts = []
+  for (const seg of norm.split("/")) {
+    if (!seg || seg === ".") continue
+    if (seg === "..") {
+      parts.pop()
+      continue
+    }
+    parts.push(seg)
+  }
+  const clean = parts.join("/")
+  const base = parts[parts.length - 1] ?? ""
   return exclude.some((x) => {
     if (!x) return false
-    if (x.endsWith("/")) return file.startsWith(x)
+    if (x.endsWith("/")) return clean.startsWith(x)
     // A file NAME excludes that file wherever it is: the suite is excluded as
     // "tasks-self.json", and the citation is "eval/tasks-self.json".
-    if (file === x || base === x) return true
-    return file.startsWith(`${x}/`)
+    if (clean === x || base === x) return true
+    return clean.startsWith(`${x}/`)
   })
 }
 
@@ -352,6 +369,13 @@ export function gradeMutationMany(runDir, spec, { pristine } = {}) {
       if (JSON.stringify(data?.[key]) !== JSON.stringify(orig[key])) {
         return { ok: false, reason: `${file}: ${key} changed, and only ${spec.field} was asked for` }
       }
+    }
+    // And a key the agent ADDED is a change too. Only the keys the original
+    // had were compared, so an agent that appended the right entry and also
+    // added a field of its own was graded correct.
+    for (const key of Object.keys(data)) {
+      if (key in orig) continue
+      return { ok: false, reason: `${file}: ${key} was added, and only ${spec.field} was asked for` }
     }
     if (JSON.stringify(arr) !== JSON.stringify(origArr)) changed.push(file)
   }

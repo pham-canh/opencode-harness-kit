@@ -66,8 +66,20 @@ test("a directory that is not a git repository is its own project", () => {
 test("a subdirectory of a git repository is the repository", () => {
   // A monorepo's subdirectory is not a project of its own, and the kit's
   // files belong at the repository root.
-  const sub = join(ROOT, "src", "driver")
-  assert.equal(projectRoot(sub, ROOT), ROOT)
+  //
+  // A throwaway git repository, not THIS one: the test used the checkout,
+  // and in a source tarball, a GitHub zip, or a copied tree there is no
+  // `.git` to find - so the test failed in a checkout that was not a
+  // repository, which is not what it was about.
+  const root = mkdtempSync(join(tmpdir(), "ock-gitroot-"))
+  try {
+    execFileSync("git", ["init", "--quiet", root])
+    const sub = join(root, "packages", "app")
+    mkdirSync(sub, { recursive: true })
+    assert.equal(projectRoot(sub, root), root)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test("the plugin writes the active profile into the project, not the worktree", async () => {

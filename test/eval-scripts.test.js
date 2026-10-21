@@ -92,6 +92,14 @@ test("the measurement scripts run against a database", (t) => {
     assert.equal(prune.status, 0, `${prune.stdout}\n${prune.stderr}`)
     assert.match(prune.stdout, /PRUNER EFFECT/)
     assert.match(prune.stdout, /context before/)
+    // It MEASURED something. A measurement that reports nothing passes a
+    // header check, and this is the only test of the script the release gate
+    // runs - so a pruner that measured nothing would be caught here.
+    const removed = Number(/removed\s+([\d.]+)%/.exec(prune.stdout)?.[1] ?? NaN)
+    assert.ok(
+      Number.isFinite(removed) && removed > 0,
+      `the pruner measurement measured nothing: ${prune.stdout}`,
+    )
 
     // The install-wide one.
     const install = spawnSync(
@@ -164,6 +172,7 @@ test("the model measurement runs, and a mistyped rep count is refused", () => {
     { encoding: "utf8", timeout: 60_000 },
   )
   assert.notEqual(r.status, 0, "a mistyped rep count was accepted")
+  assert.match(`${r.stdout}${r.stderr}`, /--reps must be a whole number of at least 1/)
 })
 
 test("the model measurement refuses to measure nothing", () => {
@@ -175,4 +184,5 @@ test("the model measurement refuses to measure nothing", () => {
     { encoding: "utf8", timeout: 60_000 },
   )
   assert.notEqual(r.status, 0, "an empty measurement was accepted")
+  assert.match(`${r.stdout}${r.stderr}`, /--reps must be a whole number of at least 1/)
 })

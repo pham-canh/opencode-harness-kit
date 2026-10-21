@@ -106,11 +106,9 @@ test("a missing sqlite3 is a message, not a stack trace", () => {
   )
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
   rmSync(dir, { recursive: true, force: true })
-  if (r.status === 0) {
-    // sqlite3 was found anyway (an absolute path in the environment), so
-    // there is nothing to assert.
-    return
-  }
+  // Not "if it exited zero, return": that escape hatch made the test pass
+  // with no assertion at all on a machine where the script succeeded.
+  assert.notEqual(r.status, 0, "the script must fail when it cannot read a database")
   assert.doesNotMatch(out, /ENOENT/)
   assert.match(out, /sqlite3/)
 })
