@@ -23,7 +23,11 @@ const CLI = join(REPO, "bin", "oc-harness.mjs")
 function run(args, opts = {}) {
   const dir = opts.dir ?? mkdtemp("ock-json-")
   const r = spawnSync("node", [CLI, ...args], {
-    env: { OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: dir, ...(opts.env ?? {}) },
+    // The whole environment, plus the two overrides. An env without PATH
+    // means the child cannot find `node` on a runner, where node is not in
+    // the default path - and the test failed there with "spawnSync node
+    // ENOENT", which says nothing about the code it was testing.
+    env: { ...process.env, OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: dir, ...(opts.env ?? {}) },
     encoding: "utf8",
     cwd: opts.cwd ?? dir,
   })
