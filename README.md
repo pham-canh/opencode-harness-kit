@@ -830,7 +830,7 @@ short never grows the history far enough for pruning to matter. So there is
 a second suite with one task that touches twelve files and asks a question
 about the code that consumes what it changed — and on it, with the pruner's
 rule fixed (see below), the kit's arm makes the same number of tool calls
-as the arm without the kit and takes 1.2x the wall time.
+as the arm without the kit (47 against 46) and takes 1.2x the wall time.
 
 **The pruner used to make the agent re-read.** The first run of that task
 said the kit was much worse: 86 tool calls against 43 and 282,000 input
