@@ -777,15 +777,16 @@ so anyone can repeat it:
 
 | metric (median) | kit on | kit off |
 |---|---|---|
-| **correct** | **55/60** | **54/60** |
-| tool calls | 11 | 7 |
-| input tokens | 49,995 | 10,578 |
-| final context | 39,860 | 12,576 |
-| wall seconds | 51.4 | 25.1 |
+| **correct** | **54/60** | **55/60** |
+| tool calls | 12.5 | 8 |
+| input tokens | 56,205 | 10,540 |
+| final context | 39,928 | 12,718 |
+| wall seconds | 43 | 21 |
 | paths written outside the target | 0 | 0 |
 
-**On a task that fits in one read, the kit is a cost.** It spends nearly five
-times the input tokens and takes twice as long, and the answers are a tie.
+**On a task that fits in one read, the kit is a cost.** It spends over five
+times the input tokens and takes twice as long, and the answers are a tie -
+54 against 55, and a second run of the same 120 runs gave 55 against 54.
 The two edit tasks are a tie at 10/10, and the guard stopped no writes in
 either arm.
 
@@ -794,7 +795,7 @@ clearly worse - and that was the grader's fault: it could not read a
 citation written as `**File:** x` on one line and `**Line:** 105` on the
 next, which is the shape some of the kit's answers took. Re-scoring the
 same 120 runs with the fixed grader gives 34/40 against 30/40 on the lookup
-tasks. The full account is in [eval/RESULTS.md](eval/RESULTS.md).
+tasks - the kit ahead, where the old grader had it behind. The full account is in [eval/RESULTS.md](eval/RESULTS.md).
 
 What the kit buys is in the two places that suite cannot see: **long
 sessions**, where the pruner removes 80.5% of the context, and **process** -
