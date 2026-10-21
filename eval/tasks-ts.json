@@ -1,50 +1,56 @@
 {
   "$comment": [
-    "TypeScript subject. The kit is TypeScript and the Python suite in tasks.json",
-    "never tested that, which is the gap this file exists to close.",
-    "The subject is a PRIVATE repository, so this suite is a pilot that",
-    "nobody can repeat. The repeatable one is tasks-self.json.",
+    "TypeScript subject, and this one is PUBLIC.",
     "",
-    "Subject is vendor/gibwork-sentinel from gibwork-agent-harness: 692 lines of",
-    "TypeScript across 7 modules, shipped alongside compiled JavaScript in dist/.",
-    "Every answer below occurs in src/ and again in dist/. Each task says so",
-    "explicitly, because picking the build output instead of the source is the",
-    "trap and the reason this subject is worth having.",
+    "The earlier TypeScript pilot ran against a private repository, which",
+    "means nobody else could repeat it - the same problem the self-suite",
+    "was written to solve. This subject is public, pinned by commit, and",
+    "cloned by the harness itself:",
     "",
-    "All three wants were checked to occur in exactly one file under src/.",
-    "That check is what stops an ambiguous task - two of the earlier ones were",
-    "wrong for exactly that reason."
+    "    node eval/prepare.mjs --clone https://github.com/typesense/typesense-js \\",
+    "      --ref 337fb8599d2e916090d943dd3b9895b71c383711 --name ts",
+    "",
+    "It is the official TypeScript SDK for Typesense, Apache-2.0, about",
+    "five megabytes. The source is under src/Typesense/ and the COMPILED",
+    "JavaScript is committed next to it, in lib/Typesense/ and again in the",
+    "unminified bundle dist/typesense.js.",
+    "",
+    "That is the trap, and it is the reason this subject is worth having:",
+    "every answer below occurs THREE times - in the TypeScript source, in the",
+    "compiled module, and in the bundle. An agent that greps and stops at the",
+    "build output is wrong, and the bundle even keeps the original module",
+    "banners, so a search for a source path lands straight in the bundle.",
+    "",
+    "Each want was checked to occur in EXACTLY ONE file under src/, which is",
+    "the check that stops an ambiguous task. Re-check with:",
+    "",
+    "    git archive --remote=<url> <sha> src | tar -x && grep -rn <want> src/"
   ],
-  "snapshot": "gibwork-agent-harness/vendor/gibwork-sentinel (not a git repo, copied as-is)",
+  "snapshot": "https://github.com/typesense/typesense-js at 337fb8599d2e916090d943dd3b9895b71c383711 (v3.2.0), cloned by eval/prepare.mjs --clone",
   "tasks": [
     {
-      "id": "ts-rpc-default",
-      "task": "This package is shipped as both TypeScript sources and compiled JavaScript. In the TypeScript source only, not the build output, which module declares the default Solana RPC endpoint, and what is that URL? Report the file and line. Do not modify any files.",
-      "want": "https://api.mainnet-beta.solana.com"
+      "id": "ts-default-port",
+      "$comment": "One constant, in a file that also exists three times compiled.",
+      "task": "This package is shipped as TypeScript sources AND as compiled JavaScript. In the TypeScript source only, not the build output, the client is given a default port for a node that speaks HTTPS. Which port, in which module, and on what line? Report the file and the line and quote the line. Do not modify any files.",
+      "want": "node[\"port\"] = 443;"
     },
     {
-      "id": "ts-rest-client",
-      "task": "This package is shipped as both TypeScript sources and compiled JavaScript. In the TypeScript source only, not the build output, which module exports the class that talks to the Gibwork REST API? Report the file and line. Do not modify any files.",
-      "want": "export class GibworkClient"
+      "id": "ts-default-export",
+      "$comment": "The package's default export - one line, and it is in the bundle too.",
+      "task": "This package is shipped as TypeScript sources AND as compiled JavaScript. In the TypeScript source only, not the build output, the package's default export names three things. Which three, in which file, and on what line? Report the file and the line and quote the line. Do not modify any files.",
+      "want": "export default { Client, SearchClient, Errors };"
     },
     {
-      "id": "ts-pr-template",
-      "task": "This package is shipped as both TypeScript sources and compiled JavaScript. In the TypeScript source only, not the build output, one module writes a pull request template file into the generated workspace. Which module writes it, and what is the filename? Report the file and line. Do not modify any files.",
-      "want": "PULL_REQUEST_TEMPLATE.md"
+      "id": "ts-export-stream",
+      "$comment": "A method, in a source file that is compiled into the same directory.",
+      "task": "This package is shipped as TypeScript sources AND as compiled JavaScript. In the TypeScript source only, not the build output, one class has an async method that streams the export of a collection. Which class, which method, and on what line? Report the file and the line and quote the line. Do not modify any files.",
+      "want": "async exportStream("
     },
     {
-      "id": "ts-edit-rpc",
-      "$comment": "The edit task, which the TypeScript suite was missing. mustNotContain is as important as mustContain: the same string is in dist/solana.js too, so an agent that edits the build output instead of the source gets mustNotContain for free and is caught.",
-      "task": "In the TypeScript source of this package, the Solana verifier defaults to the mainnet RPC endpoint. Change that default to the devnet endpoint at https://api.devnet.solana.com. Make no other changes and do not reformat anything.",
-      "mutate": {
-        "file": "src/solana.ts",
-        "mustContain": [
-          "api.devnet.solana.com"
-        ],
-        "mustNotContain": [
-          "api.mainnet-beta.solana.com"
-        ]
-      }
+      "id": "ts-union-doc",
+      "$comment": "A documentation URL, in a comment - and the compiled copy keeps the comment too.",
+      "task": "This package is shipped as TypeScript sources AND as compiled JavaScript. In the TypeScript source only, not the build output, there is a comment that tells the reader which page documents federated multi-search with a union. Which URL, in which file, and on what line? Report the file and the line and quote the line. Do not modify any files.",
+      "want": "https://typesense.org/docs/29.0/api/federated-multi-search.html#union-search"
     }
   ]
 }

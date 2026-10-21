@@ -29,14 +29,23 @@ const flag = (...n) => {
   return i >= 0 ? args[i + 1] : undefined
 }
 
-const repo = flag("--repo")
+let repo = flag("--repo")
 const ref = flag("--ref") ?? "HEAD"
+// A PUBLIC repository, cloned at a pinned commit.
+//
+// The subject of a benchmark that nobody can fetch is a result nobody can
+// check. The pilot that used a private repository had that problem, and the
+// fix is one command: give the suite a URL and a SHA, and the harness does
+// the clone.
+const cloneUrl = flag("--clone")
 const from = flag("--from")
 const wantJson = args.includes("--json")
 const name = flag("--name")
 
-if (!repo && !from) {
-  console.error("usage: node eval/prepare.mjs (--repo <path> [--ref <sha>] | --from <path>) [--name <n>] [--json]")
+if (!repo && !from && !cloneUrl) {
+  console.error(
+    "usage: node eval/prepare.mjs (--repo <path> [--ref <sha>] | --clone <url> [--ref <sha>] | --from <path>) [--name <n>] [--json]",
+  )
   process.exit(1)
 }
 if (repo && from) {
@@ -110,7 +119,7 @@ function safeLabel(raw) {
   return raw
 }
 
-const requested = name ?? (from ? basename(from) : `${basename(repo ?? "repo")}-${ref}`)
+const requested = name ?? (from ? basename(from) : `${basename(repo ?? cloneUrl ?? "repo")}-${ref}`)
 const label = safeLabel(requested)
 if (!label) {
   console.error(`--name must be a single directory name, not a path: ${requested}`)
@@ -130,6 +139,27 @@ mkdirSync(out, { recursive: true })
 
 let source
 let pinned
+if (cloneUrl) {
+  // A shallow fetch of the one commit. A full clone of a public repository
+  // is a lot of megabytes to throw away, and the benchmark needs one tree.
+  const cloneDir = join(scratch, `.clone-${label}`)
+  rmSync(cloneDir, { recursive: true, force: true })
+  mkdirSync(cloneDir, { recursive: true })
+  const git = (args) =>
+    execFileSync("git", ["-C", cloneDir, ...args], { encoding: "utf8" })
+  try {
+    git(["init", "--quiet"])
+    git(["remote", "add", "origin", cloneUrl])
+    git(["fetch", "--depth", "1", "--quiet", "origin", ref])
+    git(["checkout", "--quiet", "FETCH_HEAD"])
+  } catch (err) {
+    console.error(
+      `cannot fetch ${ref} from ${cloneUrl}: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    process.exit(1)
+  }
+  repo = cloneDir
+}
 if (from) {
   if (!existsSync(from)) {
     console.error(`--from path not found: ${from}`)
