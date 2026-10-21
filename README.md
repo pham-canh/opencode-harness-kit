@@ -814,11 +814,32 @@ next, which is the shape some of the kit's answers took. Re-scoring the
 same 120 runs with the fixed grader gives 34/40 against 30/40 on the lookup
 tasks - the kit ahead, where the old grader had it behind. The full account is in [eval/RESULTS.md](eval/RESULTS.md).
 
-What the kit buys is in the two places that suite cannot see: **long
-sessions**, where the pruner removes 65-80% of the context depending on the
-sessions it is measured over, and **process** -
-a reviewer that reviews and does not edit, a verify that runs the checks and
-does not fix them, a publish decision that belongs to a human.
+**On a long task the pruner is where the kit pays.** The suite above is
+made of two-line questions answered in one or two reads, and a session that
+short never grows the history far enough for pruning to matter. So there is
+a second suite with one task that touches twelve files and asks a question
+about the code that consumes what it changed — and on it, with the pruner's
+rule fixed (see below), the kit's arm makes the same number of tool calls
+as the arm without the kit and takes 1.2x the wall time.
+
+**The pruner used to make the agent re-read.** The first run of that task
+said the kit was much worse: 86 tool calls against 43 and 282,000 input
+tokens against 51,000, for the same final context. Seventeen of the reads
+were re-reads. The pruner keeps the last six tool outputs and stubs
+everything older — a window on *recency* — so after six more calls the only
+copy of a file the agent had read was gone, and the agent read it again. The
+newest copy of each **distinct** output now survives however old it is, and
+only the repeats are stubbed. Same subject, same task, same model: **-69%
+input tokens and -60% wall time**, at the cost of a bigger context.
+
+**The process is measured too, and the result is not flattering.** The kit
+claims a reviewer that reviews and does not edit. A task that invites the
+agent to fix what it finds, graded on the finding being cited AND the file
+being untouched, gives **2/2 against 2/2**: the kit's reviewer lane and the
+default agent behaved the same. The lane is not what made them behave, and
+it is soft — a task that says "fix it" overrides it. Both are in
+[eval/RESULTS.md](eval/RESULTS.md), because a claim that is not measured is
+a claim.
 
 Whether it is worth it depends on whether the work is long. A repository of
 one-file lookups should not install this. The full table is in
