@@ -358,9 +358,30 @@ export function gradeMutationMany(runDir, spec, { pristine } = {}) {
   return { ok: true, changed }
 }
 
-export function gradeMutation(runDir, spec) {
+export function gradeMutation(runDir, spec, { pristine } = /** @type {{ pristine?: string }} */ ({})) {
   const abs = resolveInTarget(runDir, spec.file)
   if (!abs) return { ok: false, reason: `${spec.file} missing from the run copy` }
+  // The files that had to stay as they were. A review that fixes what it
+  // reviews is not a review, and a verify that repairs what it checks is not
+  // a check - so the assertion is that the file is untouched, byte for byte.
+  for (const file of spec.mustNotChange ?? []) {
+    const now = resolveInTarget(runDir, file)
+    if (!now) return { ok: false, reason: `${file} missing from the run copy` }
+    if (!pristine) continue
+    const orig = resolveInTarget(pristine, file)
+    if (!orig) return { ok: false, reason: `${file} missing from the pristine subject` }
+    let a
+    let b
+    try {
+      a = readFileSync(now, "utf8")
+      b = readFileSync(orig, "utf8")
+    } catch (e) {
+      return { ok: false, reason: `${file} unreadable: ${errorMessage(e)}` }
+    }
+    if (a !== b) {
+      return { ok: false, reason: `${file} was changed, and it was not one of the files to change` }
+    }
+  }
   let body
   try {
     body = readFileSync(abs, "utf8")
