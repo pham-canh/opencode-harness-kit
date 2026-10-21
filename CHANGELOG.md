@@ -12,6 +12,66 @@ is not happening.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **A long task for the A/B**, and a grader that can check one. The short
+  suite is two-line questions answered in one or two reads, and on those the
+  kit is a cost - over five times the input tokens and a tie on correctness.
+  That is the wrong task for the kit's central claim, which is that the
+  pruner pays for itself on a LONG session: a short session never grows the
+  history far enough for pruning to matter. The new task touches twelve files
+  and asks a question about the code that consumes what it changed, so the
+  conversation is long because the work is long.
+
+  Grading it needed a new kind of check. A grader that looks at one file
+  cannot say whether the other eleven were touched, so the check is a
+  COMPARISON with the pristine subject: every file in the run copy must be
+  the original with exactly one entry appended, and the file for the model
+  being appended must be untouched - a model cannot fall back to itself.
+
+- **The process, measured.** The kit claims a reviewer that reviews and does
+  not edit. A task that invites the agent to fix what it finds, graded on
+  the finding being cited AND the file being untouched, gives 2/2 against
+  2/2: the kit's reviewer lane and the default agent behaved the same. The
+  lane is not what made them behave, and it is soft - a task that says "fix
+  it" overrides it. Both are written down, because a claim that is not
+  measured is a claim.
+
+- **A public TypeScript subject.** The pilot ran against a private
+  repository, which means nobody else could repeat it. The subject is now
+  `typesense/typesense-js` at a pinned commit: Apache-2.0, TypeScript source
+  under `src/Typesense/` and the COMPILED JavaScript committed next to it in
+  `lib/` and again in the unminified bundle. Every answer occurs three times,
+  and the bundle keeps the original module banners, so a search for a source
+  path lands in the build output. The harness clones it itself:
+  `eval/prepare.mjs --clone <url> --ref <sha>`.
+
+### Changed
+
+- **The pruner keeps the newest copy of each DISTINCT output.** It used to
+  keep the last six tool outputs and stub everything older, which is a window
+  on RECENCY: after six more calls, the only copy of a file the agent had
+  read was gone, and the agent read it again. The long task measured it -
+  seventeen re-reads, five times the input tokens, and the same final
+  context. The newest copy of each distinct output now survives however old
+  it is, and only the repeats are stubbed. Same subject, same task, same
+  model: **-69% input tokens and -60% wall time**, at the cost of a bigger
+  context. It is a setting, `prune.keepDistinctOutputs`, so the old
+  behaviour is one profile edit away.
+
+### Fixed
+
+- **The nightly A/B failed every night** because the repository has no
+  provider secret. The job is skipped when the key is missing, because a
+  schedule that is always red is a schedule nobody reads.
+
+- **`oc-harness uninstall` and the `restore` command** now keep the dated
+  backups in one place, and the prompt that asks "overwrite the config?"
+  says where the backup goes. It said ".bak", and the only thing that wrote
+  a `.bak` was `restore`.
+
 ## [0.4.6] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.4.6 && git push origin main

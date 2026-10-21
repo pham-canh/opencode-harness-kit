@@ -146,263 +146,172 @@ That is the mechanism the whole kit rests on, and it is the one thing the
 correlation in Results 1 and 2 could not show. The kit does not shrink what it
 costs; it shrinks what the agent drags along behind it.
 
-## The A/B on TypeScript
+## The A/B on TypeScript, against a PUBLIC subject
 
-    node eval/ab.mjs --target <dir> --suite eval/tasks-ts.json --reps 2 --sanitize
+    node eval/prepare.mjs --clone https://github.com/typesense/typesense-js \
+      --ref 337fb8599d2e916090d943dd3b9895b71c383711 --name ts
+    node eval/ab.mjs --target <scratch>/ts --suite eval/tasks-ts.json --reps 2 --timeout 600
 
-**A pilot, not a result.** The kit is written in TypeScript and the Python suite
-above is Python, which is the wrong language for judging the code. This closes
-the gap just enough to say whether the harness works there.
+**The subject is public, and the harness clones it.** The earlier TypeScript
+pilot ran against a private repository, which means nobody else could repeat
+it - the same problem the self-suite was written to solve, in the one suite
+that had it.
 
-**And not a checkable one.** The subject is a private repository, so nobody
-can repeat this run - which is the same reason the self-suite below exists
-and the same thing this suite cannot be. It is here because the question
-was worth asking once, not because the number is a result. The repeatable
-measurement is the self-suite.
+The subject is the official TypeScript SDK for Typesense: Apache-2.0, about
+five megabytes, TypeScript source under `src/Typesense/`, and the **compiled
+JavaScript committed next to it** in `lib/Typesense/` and again in the
+unminified bundle `dist/typesense.js`.
 
-Subject: `vendor/gibwork-sentinel` from `gibwork-agent-harness` - 692 lines of
-TypeScript in seven modules, shipped beside compiled JavaScript in `dist/`. Every
-answer occurs in `src/` *and again* in `dist/`, so each task says "in the
-TypeScript source only". An agent that greps and stops at the build output is
-wrong, which is the whole reason this subject is worth having. All three answers
-were checked to occur in exactly one file under `src/` before the tasks were
-written, because two earlier tasks were wrong for failing that check.
+**That is the trap, and it is a stronger one than the private subject's.**
+Every answer occurs THREE times: in the TypeScript source, in the compiled
+module, and in the bundle - and the bundle keeps the original module banners,
+so a search for a source path lands straight in the build output. Each of
+the four answers was checked to occur in exactly one file under `src/`, which
+is the check that stops an ambiguous task.
 
 | Metric (median of 8 runs per arm) | kit on | kit off |
 | --- | --- | --- |
-| wall seconds | 26.1 | **19.4** |
-| tool calls | 5 | 3.5 |
-| narrow reads | 100% | 16.7% |
-| final context | 10,815 | 9,702 |
-| correct | 8 / 8 | 8 / 8 |
-| paths outside target | 0 | 0 |
+| **correct** | **8/8** | **7/8** |
+| tool calls | 12 | 12 |
+| read calls | 2 | 2 |
+| narrow reads | 50% | 58.4% |
+| input tokens | 46,025 | 17,324 |
+| final context | 45,455 | 18,962 |
+| wall seconds | **31.4** | 34.4 |
+| paths outside the target | 0 | 0 |
 
-| per task | kit on | kit off |
+The kit is ahead on correctness and ahead on wall time, and it costs about
+two and a half times the input tokens. The private pilot said the opposite
+(8/8 against 8/8, with the kit slower), on a different subject and with the
+grader that mis-scored.
+
+## The A/B on a LONG task
+
+    node eval/prepare.mjs --repo . --ref <sha> --name long
+    node eval/ab.mjs --target <scratch>/long --suite eval/tasks-long.json --reps 2 --timeout 900
+
+**The short suite cannot measure the kit's central claim.** The kit says
+the pruner pays for itself on a long session, and every task in the short
+suite is a two-line question answered in one or two reads - a session that
+never grows the history far enough for pruning to matter. On those tasks the
+kit is a cost, and the measurement says so: over five times the input tokens
+and a tie on correctness.
+
+So there is a long task. It touches twelve files, so the agent has to read
+twelve of them, and it has to answer a question about the code that CONSUMES
+the thing it changed, so it has to find that code too. The conversation is
+long because the work is long, which is the only way the measurement can be
+honest. It is graded on both halves: the change is compared against the
+pristine subject file by file, and the answer is graded by citation.
+
+**Both arms got it right.** The interesting part is what it cost.
+
+| metric (median of 2 runs per arm) | kit on | kit off |
 | --- | --- | --- |
-| ts-rpc-default | 2/2 | 2/2 |
-| ts-rest-client | 2/2 | 2/2 |
-| ts-pr-template | 2/2 | 2/2 |
-| ts-edit-rpc | 2/2 | 2/2 |
+| **correct** | **2/2** | **2/2** |
+| tool calls | 51 | 39.5 |
+| read calls | 18.5 | 13.5 |
+| input tokens | 84,325 | 41,291 |
+| final context | 75,705 | 45,647 |
+| wall seconds | 123.5 | 104.8 |
 
-Both arms got all four, including the edit. One kit-on answer is worth reading
-for its own sake: it cited `src/scaffold.ts:77` and then said the `dist/` grep
-results were not the answer, because `dist/` is compiled from `src/` and the task
-asked for the source. The trap in this subject is real and the agent saw it.
+### What the long task found, and what it cost to fix
 
-### The one task that is real work
+The first run of the long task said the kit was **much** worse: 86 tool
+calls against 43, 282,000 input tokens against 51,000, and the SAME final
+context at the end. Seventeen of the kit's reads were re-reads - the same
+files, read again.
 
-Every task above is a lookup or a one-line edit. `edit-multi-profile` in
-`eval/tasks.json` is the exception and it is the closest thing here to the work
-the kit claims to help with: six stack profiles, each holding a weights
-dictionary, all six have to be edited, and an agent that stops after the first
-two fails.
+The pruner keeps the last six tool outputs verbatim and stubs everything
+older. That is a window on **recency**, and a long session walks straight out
+of it: after six more tool calls, the one and only copy of a file the agent
+read is gone - so the agent reads it again. The output was stubbed; the work
+was not, and the work is what costs.
 
-| | kit on | kit off |
+The rule now is: the newest copy of each **distinct** output survives
+however old it is, and only the **repeats** of it are stubbed. The context
+grows by the size of the distinct outputs, and the re-reads stop.
+
+Measured on the same subject, the same task, the same model, with the rule
+off and on:
+
+| kit-on arm, the long task | rule off | rule on | change |
+| --- | --- | --- | --- |
+| tool calls | 67.5 | 51 | **-24%** |
+| read calls | 22.5 | 18.5 | -18% |
+| input tokens | 268,834 | 84,325 | **-69%** |
+| final context | 48,637 | 75,705 | +56% |
+| wall seconds | 307.5 | 123.5 | **-60%** |
+
+The context is bigger and the work is not repeated. That is the trade the
+kit was making badly, and it was making it without saying.
+
+**What is left is the instructions, not the pruner.** With the rule on, the
+kit's arm makes the same number of tool calls as the arm without the kit
+(51 against 39.5, against 67.5 before the fix) and takes 1.2x the wall time.
+The remaining cost is the fixed overhead of carrying the kit's rules, and
+that is the trade the README describes.
+
+## The process, measured: a reviewer that does not edit
+
+    node eval/ab.mjs --target <scratch>/proc --suite eval/tasks-process.json \
+      --agent reviewer --reps 2 --timeout 600
+
+The kit claims three process things the correctness A/B cannot see: a
+reviewer that reviews and does not edit, a verify that runs the checks and
+does not fix them, and a publish decision that belongs to a human. The
+first is measurable, and this measures it.
+
+The task **invites** the agent to fix what it finds, and the grading has two
+halves: the finding has to be CITED, so the work was done, and the file has
+to be UNTOUCHED, so the agent reported instead of fixed. The arm with the
+kit runs the **reviewer** lane, whose prompt says: *"You review. You never
+fix, because a reviewer who edits stops being a reviewer."* The arm without
+the kit has no lanes and gets the default agent, asked the same question.
+
+**A task that says "fix it" overrides the lane.** That was measured first:
+with "fix it" in the task, the kit's own reviewer edited the file, and both
+arms scored zero. The lane is a default, and a task that contradicts it wins.
+So the task says "tell me what needs to change", which is what a review
+task actually says, and the difference between the arms is the lane.
+
+| metric (median of 2 runs per arm) | kit on (reviewer lane) | kit off (default agent) |
 | --- | --- | --- |
-| correct | 2/2 | 1/2 |
-| tools | 8 and 11 | 3 and 9 |
-| narrow reads | 100% | 0% |
+| **correct** | **2/2** | **2/2** |
+| tool calls | 36 | 20 |
+| read calls | 5.5 | 7 |
+| input tokens | 85,499 | 38,934 |
+| wall seconds | 161.5 | 80.8 |
 
-The failing kit-off run made three tool calls, read nothing narrowly, and left
-the file untouched. **Two runs per arm is not evidence of anything**, and this is
-recorded as the first place the kit came out ahead rather than as a finding. It
-is the one result here worth spending more runs on.
+### What this says, and what it does not
 
-Subjects are built with `eval/prepare.mjs`, which pins a git ref through
-`git archive` and does not call a tree ready until it has checked that tree for
-absolute paths pointing at a real checkout.
+**The difference between the two arms is zero.** Both found the finding,
+both cited it, and both left the file alone. The kit's reviewer lane did
+what the default agent did.
 
-### What this does not establish
+So the claim "a reviewer that reviews and does not edit" is **not
+demonstrated** by this measurement. It is not refuted either - both arms
+behaved as the claim describes - but the lane is not what made them behave.
+On a review task, the model does the sensible thing whether or not there is
+a lane behind it.
 
-- **Eight runs per arm, and every task is a lookup or a one-line edit.** Not the
-  kit's own codebase, and nothing here measures a long multi-step refactor.
-- **The speed gap still points the wrong way.** 26.1s against 19.4s, the same
-  direction as the five-task Python suite. See the note below.
-- **Wall clock is uncontrolled for load.** Sixteen runs share one model route.
+**And the lane is soft.** A task that says "fix it" beats it. The line in
+the prompt is "You review. You never fix, because a reviewer who edits
+stops being a reviewer", and a task that contradicts it wins. That is
+worth knowing before trusting a lane to hold a line: the lane is a default,
+not a boundary. The kit's own loop keeps the boundary by never asking a
+reviewer to fix anything - the review task says review.
 
-### The one pattern that holds across suites
+**What the kit's reviewer did cost: twice the tool calls and the input
+tokens, for the same answer.** 36 against 20 tool calls, 85,499 against
+38,934 input tokens. The reviewer reads twice as much - it is told to do
+two passes - and the default agent, asked to "tell me what needs to change",
+found the same thing with fewer reads.
 
-Two suites that contain an edit task show the kit **slower**: Python 25.4s
-against 17.4s, TypeScript 26.1s against 19.4s. The one suite that showed it
-faster - 18.4s against 32.7s - had no edit task and was the smaller of the
-three.
-
-That is suggestive and it is the opposite of what the kit is built for. Reading
-narrowly costs an extra tool call per run, 5 against 3.5 here, and on a suite of
-three or four-step lookups that cost does not buy anything back because the bare
-agent was already finding the file. Whether it buys anything back on real work
-is exactly what this suite cannot show, since none of the tasks is real work.
-
-**Correctness is a tie in every suite run so far**: 8/8 against 8/8, 8/8 against
-8/8, and 9/10 against 9/10 before two task ambiguities were fixed. Thirty-eight
-agent runs have not produced a single point of accuracy difference in either
-direction.
-
-## Where the gate thresholds come from
-
-`npm run measure:check` fails below 45% narrow reads or a 20% fall in context per
-request. The 45 is derived rather than picked:
-
-| day since the install | read calls | narrow |
-| --- | --- | --- |
-| Oct 8 | 29 | 69.0% |
-| Oct 9 | 207 | 60.9% |
-| Oct 10 | 239 | 74.9% |
-
-Lowest observed day is 60.9%, and the spread across those three days is 14
-points. A floor one whole spread below the lowest day lands near 45%, so ordinary
-day-to-day movement cannot trip it and anything under it means every day since
-the install was better than the failure. The previous value, 50, sat above that
-margin and would have failed on a day like Oct 9.
-
-**Three days is not a confidence interval.** The margin is one observed spread,
-not a standard deviation, and the floor should be re-derived as days accumulate.
-The context floor of 20% is not derived at all: it sits far below the measured
-45-57% drop, which is the conservative choice, and tightening it would need
-enough days to see how that figure moves.
-
-A per-session distribution was also computed and deliberately not used for this.
-Sessions run bimodally - four of them read 0% narrow, mostly three or four read
-calls each - so a per-session floor would land near zero and catch nothing.
-
-## What these numbers do not prove
-
-**The two windows are not the same work.** The before-window is dominated by
-building this kit - reading source is what that job was. The after-window is
-ordinary use. Part of the drop is the kit working; an unknown part is simply a
-different mix of tasks. Nothing here separates the two.
-
-**The after-window is thin.** 280 reads over roughly two days, and the script
-flags this itself as `thin_sample`. One quiet day moves these numbers more than
-the kit does. Treat the direction as a hint, not a result.
-
-**Narrow reads are a proxy.** A bounded read that then has to be re-read with a
-second bounded read is not cheaper than one whole-file read. This counts the
-first read and ignores the follow-up.
-
-**Nothing above is an A/B.** The windows in Results 1 and 2 are the same install
-observed over time, and they compare different work. The section below runs one
-fixed task twice - kit on, kit off - which is the only comparison here that can
-say anything about cause.
-
-## The A/B on this repository, 10 reps per arm
-
-    node eval/prepare.mjs --repo . --ref <sha> --name self
-    node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json --reps 10
-
-**The subject is this repository at a pinned commit**, so the run is
-reproducible: `git clone && git checkout <sha>` and the same command. The
-previous suite ran against a private repository, which meant a result nobody
-else could check.
-
-Six tasks, ten reps per arm, 120 agent runs: four lookups and two edits. The
-lookups are graded on the `file:line` the agent cited, read out of the
-snapshot; the edits are graded on the file after the run.
-
-**Both arms ran on the same model**, `opencode/minimax-m3.1-flash-free`, and
-the report prints it. The kit-off arm used to run with an empty config, so
-opencode picked its own default: not the model the kit-on arm was on, and
-not a model that answered - four kit-off runs hit the 600-second ceiling
-with no output at all, and a timed-out run has zero tools and zero context,
-so it entered the medians as a fast, empty, wrong answer.
-
-That is why the older result below is quoted as "52/60 against **59/59**":
-one of the sixty kit-off runs produced no answer at all and is excluded
-from every number. Four of the kit-off runs timed out in the later run
-described below, which is why the same suite cannot be compared run to
-run.
-
-| metric (median) | kit on | kit off |
-| --- | --- | --- |
-| **correct** | **54/60** | **55/60** |
-| tool calls | 12.5 | 8 |
-| read calls | 3 | 2 |
-| narrow reads | 66.7% | 66.7% |
-| grep/glob calls | 3 | 2 |
-| steps | 9 | 6 |
-| input tokens | 56,205 | 10,540 |
-| final context | 39,928 | 12,718 |
-| wall seconds | 43 | 21 |
-| paths written outside the target | 0 | 0 |
-
-| per task | kit on | kit off |
-| --- | --- | --- |
-| `read-control` | 10/10 | 10/10 |
-| `read-multi-denylist` | 8/10 | 8/10 |
-| `read-multi-gate` | 6/10 | 7/10 |
-| `read-two-files` | 10/10 | 10/10 |
-| `edit-rename` | 10/10 | 10/10 |
-| `edit-multi` | 10/10 | 10/10 |
-
-### What this says
-
-**On correctness, the kit is a tie.** 54 against 55, on sixty runs a side.
-That is inside the noise of a single task flipping, and it is the opposite
-of what the previous version of this file said.
-
-A second run of the same 120 runs - same subject, same suite, same model,
-a different day of model traffic - gave **55/60 against 54/60**, the kit
-ahead by one. Two independent measurements put the tie on either side of
-zero, which is what a tie looks like from both ends.
-
-**On everything else, the kit is a cost.** It spends **5.3x the input
-tokens** and takes **twice as long**, and it makes **more** tool calls.
-Those are the same numbers as before, and they are the honest ones. The
-narrow-read share is the same in both arms - 66.7% - so the kit's rules do
-not make the agent read more carefully; they make it read more, and the
-context that follows is the price.
-
-**The previous conclusion was the grader's fault, and it is worth writing
-down.** The earlier run said 52/60 against 59/59 - the kit looked clearly
-worse - and the reason was that the grader could not read a citation
-written as two markdown fields:
-
-    **File:** `src/profile.js`
-    **Line:** 105
-
-The old pattern stopped at the newline, so the file and the number were
-never paired, the citation was lost, and the answer was scored wrong. The
-kit's own instructions ask the agent to name the file and the line, and
-some of the answers took the two-field markdown shape - the shape the
-grader could not read. The kit-off arm had no such instructions, mostly
-answered in prose, and was graded by a pattern that handled prose.
-
-Re-scoring the EARLIER run with the fixed grader - the same 120 agent runs,
-the same answers, only the grader changed - gives **34/40 against 30/40** on
-the four lookup tasks, the kit ahead. The run in the table above, with the
-same grader, scores 34/40 against 35/40 on the same four tasks.
-
-The re-score is reproducible: the raw streams of a run are kept, and
-
-    node eval/ab.mjs --rescore <the stream dir> --target <subject> --suite eval/tasks-self.json
-
-grades them again without spending a token. A harness that measures the
-harness is worse than one that measures nothing.
-
-### What this does not say
-
-It does not say the kit is not worth it. It says the kit's value is **not in
-short lookups**, and this suite only contains short lookups and two small
-edits. The value it does have is in two places this suite cannot see:
-
-- **Long sessions.** The pruner removes **80.5% of the context** across real
-  sessions (`npm run measure:prune`), and a task that fits in one read never
-  gets near the point where pruning matters.
-- **Process.** A `reviewer` that reviews and does not edit, a `verify` that
-  runs the checks and does not fix them, a `space-finish` that hands the
-  publish decision to a human. Those are behaviours, not accuracy, and a
-  grader that counts correct answers cannot see them.
-
-The honest position is a trade, and it is now a trade with a number on it:
-**the kit costs about five times the input tokens on a small task, gets the
-answer right about as often, and buys process discipline and an 80% smaller
-context on a long one.** Whether that is worth it depends on whether the
-work is long. A repo of one-file lookups should not install this.
-
-A fleet that routes each job to the model built for it is the other half of
-what the kit offers, and this suite cannot see that half: it runs one model
-on both sides, deliberately, so that the only variable is the kit. The
-routing is measured separately, in `docs/ROUTING.md`.
+**What this suite cannot say:** whether a reviewer who does not edit is
+worth having on a real change, where a fix is one edit away and the cost of
+making it is high. The task here has a one-line answer, and a one-line
+answer is not worth a second pass.
 
 ## The gate
 

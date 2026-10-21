@@ -342,9 +342,19 @@ does; if it does not, `prune.ts` is doing the work anyway.
 
 `prune.ts` keeps pointers rather than bodies. Full tool output is not deleted
 from the session record, and OpenCode already writes over-cap output to its own
-truncation directory, so re-reading is possible. But "re-run the command to see
-it again" is more expensive than "scroll up". The stub is one line precisely so
-an agent can decide whether it is worth it, and the stub says so.
+truncation directory, so re-reading is possible. The stub is one line precisely
+so an agent can decide whether it is worth it, and the stub says so.
+
+**But the newest copy of each DISTINCT output survives.** The window on
+RECENT calls was a window on recency, and a long session walks out of it: after
+six more tool calls, the only copy of a file the agent had read was gone, and
+the agent read it again. The long-task A/B measured seventeen re-reads, five
+times the input tokens and the same final context. The rule now keeps the
+newest copy of each distinct output however old it is, and stubs only the
+REPEATS of it. The context grows by the size of the distinct outputs, and the
+re-reads stop: **-69% input tokens and -60% wall time** on that task, at the
+cost of a bigger context. It is a setting - `prune.keepDistinctOutputs` - and
+turning it off brings the old behaviour back.
 
 A `savedChars` of 0 in `prune.jsonl` is not a second, redundant pass. It means
 `bytesAfter` did not come out below `bytesBefore` for that turn, which happens
@@ -360,6 +370,22 @@ OpenCode's matcher, not OpenCode's matcher. It handles the cases that matter
 possible. Treat the ratio as a guide, not an exact count. It does import the
 real allowlist rather than keeping a copy, so the list cannot drift from what is
 actually shipped.
+
+## A lane is a default, not a boundary
+
+The kit's reviewer prompt says: *"You review. You never fix, because a
+reviewer who edits stops being a reviewer."* That is an instruction, and an
+instruction is only as strong as the task it sits next to.
+
+It was measured. A task that says "review this and FIX it if it is wrong"
+makes the reviewer lane edit the file, and makes the default agent edit it
+too - both arms scored zero on "the finding was reported AND the file was
+untouched". A task that says "tell me what needs to change" makes both arms
+report and neither edit, so the lane made no difference there either.
+
+So the lane holds a line when the task does not push against it, and the
+kit's own loop keeps that line by never asking a reviewer to fix anything.
+If you write a review task that says "fix it", the reviewer will fix it.
 
 ## What this kit does not do
 
