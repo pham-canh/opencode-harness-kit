@@ -10,6 +10,8 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { join, dirname } from "node:path"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 
 import { numberFlag, countFlag, stringFlag } from "../eval/flags.mjs"
@@ -84,12 +86,26 @@ test("a missing sqlite3 is a message, not a stack trace", () => {
   // The scripts shell out to the sqlite3 CLI. When it is not installed the
   // failure was `spawnSync sqlite3 ENOENT` with a stack, which says nothing
   // about what to install.
-  const emptyPath = join(ROOT, ".test-empty-path")
-  const r = spawnSync(process.execPath, [join(ROOT, "bin", "baseline.mjs")], {
-    encoding: "utf8",
-    env: { ...process.env, PATH: emptyPath },
-  })
+  //
+  // The database is a FIXTURE, not the live install: the script checks that
+  // the database exists before it reaches sqlite3 at all, so on a machine
+  // with no opencode install the test was asserting about a different
+  // failure - and it passed here and failed on a runner, for that reason.
+  const dir = mkdtempSync(join(tmpdir(), "ock-sqlite-missing-"))
+  const db = join(dir, "install.db")
+  writeFileSync(db, "")
+  const emptyPath = join(dir, "empty-path")
+  mkdirSync(emptyPath, { recursive: true })
+  const r = spawnSync(
+    process.execPath,
+    [join(ROOT, "bin", "baseline.mjs"), "--db", db],
+    {
+      encoding: "utf8",
+      env: { ...process.env, PATH: emptyPath },
+    },
+  )
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
+  rmSync(dir, { recursive: true, force: true })
   if (r.status === 0) {
     // sqlite3 was found anyway (an absolute path in the environment), so
     // there is nothing to assert.

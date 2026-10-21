@@ -106,7 +106,11 @@ function encodePath(db) {
  */
 export function query(db, sql) {
   if (hasSqlite()) {
-    const out = execFileSync("sqlite3", ["-json", `file:${db}?mode=ro`, sql], {
+    // The path is percent-encoded, because it goes into a URI. A `?` in a
+    // path is a query separator, so a database called "we?ird.db" was read
+    // as a database called "we" with the query "ird.db?mode=ro" - and the
+    // error was "no such table" from a database that had the table.
+    const out = execFileSync("sqlite3", ["-json", `file:${encodePath(db)}?mode=ro`, sql], {
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
     }).trim()
