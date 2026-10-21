@@ -12,7 +12,10 @@ is not happening.
 
 ---
 
-## [Unreleased]
+## [0.5.2] — 2026-10-21
+
+Published. The tag is what cut it: `git tag v0.5.2 && git push origin main
+v0.5.2`, and the publish job watches for exactly that.
 
 ### Changed
 
@@ -25,6 +28,15 @@ is not happening.
   the npm trusted publisher was re-pointed at the new name - the repository
   field in the OIDC claim is what npm matches, so without that the next
   release would not have published.
+
+### Fixed
+
+- **The publish job now checks the OIDC claim against `package.json` before
+  it publishes.** npm matches the trusted publisher's repository against the
+  claim, and the claim names the repository the workflow ran in - so a
+  renamed repository stops publishing, with an exchange error that does not
+  name the field that was wrong. The gate says which side is which and
+  prints the command that fixes it.
 
 ### Removed
 
