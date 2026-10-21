@@ -20,6 +20,31 @@
 //
 // The gate is on the CONTROLLED number. The install-wide one stays an
 // observation.
+//
+// TWO MEASURES, both reported, neither hidden, because they answer two
+// different questions:
+//
+//   REQUEST - how much did the REQUEST that goes back to the model shrink.
+//   Counted the way the pruner's own log counts it: the size of a PART,
+//   before the pass and after it. `partSize` in src/prune.ts is
+//   `JSON.stringify(part).length`, and `savedChars` in `.space/prune.jsonl`
+//   is the delta of that number. The measure below is the SAME expression,
+//   so the script and the log ask the same question of the same parts and
+//   cannot disagree about what they mean. The delta is the same number
+//   too: the parts outside the pruner's window are untouched, so they
+//   contribute nothing to it either way.
+//
+//   TEXT - how much TEXT was replaced. The text inside the parts, which is
+//   what this script used to measure and what it still reports.
+//
+// The two are not the same number twice. The request measure also carries
+// the parts the pruner left alone, and the stub's own metadata is part of
+// the request and is not text. So the request measure is the smaller of
+// the two, and it can be negative where the text measure is positive - a
+// stub that costs more than the output it replaced.
+//
+// The gate is on the REQUEST measure, because that is the claim the kit
+// makes: a smaller request.
 
 import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
@@ -186,29 +211,79 @@ const hook = await HarnessPlugin(
 const transform = hook["experimental.chat.messages.transform"]
 
 /**
- * The size this measurement counts.
+ * The size of a PART, as it sits in the request.
  *
- * CHARACTERS, not bytes: `part.text.length`. The report labelled that
- * "bytes", which is wrong for anything that is not ASCII - and an agent's
- * output is not ASCII. Both numbers are reported.
+ * THIS IS THE PRUNER'S OWN DEFINITION, EXPRESSION FOR EXPRESSION.
+ * `partSize` in src/prune.ts is `JSON.stringify(part).length`, and
+ * `savedChars` in `.space/prune.jsonl` is that number's delta. This is the
+ * same expression on the same objects, so the script and the log measure
+ * the same thing and the two numbers are reconcilable by construction
+ * rather than by coincidence.
  *
- * This counts the TEXT of every part, while the pruner's own log counts the
- * PART - and only the parts the pruner touched. So the two numbers answer
- * two different questions and are not the same number twice: this one asks
- * how much TEXT the pruner removed from a stored session, the log asks how
- * much the REQUEST that went out shrank. The stub the pruner leaves behind
- * carries about fifty characters of metadata of its own, so the log's
- * saving is the smaller of the two, and it can even be negative where this
- * one is positive. The gap is stated rather than hidden.
+ * CHARACTERS, not bytes: a UTF-8 character is more than one byte, and an
+ * agent's output is not ASCII. The pruner's measure counts characters
+ * too, and the byte figures are reported beside them, not instead of
+ * them.
+ *
+ * A part that cannot be serialised counts as zero, exactly as the
+ * pruner's own measure does: a measurement that throws is worse than a
+ * measurement that counts the part as nothing.
+ *
+ * @param {any} part
+ * @returns {number}
  */
-function sizeOf(part) {
+function requestPartSize(part) {
+  try {
+    const json = JSON.stringify(part)
+    return typeof json === "string" ? json.length : 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * The same part, in bytes.
+ *
+ * @param {any} part
+ * @returns {number}
+ */
+function requestPartBytes(part) {
+  try {
+    const json = JSON.stringify(part)
+    return typeof json === "string" ? Buffer.byteLength(json, "utf8") : 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * The TEXT inside a part - the SECONDARY measure.
+ *
+ * `part.text` for a text or reasoning part, `part.state.output` for a tool
+ * part. This is what the script measured before, and it is still reported,
+ * because it answers a different question: how much text was replaced.
+ *
+ * It is not the claim the kit makes. The text measure cannot see the
+ * metadata a stub puts in a part's place, and it cannot see the parts the
+ * pruner left alone, so it is the larger of the two numbers and it can be
+ * positive where the request measure is negative.
+ *
+ * @param {any} part
+ * @returns {number}
+ */
+function textSize(part) {
   if (typeof part?.text === "string") return part.text.length
   if (typeof part?.state?.output === "string") return part.state.output.length
   return 0
 }
 
-/** The same text, in bytes. */
-function byteSizeOf(part) {
+/**
+ * The same text, in bytes.
+ *
+ * @param {any} part
+ * @returns {number}
+ */
+function textBytes(part) {
   if (typeof part?.text === "string") return Buffer.byteLength(part.text, "utf8")
   if (typeof part?.state?.output === "string") {
     return Buffer.byteLength(part.state.output, "utf8")
@@ -216,10 +291,32 @@ function byteSizeOf(part) {
   return 0
 }
 
-let totalBefore = 0
-let totalAfter = 0
-let bytesBefore = 0
-let bytesAfter = 0
+/**
+ * The size of a whole message list, by one measure.
+ *
+ * @param {{parts: any[]}[]} messages
+ * @param {(part: any) => number} size
+ * @returns {number}
+ */
+function measureAll(messages, size) {
+  let total = 0
+  for (const m of messages) {
+    for (const p of m.parts) total += size(p)
+  }
+  return total
+}
+
+// The REQUEST measure: the request that goes back to the model, before the
+// pass and after it, counted the way the pruner's log counts it.
+let reqCharsBefore = 0
+let reqCharsAfter = 0
+let reqBytesBefore = 0
+let reqBytesAfter = 0
+// The TEXT measure: the text inside the parts, before and after.
+let textCharsBefore = 0
+let textCharsAfter = 0
+let textBytesBefore = 0
+let textBytesAfter = 0
 let measured = 0
 let stubbed = 0
 const perSession = []
@@ -227,35 +324,38 @@ const perSession = []
 for (const s of sessions) {
   const messages = sessionMessages(s.id)
   if (!messages.length) continue
-  const before = messages.reduce(
-    (n, m) => n + m.parts.reduce((k, p) => k + sizeOf(p), 0),
-    0,
-  )
-  const beforeBytes = messages.reduce(
-    (n, m) => n + m.parts.reduce((k, p) => k + byteSizeOf(p), 0),
-    0,
-  )
   // The pruner mutates in place, so the copy has to be the real thing.
-  const reasoningBefore = messages.flatMap((m) =>
-    m.parts.filter((p) => p.type === "reasoning").map((p) => p.text),
-  )
   const copy = messages.map((m) => ({
     info: m.info,
     parts: m.parts.map((p) => (p.state ? { ...p, state: { ...p.state } } : { ...p })),
   }))
+  // BEFORE is measured on the COPY - on the very objects the pruner is about
+  // to see. The copy serialises identically to the part it was made from
+  // (same keys, same order, same values), and measuring one set of objects
+  // before and after is the point: a "before" taken from a different object
+  // than the "after" is two measurements of two things.
+  const reqCharsBeforeSession = measureAll(copy, requestPartSize)
+  const reqBytesBeforeSession = measureAll(copy, requestPartBytes)
+  const textCharsBeforeSession = measureAll(copy, textSize)
+  const textBytesBeforeSession = measureAll(copy, textBytes)
+  const reasoningBefore = copy.flatMap((m) =>
+    m.parts.filter((p) => p.type === "reasoning").map((p) => p.text),
+  )
   await transform({}, { messages: copy })
-  const after = copy.reduce(
-    (n, m) => n + m.parts.reduce((k, p) => k + sizeOf(p), 0),
-    0,
-  )
-  if (!before) continue
-  totalBefore += before
-  totalAfter += after
-  bytesBefore += beforeBytes
-  bytesAfter += copy.reduce(
-    (n, m) => n + m.parts.reduce((k, p) => k + byteSizeOf(p), 0),
-    0,
-  )
+  const reqCharsAfterSession = measureAll(copy, requestPartSize)
+  const reqBytesAfterSession = measureAll(copy, requestPartBytes)
+  const textCharsAfterSession = measureAll(copy, textSize)
+  const textBytesAfterSession = measureAll(copy, textBytes)
+  // A session with nothing in it has no percentage to report.
+  if (reqCharsBeforeSession <= 0) continue
+  reqCharsBefore += reqCharsBeforeSession
+  reqCharsAfter += reqCharsAfterSession
+  reqBytesBefore += reqBytesBeforeSession
+  reqBytesAfter += reqBytesAfterSession
+  textCharsBefore += textCharsBeforeSession
+  textCharsAfter += textCharsAfterSession
+  textBytesBefore += textBytesBeforeSession
+  textBytesAfter += textBytesAfterSession
   measured++
   // The pruner marks TOOL parts with `metadata.pruned` and REPLACES reasoning
   // parts, so counting only the marked ones undercounts what was stubbed.
@@ -272,24 +372,60 @@ for (const s of sessions) {
   stubbed += cut
   perSession.push({
     session: s.id,
-    bytes_before: before,
-    bytes_after: after,
-    saved_pct: Math.round((1 - after / before) * 1000) / 10,
+    // REQUEST - the size of the request, before and after the pass.
+    request_chars_before: reqCharsBeforeSession,
+    request_chars_after: reqCharsAfterSession,
+    request_bytes_before: reqBytesBeforeSession,
+    request_bytes_after: reqBytesAfterSession,
+    request_saved_pct: pctOf(reqCharsBeforeSession, reqCharsAfterSession),
+    // TEXT - the text inside the parts, before and after the pass.
+    text_chars_before: textCharsBeforeSession,
+    text_chars_after: textCharsAfterSession,
+    text_saved_pct: pctOf(textCharsBeforeSession, textCharsAfterSession),
     parts_stubbed: cut,
     tool_parts_stubbed: toolCut,
     reasoning_parts_stubbed: reasoningCut,
   })
 }
 
-const savedPct =
-  totalBefore > 0 ? Math.round((1 - totalAfter / totalBefore) * 1000) / 10 : null
+/**
+ * A percentage, to two decimals, or null when there is no percentage to
+ * report.
+ *
+ * Two decimals, not one: an effect of 0.05% is a real effect, and one
+ * decimal renders it as "0%" - a number that says "nothing was removed"
+ * about a pass that removed seven thousand characters. That is the exact
+ * failure this script exists to catch, so it is not repeated in the
+ * reporting of it.
+ *
+ * @param {number} before
+ * @param {number} after
+ * @returns {number | null}
+ */
+function pctOf(before, after) {
+  if (!(before > 0)) return null
+  return Math.round((1 - after / before) * 10000) / 100
+}
+
+/** A percentage for printing. */
+function fmtPct(n) {
+  return n === null ? "n/a" : `${n}%`
+}
+
+// The REQUEST measure's percentage. This is the one the gate is computed
+// from, because it is the claim the kit makes: a smaller request.
+const requestSavedPct = pctOf(reqCharsBefore, reqCharsAfter)
+// The TEXT measure's percentage: how much text was replaced.
+const textSavedPct = pctOf(textCharsBefore, textCharsAfter)
 
 const failures = []
 if (minSaved !== null) {
   if (measured === 0) {
     failures.push("no session had assistant messages to measure")
-  } else if (savedPct === null || savedPct < minSaved) {
-    failures.push(`the pruner removed ${savedPct ?? "n/a"}% of the context, expected at least ${minSaved}%`)
+  } else if (requestSavedPct === null || requestSavedPct < minSaved) {
+    failures.push(
+      `the pruner removed ${requestSavedPct ?? "n/a"}% of the request, expected at least ${minSaved}%`,
+    )
   }
 }
 
@@ -303,11 +439,21 @@ process.on("exit", () => {
 const report = {
   db: DB,
   sessions_measured: measured,
-  characters_before: totalBefore,
-  characters_after: totalAfter,
-  bytes_before: bytesBefore,
-  bytes_after: bytesAfter,
-  saved_pct: savedPct,
+  // REQUEST measure - the size of the request, counted the way the pruner's
+  // own log counts it (the size of a PART). This is the number the gate is
+  // computed from.
+  request_chars_before: reqCharsBefore,
+  request_chars_after: reqCharsAfter,
+  request_bytes_before: reqBytesBefore,
+  request_bytes_after: reqBytesAfter,
+  request_saved_chars: reqCharsBefore - reqCharsAfter,
+  request_saved_pct: requestSavedPct,
+  // TEXT measure - the text inside the parts. How much text was replaced.
+  text_chars_before: textCharsBefore,
+  text_chars_after: textCharsAfter,
+  text_bytes_before: textBytesBefore,
+  text_bytes_after: textBytesAfter,
+  text_saved_pct: textSavedPct,
   parts_stubbed: stubbed,
   per_session: perSession,
   verdict: failures.length ? "FAIL" : "PASS",
@@ -325,17 +471,36 @@ console.log(
   `  sessions ${measured} (last ${DAYS}d, at least ${MIN_MESSAGES} assistant messages each)`,
 )
 console.log("")
-console.log(`  context before   ${totalBefore.toLocaleString("en-US")} characters`)
-console.log(`  context after    ${totalAfter.toLocaleString("en-US")} characters`)
-console.log(`  in bytes         ${bytesBefore.toLocaleString("en-US")} -> ${bytesAfter.toLocaleString("en-US")}`)
-console.log(`  removed          ${savedPct === null ? "n/a" : savedPct + "%"}`)
+console.log("  REQUEST measure - how much the request that goes back to the model shrank.")
+console.log("  The size of a PART, before and after the pass: the same definition the")
+console.log("  pruner's own log uses (src/prune.ts `partSize`).")
+console.log(`    request context before   ${reqCharsBefore.toLocaleString("en-US")} characters`)
+console.log(`    request context after    ${reqCharsAfter.toLocaleString("en-US")} characters`)
+console.log(`    request saved            ${(reqCharsBefore - reqCharsAfter).toLocaleString("en-US")} characters`)
+console.log(`    request in bytes         ${reqBytesBefore.toLocaleString("en-US")} -> ${reqBytesAfter.toLocaleString("en-US")}`)
+console.log(`    removed                  ${fmtPct(requestSavedPct)}`)
+console.log("    <- the --min-saved gate is computed from this number, and the")
+console.log("       saved figure is the same number the pruner's log writes as")
+console.log("       savedChars for the same pass.")
+console.log("")
+console.log("  TEXT measure - how much text was replaced. The text inside the parts.")
+console.log(`    text before              ${textCharsBefore.toLocaleString("en-US")} characters`)
+console.log(`    text after               ${textCharsAfter.toLocaleString("en-US")} characters`)
+console.log(`    text saved               ${(textCharsBefore - textCharsAfter).toLocaleString("en-US")} characters`)
+console.log(`    text in bytes            ${textBytesBefore.toLocaleString("en-US")} -> ${textBytesAfter.toLocaleString("en-US")}`)
+console.log(`    removed                  ${fmtPct(textSavedPct)}`)
+console.log("")
 console.log(`  parts stubbed    ${stubbed}`)
 if (perSession.length) {
   console.log("")
-  const worst = [...perSession].sort((a, b) => a.saved_pct - b.saved_pct).slice(0, 5)
-  console.log("  the five sessions the pruner helped least:")
+  const worst = [...perSession]
+    .sort((a, b) => a.request_saved_pct - b.request_saved_pct)
+    .slice(0, 5)
+  console.log("  the five sessions the pruner helped least, by the request measure:")
   for (const p of worst) {
-    console.log(`    ${p.saved_pct}%  ${p.bytes_before.toLocaleString("en-US")} bytes  ${p.session.slice(0, 12)}`)
+    console.log(
+      `    ${fmtPct(p.request_saved_pct)}  ${p.request_bytes_before.toLocaleString("en-US")} bytes  ${p.session.slice(0, 12)}`,
+    )
   }
 }
 if (failures.length) {
@@ -343,6 +508,6 @@ if (failures.length) {
   console.log(`  FAIL  ${failures.join("; ")}`)
 } else if (minSaved !== null) {
   console.log("")
-  console.log(`  PASS  the pruner removed at least ${minSaved}% of the context.`)
+  console.log(`  PASS  the pruner removed at least ${minSaved}% of the request.`)
 }
 process.exit(failures.length ? 1 : 0)
