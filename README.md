@@ -539,6 +539,16 @@ the same messages with and without. On one install, on 2026-10-20:
 sessions, because it is measured over the ones this machine happened to
 have - so run the command for the number on yours.
 
+**What is kept is the newest copy of each DISTINCT output.** The window on
+recent calls was a window on *recency*, and a long session walks out of it:
+after six more calls, the only copy of a file the agent had read was gone,
+and the agent read it again. On the long-task A/B that was seventeen
+re-reads and five times the input tokens. The newest copy of each distinct
+output now survives however old it is, and only the repeats are stubbed -
+**-69% input tokens and -60% wall time** on that task, at the cost of a
+bigger context. It is a setting: `prune.keepDistinctOutputs` in the profile,
+`false` to get the old behaviour back.
+
 ## Memory
 
 The kit does not implement memory. A local vector store with embeddings, a
