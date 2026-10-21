@@ -276,15 +276,26 @@ for (const r of rows) {
       String(r.output).padStart(10),
   )
   if (r.publishes_low) {
-    console.log(
-      "  " +
-        `${r.model} @low`.padEnd(30) +
-        String(r.low_requests).padStart(10) +
-        String(r.low_avg_ms).padStart(10) +
-        "".padStart(10) +
-        "".padStart(10) +
-        String(r.low_reasoning).padStart(10),
-    )
+    if (!r.low_requests) {
+      // The model publishes `low` and every request for it failed. Saying
+      // "0 null" reads like a measurement of nothing; saying it failed says
+      // what happened.
+      console.log(
+        "  " +
+          `${r.model} @low`.padEnd(30) +
+          "no request for the low variant succeeded".padStart(10),
+      )
+    } else {
+      console.log(
+        "  " +
+          `${r.model} @low`.padEnd(30) +
+          String(r.low_requests).padStart(10) +
+          String(r.low_avg_ms).padStart(10) +
+          "".padStart(10) +
+          "".padStart(10) +
+          String(r.low_reasoning).padStart(10),
+      )
+    }
   } else if (withEffort) {
     console.log(
       "  " +
