@@ -175,6 +175,11 @@ writes it to the project root, and reading `process.cwd()` alone reported
 
 ## The free tier cannot read a PDF, an audio file or a video
 
+**Re-checked 2026-10-21, against the live tier, and both still hold.** A
+PDF attached to a prompt is refused by the provider with the message below,
+and an `.m4a` is refused by opencode with `Cannot read binary file`. The
+model then answers as if it had heard nothing.
+
 Three capabilities the catalogue advertises are not reachable, and no lane
 claims them:
 

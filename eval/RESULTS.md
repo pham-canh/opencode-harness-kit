@@ -180,10 +180,22 @@ is the check that stops an ambiguous task.
 | wall seconds | **31.4** | 34.4 |
 | paths outside the target | 0 | 0 |
 
+| per task | kit on | kit off |
+| --- | --- | --- |
+| `ts-default-port` | 2/2 | 2/2 |
+| `ts-default-export` | 2/2 | 1/2 |
+| `ts-export-stream` | 2/2 | 2/2 |
+| `ts-union-doc` | 2/2 | 2/2 |
+
 The kit is ahead on correctness and ahead on wall time, and it costs about
 two and a half times the input tokens. The private pilot said the opposite
 (8/8 against 8/8, with the kit slower), on a different subject and with the
 grader that mis-scored.
+
+**One task is worth reading on its own.** `ts-default-export` asks which
+three things the package's default export names - and the answer is in the
+source, in the compiled module and in the bundle. The kit-off arm got one
+of its two wrong.
 
 ## The A/B on a LONG task
 
