@@ -95,11 +95,18 @@ test("an empty subject is fatal rather than silently passing every task", () => 
   assert.equal(r.ok, false)
 })
 
-test("the checked-in suite holds against the prepared subject when it exists", () => {
+test("the checked-in suite holds against the prepared subject when it exists", (t) => {
   // Skipped when the snapshot has not been prepared, which is the normal state
   // for a fresh clone. This is the check that keeps tasks.json honest.
+  //
+  // Reported as SKIPPED, not as a test that returned without asserting: a
+  // silent return looks like a pass in the output, and a suite that reports
+  // one more passing test than it ran is a lie in the summary.
   const snap = process.env.SPACE_HARNESS_SUBJECT
-  if (!snap) return
+  if (!snap) {
+    t.skip("SPACE_HARNESS_SUBJECT is not set")
+    return
+  }
   const suite = JSON.parse(readFileSync(join(import.meta.dirname, "..", "eval", "tasks.json"), "utf8"))
   const r = checkPremises(snap, suite)
   assert.deepEqual(r.fatal, [])

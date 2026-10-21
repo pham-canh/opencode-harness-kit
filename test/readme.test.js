@@ -36,7 +36,8 @@ test("the README names every profile the kit ships", () => {
 })
 
 test("the README names every withdrawn model, with the reason", () => {
-  for (const entry of INDEX.withdrawn ?? []) {
+  assert.ok(Array.isArray(INDEX.withdrawn), "profiles/index.json has no withdrawn list")
+  for (const entry of INDEX.withdrawn) {
     assert.ok(
       README.includes(`\`${entry.id}\``),
       `README.md does not mention the withdrawn model ${entry.id}`,
@@ -54,8 +55,10 @@ test("the README's shipped-profiles table names exactly the shipped profiles", (
     README.indexOf("## Shipped profiles"),
     README.indexOf("## Free models are perishable"),
   )
-  const shipped = new Set((INDEX.profiles ?? []).map((p) => p.id))
-  const withdrawn = new Set((INDEX.withdrawn ?? []).map((p) => p.id))
+  assert.ok(Array.isArray(INDEX.profiles), "profiles/index.json has no profile list")
+  const shipped = new Set(INDEX.profiles.map((p) => p.id))
+  assert.ok(Array.isArray(INDEX.withdrawn), "profiles/index.json has no withdrawn list")
+  const withdrawn = new Set(INDEX.withdrawn.map((p) => p.id))
 
   for (const id of shipped) {
     assert.ok(
@@ -77,7 +80,8 @@ test("the README's withdrawn table names every withdrawn model", () => {
     README.indexOf("## Free models are perishable"),
     README.indexOf("## Requirements"),
   )
-  for (const entry of INDEX.withdrawn ?? []) {
+  assert.ok(Array.isArray(INDEX.withdrawn), "profiles/index.json has no withdrawn list")
+  for (const entry of INDEX.withdrawn) {
     assert.ok(
       table.includes(`\`${entry.id}\``),
       `the withdrawn table does not mention ${entry.id}`,
@@ -158,7 +162,8 @@ test("the perishable section names the commands that exist and the lanes that ex
 test("every profile the README lists is loadable and has a retention class", () => {
   // A profile in the table that does not load is a row that would send
   // somebody to a command that fails.
-  for (const entry of INDEX.profiles ?? []) {
+  assert.ok(Array.isArray(INDEX.profiles), "profiles/index.json has no profile list")
+  for (const entry of INDEX.profiles) {
     const p = loadProfile(entry.id)
     assert.ok(p.retention, `${entry.id} has no retention class`)
     assert.equal(

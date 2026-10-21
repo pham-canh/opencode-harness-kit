@@ -19,7 +19,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -99,6 +99,13 @@ test("a label cannot escape the scratch root by any route", () => {
     const source = join(base, "source")
     mkdirSync(source, { recursive: true })
     writeFileSync(join(source, "file.txt"), "x\n")
+    // A victim to check, and a marker to see what was written. Without the
+    // victim the assertion below was always true: the directory it looked
+    // for was never created, so the list was always empty and the comparison
+    // always passed.
+    const victim = join(base, "victim")
+    mkdirSync(victim, { recursive: true })
+    writeFileSync(join(victim, "keep.txt"), "do not delete me\n")
 
     for (const label of ["..", "../..", "a/b", "a\\b", ".", "x..y"]) {
       const r = prepare(["--from", source, "--name", label], scratch)
@@ -106,9 +113,14 @@ test("a label cannot escape the scratch root by any route", () => {
     }
     // And nothing landed outside the scratch root.
     assert.deepEqual(
-      existsSync(join(base, "victim")) ? ["victim"] : [],
-      [],
+      readdirSync(base).sort(),
+      ["scratch", "source", "victim"],
       "something was written outside the scratch root",
+    )
+    assert.equal(
+      existsSync(join(victim, "keep.txt")),
+      true,
+      "the directory outside the scratch root was touched",
     )
   } finally {
     rmSync(base, { recursive: true, force: true })

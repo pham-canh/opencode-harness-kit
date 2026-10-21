@@ -11,7 +11,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -20,6 +20,8 @@ import { hasPythonSqlite, hasSqlite, canQuerySqlite, query } from "../src/sqlite
 import { projectRoot } from "../src/project.js"
 import { numberFlag, countFlag, stringFlag } from "../eval/flags.mjs"
 import { gradeAnswer } from "../eval/verify.mjs"
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -35,6 +37,12 @@ test("the python fallback reads a database when the sqlite3 CLI is not there", (
   }
   const db = join(tmpdir(), "ock-sqlite-probe.db")
   rmSync(db, { force: true })
+  // A PATH with python3 and nothing else. An empty PATH would take python3
+  // away as well, and the fallback needs it - the point is to remove the
+  // sqlite3 CLI, not every tool.
+  const emptyPath = mkdtempSync(join(tmpdir(), "ock-nopath-"))
+  const python = execFileSync("sh", ["-c", "command -v python3"], { encoding: "utf8" }).trim()
+  symlinkSync(python, join(emptyPath, "python3"))
   try {
     // A database with one table, built by python itself.
     execFileSync("python3", [
@@ -45,12 +53,28 @@ con.execute("create table t (id integer primary key, name text)")
 con.execute("insert into t (name) values ('one')")
 con.commit()`,
     ])
-    const rows = query(db, "select id, name from t")
+    // The query runs in a child process with the PATH stripped, so the
+    // sqlite3 CLI is NOT there and the python fallback is the path that
+    // actually runs. In this process the CLI was preferred, so the fallback
+    // was never exercised on a machine that has it - which is every CI
+    // runner.
+    const out = execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `import { query } from ${JSON.stringify(join(REPO, "src", "sqlite.js"))};
+         const rows = query(${JSON.stringify(db)}, "select id, name from t");
+         console.log(JSON.stringify(rows));`,
+      ],
+      { encoding: "utf8", env: { ...process.env, PATH: emptyPath } },
+    )
+    const rows = JSON.parse(out)
     assert.equal(rows.length, 1)
     assert.equal(rows[0].name, "one")
     assert.equal(typeof rows[0].id, "number")
   } finally {
     rmSync(db, { force: true })
+    rmSync(emptyPath, { recursive: true, force: true })
   }
 })
 

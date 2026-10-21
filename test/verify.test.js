@@ -258,20 +258,20 @@ test("a line number that belongs to another sentence is not a line claim", () =>
 })
 
 test("the right file with a wrong line beside it still grades as found", () => {
-  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const dir = subject(mkdtemp("ock-grade-"))
   const answer = "The answer is in src/a.js. Unrelated note: see line 2 of the report."
   const graded = gradeAnswer(dir, answer, WANT)
   assert.equal(graded.ok, true, `the answer was scored wrong: ${JSON.stringify(graded.refs)}`)
 })
 
 test("the right file with no line at all grades as found", () => {
-  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const dir = subject(mkdtemp("ock-grade-"))
   const graded = gradeAnswer(dir, "the answer is in src/a.js", WANT)
   assert.equal(graded.ok, true)
 })
 
 test("the wrong file grades as wrong", () => {
-  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const dir = subject(mkdtemp("ock-grade-"))
   mkdirSync(join(dir, "src"), { recursive: true })
   writeFileSync(join(dir, "src", "b.js"), "nothing to see here")
   const graded = gradeAnswer(dir, "the answer is in src/b.js line 5", WANT)
@@ -279,7 +279,7 @@ test("the wrong file grades as wrong", () => {
 })
 
 test("a file cited twice is one citation", () => {
-  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const dir = subject(mkdtemp("ock-grade-"))
   const graded = gradeAnswer(dir, "src/a.js line 5, and also src/a.js", WANT)
   assert.equal(graded.cited, 1)
 })
@@ -288,7 +288,7 @@ test("a citation to the wrong line is a wrong answer, even in the right file", (
   // The task asks which LINE. A file that contains the answer somewhere else
   // is not the line the agent claimed, and the answer is wrong. This is the
   // rule the suite has always had.
-  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const dir = subject(mkdtemp("ock-grade-"))
   const graded = gradeAnswer(dir, "src/a.js line 2", WANT)
   assert.equal(graded.ok, false)
   const ref = graded.refs.find((r) => r.file === "src/a.js" && r.line !== null)
@@ -308,7 +308,7 @@ test("a directory in the exclude list excludes everything inside it", () => {
 })
 
 test("a citation to an excluded directory is not evidence, however it is spelled", () => {
-  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const dir = subject(mkdtemp("ock-grade-"))
   mkdirSync(join(dir, "dist"), { recursive: true })
   mkdirSync(join(dir, "src"), { recursive: true })
   writeFileSync(join(dir, "dist", "index.js"), "export function theAnswer() { return 42 }")
@@ -329,7 +329,7 @@ test("a citation to an excluded directory is not evidence, however it is spelled
 })
 
 test("a citation to an excluded directory is not evidence", () => {
-  const dir = subject(mkdtempSync(join(tmpdir(), "ock-grade-")))
+  const dir = subject(mkdtemp("ock-grade-"))
   mkdirSync(join(dir, "dist"), { recursive: true })
   writeFileSync(join(dir, "dist", "index.js"), "export function theAnswer() { return 42 }")
   const graded = gradeAnswer(dir, "it is in dist/index.js line 1", WANT, { exclude: ["dist/"] })
@@ -369,8 +369,8 @@ const SPEC = {
 }
 
 test("a many-file change is graded against the pristine subject", () => {
-  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
-  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  const pristine = fleet(mkdtemp("ock-fleet-"))
+  const run = mkdtemp("ock-fleet-run-")
   fleet(run)
   // The right change: one entry appended, nothing else touched.
   const a = JSON.parse(readFileSync(join(run, "profiles", "a.json"), "utf8"))
@@ -382,8 +382,8 @@ test("a many-file change is graded against the pristine subject", () => {
 })
 
 test("a many-file change that touched something else is not correct", () => {
-  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
-  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  const pristine = fleet(mkdtemp("ock-fleet-"))
+  const run = mkdtemp("ock-fleet-run-")
   fleet(run)
   const a = JSON.parse(readFileSync(join(run, "profiles", "a.json"), "utf8"))
   a.fallback = [...a.fallback, "target"]
@@ -395,20 +395,50 @@ test("a many-file change that touched something else is not correct", () => {
 })
 
 test("a many-file change that reordered the list is not correct", () => {
-  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
-  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  const pristine = fleet(mkdtemp("ock-fleet-"))
+  const run = mkdtemp("ock-fleet-run-")
+  fleet(run)
+  const a = JSON.parse(readFileSync(join(run, "profiles", "a.json"), "utf8"))
+  // The appended entry is still LAST, so the last-entry check passes and the
+  // COMPARISON with the original is what catches this. Putting it first
+  // tested the other branch, and the assertion matched both reasons.
+  a.fallback = ["y", "x", "target"]
+  writeFileSync(join(run, "profiles", "a.json"), JSON.stringify(a, null, 2))
+  const g = gradeMutationMany(run, SPEC, { pristine })
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /not the original with/)
+})
+
+test("a many-file change that put the entry first is not correct", () => {
+  const pristine = fleet(mkdtemp("ock-fleet-"))
+  const run = mkdtemp("ock-fleet-run-")
   fleet(run)
   const a = JSON.parse(readFileSync(join(run, "profiles", "a.json"), "utf8"))
   a.fallback = ["target", "x", "y"]
   writeFileSync(join(run, "profiles", "a.json"), JSON.stringify(a, null, 2))
   const g = gradeMutationMany(run, SPEC, { pristine })
   assert.equal(g.ok, false)
-  assert.match(g.reason, /profiles\/a\.json/)
+  assert.match(g.reason, /last fallback entry/)
+})
+
+test("a many-file change that ADDED a field is not correct", () => {
+  // Only the keys the original had were compared, so an agent that made the
+  // right change and also added a field of its own was graded correct.
+  const pristine = fleet(mkdtemp("ock-fleet-"))
+  const run = mkdtemp("ock-fleet-run-")
+  fleet(run)
+  const a = JSON.parse(readFileSync(join(run, "profiles", "a.json"), "utf8"))
+  a.fallback = [...a.fallback, "target"]
+  a.surprise = "an extra field nobody asked for"
+  writeFileSync(join(run, "profiles", "a.json"), JSON.stringify(a, null, 2))
+  const g = gradeMutationMany(run, SPEC, { pristine })
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /surprise was added/)
 })
 
 test("a file that was not to be changed, and was, is not correct", () => {
-  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
-  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  const pristine = fleet(mkdtemp("ock-fleet-"))
+  const run = mkdtemp("ock-fleet-run-")
   fleet(run)
   const b = JSON.parse(readFileSync(join(run, "profiles", "b.json"), "utf8"))
   b.fallback = [...b.fallback, "target"]
@@ -419,8 +449,8 @@ test("a file that was not to be changed, and was, is not correct", () => {
 })
 
 test("a many-file change that did nothing at all is not correct", () => {
-  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
-  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  const pristine = fleet(mkdtemp("ock-fleet-"))
+  const run = mkdtemp("ock-fleet-run-")
   fleet(run)
   const g = gradeMutationMany(run, SPEC, { pristine })
   assert.equal(g.ok, false)
