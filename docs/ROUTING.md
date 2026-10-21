@@ -329,13 +329,14 @@ is to count the requests:
 ```
 $ oc-harness lanes
 
-  lane             reqs     avg ms  model
+  lane             reqs     avg ms     avg ctx  model
   ----------------------------------------------------------------------
-  plan                0          -  deepseek-v4.1-flash-free     never used
-  build              87       9935  minimax-m3.1-flash-free
-  reviewer            0          -  glm-5.3-flash-free           never used
+  plan                0          -           -  deepseek-v4.1-flash-free        never used
+  build              87       9935           -  minimax-m3.1-flash-free, deepseek-v4.1-flash-free
+  reviewer            0          -           -  glm-5.3-flash-free              never used
   ...
-  9 lane(s) were never used    cut candidates, not defects
+  9 lane(s) were never used cut candidates, not defects
+  one request is one assistant message; avg ms covers the requests that finished
 ```
 
 A lane that is never used is a description the model reads on every turn and a

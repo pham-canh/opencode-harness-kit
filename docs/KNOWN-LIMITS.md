@@ -288,7 +288,7 @@ From one install's 20-day history, free model slots turned over in days:
 three days. Zen states free models are available "for a limited time" with no
 date. Treat profiles as perishable.
 
-The README's [Free models are perishable](../../README.md#free-models-are-perishable-so-check-them)
+The README's [Free models are perishable](../README.md#free-models-are-perishable-so-check-them)
 section has the full list of withdrawn models, the four commands that check
 for drift, and what `refresh` will and will not rewrite. The short version:
 run `oc-harness doctor` before every release and whenever a lane starts

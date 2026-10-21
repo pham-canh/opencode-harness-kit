@@ -1157,7 +1157,7 @@ async function cmdUse(id) {
     // `--yes` skips the question, it does not skip the safety net. Gating the
     // backup on `--yes` meant the one path that overwrites without asking was
     // also the one path with nothing to fall back to.
-    if (!flag("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
+    if (!flag("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a dated backup is kept in backups/)`))) {
       fail("left the existing config alone")
     }
     const kept = keepBackup(readFileSync(CONFIG_FILE, "utf8"))
@@ -1462,7 +1462,7 @@ function applyLiveMetadata(p, live) {
 /**
  * Put back the config the last `use` replaced.
  *
- * `use` keeps one `.bak` next to the config, and it OVERWRITES it on the
+ * `use` keeps a dated copy of the old config in `backups/`, and it OVERWRITES it on the
  * next run. So there is no history, and the backup does not say which
  * profile it was - so "go back to what I had" means "remember the old
  * profile id and run use again", which is not something a person can do at
@@ -2630,6 +2630,9 @@ try {
     --check-models doctor: one run, non-zero when a shipped model is gone
     --json        doctor, show, lanes: print the machine-readable form, and
                   nothing else
+    --hook        install: also install the pre-commit hook into this
+                  project. It is the project's call, so it has to be asked
+                  for.
 
   run options
     --role <agent>  which agent does the work (default: build)

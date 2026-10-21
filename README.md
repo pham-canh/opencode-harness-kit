@@ -80,16 +80,22 @@ about your prompts.
 
 | lane | job | model | measured |
 |---|---|---|---|
-| `build` | write and verify the change | MiniMax M3.1 Flash | 3.1 s |
-| `plan` | turn a request into a plan | Beam | **2.6 s** |
-| `reviewer` | read a change in two passes | Nemotron 3 Ultra | 4.7 s (34 s cold) |
-| `locate` | find where something lives | Nemotron 3.5 Lightning | 3.7 s |
-| `verify` | run the project's checks | Big Pickle | 6.5 s |
-| `vision` | read an image or a screenshot | MiMo-V2.6 Flash | 19.2 s |
-| `doc` | read a long document or a spec | GLM 5.3 Flash | 5.4 s |
-| `schema` | produce JSON or a JSON schema | DeepSeek V4.1 Flash | 3.4 s |
-| `sweep` | sweep a lot of code mechanically | Nemotron 3.5 Super VL | 4.2 s |
-| `longform` | read a megabyte, or write alternatives | LongCat 2.5 Preview | 9.4 s |
+| `build` | write and verify the change | MiniMax M3.1 Flash | 6.9 s |
+| `plan` | turn a request into a plan | Beam | **6.1 s** |
+| `reviewer` | read a change in two passes | Nemotron 3 Ultra | 7.8 s (34 s cold) |
+| `locate` | find where something lives | Nemotron 3.5 Lightning | 6.9 s |
+| `verify` | run the project's checks | Big Pickle | 10.4 s |
+| `vision` | read an image or a screenshot | MiMo-V2.6 Flash | 9.3 s (19 s with an image) |
+| `doc` | read a long document or a spec | GLM 5.3 Flash | 7.4 s |
+| `schema` | produce JSON or a JSON schema | DeepSeek V4.1 Flash | 10.7 s |
+| `sweep` | sweep a lot of code mechanically | Nemotron 3.5 Super VL | 8.4 s |
+| `longform` | read a megabyte, or write alternatives | LongCat 2.5 Preview | 12.0 s |
+
+The `measured` column is the median of five one-line requests to that model
+on 2026-10-21 - the same prompt for every model, from the process start, so
+it is the wait a lane would cost.
+[`docs/ROUTING.md`](docs/ROUTING.md) has the method, the install telemetry
+beside it, and the command that produced it.
 
 Each lane is an OpenCode agent with its own model, its own context window and
 its own effort level. You do not switch models: you hand the job to the lane
@@ -103,11 +109,12 @@ agent=build    modelID=minimax-m3.1-flash-free
 ```
 
 Why ten lanes and not one model: the free tier is genuinely uneven, and the
-difference is measurable. Beam answers in 2.6 seconds with a 1M window;
-MiMo reads an image in 19 and MiniMax reads the same image in 8; Nemotron
-Super VL is the only model on the tier that publishes a `none` effort level,
-which makes "reasoning off" a job of its own. Putting each on the job it is
-good at is worth more than any single "best" model.
+difference is measurable. Beam answers in 6.1 seconds with a 1M window, and
+the four fastest models are inside a second of each other; MiMo reads an
+image in 19 and MiniMax reads the same image in 8; Nemotron Super VL is the
+only model on the tier that publishes a `none` effort level, which makes
+"reasoning off" a job of its own. Putting each on the job it is good at is
+worth more than any single "best" model.
 
 The full table, with the measurements behind every choice and the three
 capabilities the tier turns out not to have, is in
@@ -324,15 +331,16 @@ tier cannot do.
 | Node | **22 or newer** — `engines` in package.json, and the CLI uses `node:` prefixed builtins. Node 20 fails at import time, not with a friendly message. |
 | npm | 10 or newer, for `npm ci` when installing from a checkout |
 | OS | macOS, Linux and Windows. The tests run on `ubuntu-latest`. |
-| Shell | none needed to *use* the kit — no `bash`, `zsh` or `fish` setup. Two commands shell out to external binaries: `doctor` and `refresh` call `curl` to read models.dev, and `baseline` and the measurement scripts call `sqlite3`. Everything else, including `install`, `use` and `verify`, works offline. |
+| Shell | none needed to *use* the kit — no `bash`, `zsh` or `fish` setup. `doctor` and `refresh` call `curl` to read models.dev. `baseline` and the measurement scripts read the install database with `sqlite3`, and fall back to python3's own `sqlite3` module when that binary is not installed — so python3 is the one thing to have. Everything else, including `install`, `use` and `verify`, works offline. |
 | Network | only `doctor` and `refresh` need it, and only to read the live model catalogue. `list` is offline: it reads the shipped profiles. Everything else works offline. |
 | Disk | `use` and `install` write into `~/.config/opencode/` and nothing else. `doctor` writes nothing. `refresh` rewrites a profile in the kit's own
 directory - `node_modules` for an npm install - and keeps a backup of the
 one it replaced. |
 
 `~/.config/opencode/` is your live agent config. `use` and `install` write there,
-`verify` only reads, and `use --dryrun` writes nothing at all. Every write keeps
-a `.bak` next to the file, including under `--yes`.
+`verify` only reads, and `use --dryrun` writes nothing at all. Every write
+keeps a dated copy in `~/.config/opencode/backups/`, including under
+`--yes`, and `oc-harness restore <file>` puts one back.
 
 ## Commands
 
@@ -369,7 +377,7 @@ at the top of the file:
 node eval/run.mjs               the pruner and the allowlist
 node eval/measure-prune.mjs     the pruner, on real sessions
 node eval/measure-install.mjs   before and after the install
-node eval/models.mjs            every model on the tier, one line each
+node eval/models.mjs            every model the profiles use, one line each
 node eval/ab.mjs                the A/B: the same task with and without the kit
 ```
 
@@ -445,18 +453,14 @@ Ten lanes is a hypothesis. `oc-harness lanes` counts the requests:
 ```
 $ oc-harness lanes
 
-  lane            reqs     avg ms  model
-  ----------------------------------------------------------------
-  plan                7       2624  beam-free
-  build              21      10104  minimax-m3.1-flash-free
-  reviewer            2       4716  nemotron-3-ultra-free
-  locate              4       3680  nemotron-3.5-lightning-free
-  verify              2       6546  big-pickle
-  vision              2      19167  mimo-v2.6-flash-free
-  doc                 2       5421  glm-5.3-flash-free
-  schema              1       3390  deepseek-v4.1-flash-free
-  sweep               3       4221  nemotron-3.5-super-vl-free
-  longform            2       9382  longcat-2.5-preview-free
+  lane             reqs     avg ms     avg ctx  model
+  ----------------------------------------------------------------------
+  plan                0          -           -  deepseek-v4.1-flash-free        never used
+  build              87       9935           -  minimax-m3.1-flash-free, deepseek-v4.1-flash-free
+  reviewer            0          -           -  glm-5.3-flash-free              never used
+  ...
+  9 lane(s) were never used cut candidates, not defects
+  one request is one assistant message; avg ms covers the requests that finished
 ```
 
 A lane that is never used is a description the model reads on every turn and
@@ -530,8 +534,10 @@ the number that is.
 parts unpruned — the pruner rewrites the outgoing request, not the history —
 so the stored parts of a real session are exactly what the pruner was given,
 and replaying the real pruner over them measures exactly what it removed, on
-the same messages with and without. On one install: **80.5% of the context
-across 60 real sessions**.
+the same messages with and without. On one install, on 2026-10-20:
+**80.5% of the context across 60 real sessions**. The number moves with the
+sessions, because it is measured over the ones this machine happened to
+have - so run the command for the number on yours.
 
 ## Memory
 
@@ -809,7 +815,8 @@ same 120 runs with the fixed grader gives 34/40 against 30/40 on the lookup
 tasks - the kit ahead, where the old grader had it behind. The full account is in [eval/RESULTS.md](eval/RESULTS.md).
 
 What the kit buys is in the two places that suite cannot see: **long
-sessions**, where the pruner removes 80.5% of the context, and **process** -
+sessions**, where the pruner removes 65-80% of the context depending on the
+sessions it is measured over, and **process** -
 a reviewer that reviews and does not edit, a verify that runs the checks and
 does not fix them, a publish decision that belongs to a human.
 
