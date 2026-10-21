@@ -318,6 +318,14 @@ if (failures.length) {
   console.log(`  FAIL  ${failures.join("; ")}`)
 } else if (minNarrow !== null || minCtxDrop !== null) {
   console.log("")
-  console.log(`  PASS  narrow reads and context per request both held.`)
+  // The PASS line has to say WHICH gates held. "Both held" is a lie when
+  // one of them was reported and not gated, and the NOTE above it says so.
+  const held = []
+  if (minNarrow !== null && !skipped.includes("narrow reads")) held.push("narrow reads")
+  if (minCtxDrop !== null && !skipped.includes("context per request")) held.push("context per request")
+  console.log(
+    `  PASS  ${held.length ? held.join(" and ") : "nothing"} held.` +
+      (skipped.length ? ` ${skipped.join(" and ")} was reported but not gated.` : ""),
+  )
 }
 process.exit(failures.length ? 1 : 0)

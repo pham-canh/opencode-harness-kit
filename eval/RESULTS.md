@@ -306,6 +306,12 @@ not a model that answered - four kit-off runs hit the 600-second ceiling
 with no output at all, and a timed-out run has zero tools and zero context,
 so it entered the medians as a fast, empty, wrong answer.
 
+That is why the older result below is quoted as "52/60 against **59/59**":
+one of the sixty kit-off runs produced no answer at all and is excluded
+from every number. Four of the kit-off runs timed out in the later run
+described below, which is why the same suite cannot be compared run to
+run.
+
 | metric (median) | kit on | kit off |
 | --- | --- | --- |
 | **correct** | **54/60** | **55/60** |
@@ -361,10 +367,17 @@ some of the answers took the two-field markdown shape - the shape the
 grader could not read. The kit-off arm had no such instructions, mostly
 answered in prose, and was graded by a pattern that handled prose.
 
-Re-scoring the SAME run with the fixed grader - the same 120 agent runs,
+Re-scoring the EARLIER run with the fixed grader - the same 120 agent runs,
 the same answers, only the grader changed - gives **34/40 against 30/40** on
-the four lookup tasks, the kit ahead. A harness that measures the harness
-is worse than one that measures nothing.
+the four lookup tasks, the kit ahead. The run in the table above, with the
+same grader, scores 34/40 against 35/40 on the same four tasks.
+
+The re-score is reproducible: the raw streams of a run are kept, and
+
+    node eval/ab.mjs --rescore <the stream dir> --target <subject> --suite eval/tasks-self.json
+
+grades them again without spending a token. A harness that measures the
+harness is worse than one that measures nothing.
 
 ### What this does not say
 
@@ -404,7 +417,8 @@ small - only the floor is enforced.
 
 ## Not measured here
 
-- Whether the agent's *answers* got better in general. One task, six runs.
+- Whether the agent's *answers* got better in general. Six tasks, 120 runs,
+  and a tie on correctness - which is not the same as a measurement of it.
 - Whether the numbers in Results 1 and 2 were caused by the kit. Result 3 shows
   a mechanism that would produce them; the A/B points the same way on a
   different task. Neither window separates the kit from the work.

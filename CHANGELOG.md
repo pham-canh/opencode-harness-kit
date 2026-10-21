@@ -12,6 +12,38 @@ is not happening.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`eval/models.mjs`** - measures every model the shipped profiles use, one
+  line each, the same prompt for all of them, with the `low` effort variant
+  as well. It is what the routing table in `docs/ROUTING.md` is measured
+  with, and it did not exist: the numbers in that table had been taken once,
+  by hand, and could not be taken again.
+
+### Changed
+
+- **`docs/ROUTING.md` is measured again**, on 2026-10-21, and the two sets
+  of numbers are now labelled for what they measure. The install tables are
+  the telemetry of a working session; the new one is a direct call, from the
+  process start, which is the wait a lane would actually cost. Beam is still
+  the fastest of the ten, but by under a second over the next three, so the
+  reason to pick it is the 1M context as much as the speed. GLM is level
+  with Nemotron 3 Ultra for review, so the safe ceiling costs nothing
+  there. LongCat is twice Beam on the same one-line question.
+
+- **The 0.4.4 A/B table above was corrected.** It was written from the run
+  the grader mis-scored, and it said the kit was worse. The shipped
+  measurement is a tie.
+
+### Fixed
+
+- **`eval/models.mjs` accepted a mistyped `--reps`** and measured nothing
+  while reporting success - the same class of bug this kit keeps finding in
+  other places. It also ignored `--reps=5`, did not say why a model failed,
+  and left a scratch directory behind when it was killed.
+
 ## [0.4.4] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.4.4 && git push origin main
@@ -114,15 +146,6 @@ whatever they pointed at.
 The field in the log was renamed from `savedBytes` to `savedChars`, and
 the log is project-local and persistent: every project that upgraded had
 the old records and read them as zero. The old name is still read.
-
-**The published type declarations did not resolve for a consumer.**
-
-They import a type from `@opencode-ai/plugin`, which was a devDependency, so
-a consumer that installed the package type-checked against a type it did
-not have. The subpath exports - `opencode-harness-kit/profile` and the rest
-- declared no types at all, even though the declarations were built and
-shipped. The plugin is now an optional peer dependency and every subpath
-declares its types.
 
 **`oc-harness cost` reported characters as bytes.**
 
@@ -301,9 +324,11 @@ improvement from a NULL average.
   parts UNPRUNED - the pruner rewrites the outgoing request, not the history
   - so the stored parts of a real session are exactly what the pruner was
   given, and replaying the real pruner over them measures exactly what it
-  removed, on the same messages with and without. On this install: **80.5% of
-  the context across 60 real sessions**, 6,608 parts stubbed - the number
-  `npm run measure:prune` prints.
+  removed, on the same messages with and without. On this install, measured on
+  2026-10-20: **80.5% of the context across 60 real sessions**, 6,608 parts
+  stubbed. The number moves with the sessions, so it is a measurement of one
+  install at one moment - run `npm run measure:prune` for the number on
+  yours.
 
   The measurement scripts also run without the sqlite3 CLI now. python3's
   built-in sqlite3 module does the same job, and python3 is on more machines
@@ -469,23 +494,33 @@ improvement from a NULL average.
   check is not a result. The new suite runs against the kit's own tree at a
   pinned commit, so `git clone && git checkout <sha>` reproduces it exactly.
 
-  Ten reps per arm, 120 agent runs, and the result is not flattering:
+  Ten reps per arm, 120 agent runs, on the same model in both arms:
 
   | metric (median) | kit on | kit off |
   |---|---|---|
-  | **correct** | **52/60** | **59/59** |
-  | tool calls | 11.5 | 3 |
-  | input tokens | 51,449 | 4,551 |
-  | final context | 39,603 | 10,855 |
-  | wall seconds | 43.6 | 32.5 |
+  | **correct** | **54/60** | **55/60** |
+  | tool calls | 12.5 | 8 |
+  | input tokens | 56,205 | 10,540 |
+  | final context | 39,928 | 12,718 |
+  | wall seconds | 43 | 21 |
   | paths written outside the target | 0 | 0 |
 
   **On a task that fits in one read, the kit is a cost.** Its instructions
-  cost eleven times the input tokens and four times the tool calls, the run
-  takes a third longer, and the answers are worse. The rule that says *locate
-  before you read* is a waste on a one-file question, and the tool counts show
-  it. The two edit tasks are a tie at 10/10, and the guard stopped no writes
-  in either arm.
+  cost over five times the input tokens and half again as many tool calls,
+  and the run takes twice as long. The answers are a tie - 54 against 55,
+  and a second run of the same 120 runs gave 55 against 54, the other way.
+  The rule that says *locate before you read* is a waste on a one-file
+  question, and the tool counts show it. The two edit tasks are a tie at
+  10/10, and the guard stopped no writes in either arm.
+
+  **The first version of this table said the kit was worse - 52/60 against
+  59/59 - and the grader was why.** It could not read a citation written as
+  `**File:** x` on one line and `**Line:** 105` on the next, which is the
+  shape the kit's own instructions produce, while the kit-off arm answered
+  in prose and was graded by a pattern that handled prose. Re-scoring the
+  same 120 answers with the fixed grader puts the kit ahead on the lookup
+  tasks. A harness that measures the harness is worse than one that measures
+  nothing.
 
   The value the kit does have is in long sessions - the pruner removes 80.5%
   of the context across real ones - and in process, which a grader that

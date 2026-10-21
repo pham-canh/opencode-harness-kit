@@ -1,12 +1,14 @@
 # Exit codes
 
 Every command that can fail says so in its exit code, so a script can tell
-"the kit says no" from "the kit broke". A command that succeeded exits 0 and
-prints nothing to stderr.
+"the kit says no" from "the kit broke". A command that succeeded exits 0.
+Its errors go to stderr; a notice about what it did - a backup it kept, a
+warning about retention - also goes there, so a script that only reads
+stdout gets the answer and nothing else.
 
 ## `oc-harness run`
 
-The unattended loop. It walks `space-tasks.md`, asks the agent for one task
+The unattended loop. It walks `.space/tasks.md`, asks the agent for one task
 at a time, and re-runs the task's own verify command before believing it.
 
 | Code | Meaning |
@@ -15,7 +17,7 @@ at a time, and re-runs the task's own verify command before believing it.
 | 1 | There is no task file. The loop needs a plan to walk. |
 | 2 | Stopped early and a person is needed: a task is blocked, a task has no verify command, the round cap was reached, or the time budget ran out. |
 | 3 | The agent itself failed. The reason is the agent's own last words, and the task is marked blocked with them. |
-| 4 | The verify command failed. The task is marked blocked and the real output is in `space-tasks.md` - not in the exit code, which is no place for a stack trace. |
+| 4 | The verify command failed. The task is marked blocked and the real output is in `.space/tasks.md` - not in the exit code, which is no place for a stack trace. |
 
 Code 2 is the "asked for something impossible" code: nothing about it is a
 bug, and the reason is printed. Codes 3 and 4 mean the work did not land.
@@ -24,11 +26,17 @@ bug, and the reason is printed. Codes 3 and 4 mean the work did not land.
 
 | Code | Meaning |
 |---|---|
-| 0 | Everything checks out. |
-| 1 | Something does not. The problems are listed, one per line. |
+| 0 | The install is consistent, and no profile has drifted. |
+| 1 | The install is broken: no config, no profile recorded in it, a profile that cannot be loaded, or a field that drifted from the profile. The problems are listed, one per line. |
 
-`--check-models` exits 1 as soon as a profile has drifted from the live
-catalogue. `--watch` never exits: it polls, and reports only what CHANGED.
+**A profile that has drifted from the live catalogue is not a broken
+install.** A provider changed a context window; the install is fine and the
+metadata is stale. That exits 0, and the drift is reported. `--strict` is
+the flag that makes it fail, for a CI job that wants to know.
+
+`--check-models` exits 1 when a shipped model has **left** the catalogue -
+not when it has drifted. `--watch` never exits: it polls, and reports only
+what CHANGED.
 
 A failed catalogue fetch is not a finding. It is reported, the models are not
 announced as withdrawn, and the poll carries on - a catalogue that cannot be
@@ -36,7 +44,8 @@ read says nothing about the models in it.
 
 With `--json` the report is the only thing on stdout: a script that pipes it
 into a parser gets JSON, and a failure is a JSON object with an `error` in
-it, not a parse error.
+it, not a parse error. `--json` and `--watch` do not combine: the watch
+prints what changed, in prose, as it happens.
 
 ## The measurement gates
 
@@ -46,6 +55,9 @@ it, not a parse error.
 |---|---|
 | 0 | Every measurement that could be compared is inside its threshold. |
 | 1 | One is not. The report names the threshold and the number. |
+
+`node eval/models.mjs` exits 1 when any model could not be measured: a
+table with a hole in it is not a measurement of the tier.
 
 A measurement that could NOT be compared - the two windows do not hold the
 same work, so the difference is confounded - is reported as a NOTE and NOT
@@ -60,8 +72,8 @@ attributable measurement carries the gate.
 
 | Code | Meaning |
 |---|---|
-| 0 | The install is in place, or the change was confirmed. |
-| 1 | The install was refused, left alone, or a step failed. |
+| 0 | The install is in place, or the change was confirmed. Something may have been left alone - a file that was already there, a prompt that was not answered - and the reason is printed. |
+| 1 | The install was refused, or a step failed. |
 
 `doctor` also exits 1 when there is no config, or no profile recorded in
 it: a kit that is installed but points at nothing is a broken install, and

@@ -30,25 +30,22 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { median } from "./metrics.js"
+import { countFlag, stringFlag } from "./flags.mjs"
 
 const args = process.argv.slice(2)
-const flag = (...n) => {
-  const i = args.findIndex((a) => n.includes(a))
-  return i >= 0 ? args[i + 1] : undefined
-}
 const wantJson = args.includes("--json")
-// The rep count is validated rather than coerced. `Math.max(1, NaN)` is
-// NaN, a loop with a NaN bound runs zero times, and the script would print
-// an empty table and report success - a measurement of nothing that looks
-// like a measurement. Zero reps is the same thing with better manners.
-const repsRaw = flag("--reps")
-const reps = repsRaw === undefined ? 3 : Number(repsRaw)
-if (!Number.isFinite(reps) || reps < 1) {
-  console.error(`--reps must be a number of at least 1, not ${JSON.stringify(repsRaw)}`)
+// The shared flag parser, so `--reps=5` means what `--reps 5` means and a
+// mistyped value is an error rather than a measurement of nothing.
+let reps
+let only
+try {
+  reps = countFlag("--reps", args) ?? 3
+  only = stringFlag("--model", args)
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err))
   process.exit(1)
 }
 const withEffort = args.includes("--effort")
-const only = flag("--model")
 
 const PROMPT = "Reply with exactly the word OK and nothing else."
 
@@ -88,15 +85,24 @@ function measure(model, variant) {
   if (variant) argv.push("--variant", variant)
   argv.push(PROMPT)
   const t0 = Date.now()
-  const res = spawnSync("opencode", argv, {
-    cwd: dir,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: 180_000,
-    killSignal: "SIGKILL",
-  })
+  let res
+  try {
+    res = spawnSync("opencode", argv, {
+      cwd: dir,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 180_000,
+      killSignal: "SIGKILL",
+    })
+  } finally {
+    // The directory holds a whole opencode project. A run that is killed
+    // leaves it behind, and a scratch directory that is never cleaned up is
+    // a scratch directory nobody can find again.
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {}
+  }
   const ms = Date.now() - t0
-  rmSync(dir, { recursive: true, force: true })
   const out = res.stdout ?? ""
   let reasoning = 0
   let output = 0
@@ -118,21 +124,24 @@ function measure(model, variant) {
     input += Number(t.input ?? 0) + Number(t.cache?.read ?? 0)
   }
   if (!finished) {
-    return {
-      ok: false,
-      ms,
-      reasoning,
-      output,
-      input,
-      error: (res.stderr ?? "").split("\n").find((l) => l.trim()) ?? "no reply",
-    }
+    // The reason, in the order it is useful: the spawn failed (opencode is
+    // not installed), the process was killed (the ceiling), and only then
+    // whatever the provider said. "no reply" on its own says nothing about
+    // which of the three it was.
+    const reason = res.error
+      ? `could not run opencode: ${res.error.message}`
+      : res.signal
+        ? `killed after the ${Math.round(ms / 1000)}s ceiling (${res.signal})`
+        : ((res.stderr ?? "").split("\n").find((l) => l.trim()) ?? "no reply")
+    return { ok: false, ms, reasoning, output, input, error: reason }
   }
   return { ok: true, ms, reasoning, output, input, error: null }
 }
 
 const rows = []
 for (const { model, profiles } of await modelsInUse()) {
-  if (only && model !== only) continue
+  // The docs name a model by its bare id, so both spellings work.
+  if (only && model !== only && model !== `opencode/${only}` && only !== model.split("/").pop()) continue
   const samples = []
   for (let i = 0; i < reps; i++) {
     let r = measure(model, null)
@@ -176,9 +185,16 @@ for (const { model, profiles } of await modelsInUse()) {
   )
 }
 
+const failed = rows.filter((r) => !r.ok).length
 if (wantJson) {
-  console.log(JSON.stringify({ when: new Date().toISOString(), reps, prompt: PROMPT, rows }, null, 2))
-  process.exit(0)
+  console.log(
+    JSON.stringify(
+      { when: new Date().toISOString(), reps, prompt: PROMPT, ok: failed === 0, failed, rows },
+      null,
+      2,
+    ),
+  )
+  process.exit(failed === 0 ? 0 : 1)
 }
 
 console.log("")
@@ -216,3 +232,8 @@ for (const r of rows) {
   }
 }
 console.log("")
+
+if (failed) {
+  console.error(`  ${failed} model(s) could not be measured - the numbers above are not the whole tier.`)
+  process.exit(1)
+}

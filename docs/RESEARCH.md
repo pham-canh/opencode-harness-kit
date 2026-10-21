@@ -193,7 +193,14 @@ out.** Re-measured on 2026-10-20, lane by lane, over live calls: GLM is
 4.4-5.8 seconds and not 16-27 (the old figure came from a much larger
 prompt); MiMo reads an image in 19.2 seconds and not 8; and Nemotron Super VL
 does **not** hang on a tool read, only on a file attached to the prompt, which
-means the sweep lane is sound. The measurement also showed the safe fleet
+means the sweep lane is sound.
+
+Those were the install's numbers, measured inside a working session. A
+DIRECT measurement on 2026-10-21 - one line, the same prompt for every
+model, from the process start - puts GLM at 7.4 seconds and Beam at 6.1, so
+the two are not comparable and the routing page now says which is which.
+The image figures are still the install's: a one-line prompt is not an
+image. The measurement also showed the safe fleet
 giving up more than it needed to: two lanes were on a model the ceiling had
 forced them onto rather than the best one available for that job. The numbers,
 and what changed because of them, are in [`ROUTING.md`](ROUTING.md).
@@ -288,3 +295,6 @@ and quietly replacing it.
   session
 - The live free tier, measured 2026-10-20: one request per lane on both
   fleets, ten lanes on each, through real delegations
+- The live free tier, measured 2026-10-21, directly: `node eval/models.mjs
+  --reps 5 --effort` - the same one-line prompt to every model the profiles
+  use, from the process start, with the `low` variant as well
