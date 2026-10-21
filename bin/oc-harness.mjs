@@ -374,17 +374,36 @@ function cmdLink() {
     fail("dist/index.js missing. Run: npm run build")
   }
   const dir = join(CONFIG_DIR, "plugins")
-  mkdirSync(dir, { recursive: true })
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch (err) {
+    // The plugin is the guard. A config directory the user cannot write to
+    // is not a small problem, and the error used to arrive as a raw
+    // exception from deep inside the command.
+    fail(
+      `could not create ${dir}: ${err instanceof Error ? err.message : String(err)}. The guard is not enforcing anything without the plugin link.`,
+    )
+  }
   const target = join(dir, "opencode-harness-kit.js")
   // Relative to wherever this package actually is. The previous version wrote a
   // literal `../../../harness/space-harness/...`, which was right on one machine
   // and broken everywhere else, CI included.
-  linkOne(dist, target)
+  const outcome = linkOne(dist, target)
+  // The link is the whole guard. A plugin that is not linked is a guard that
+  // is not enforcing anything, and the command used to say "linked" whether
+  // or not the link was there - a real file at that path (a copy somebody
+  // made) was enough to get the tick.
+  if (outcome !== "linked") {
+    fail(
+      `could not link the plugin into ${target} (${outcome}). The guard is not enforcing anything without it.`,
+    )
+  }
   console.log(`\n  ${green("✓")} linked ${target}`)
   console.log(
     `  ${stamp("opencode loads ~/.config/opencode/plugins automatically")}\n` +
       `  ${stamp("restart opencode, then: opencode debug config")}\n`,
   )
+  return outcome
 }
 
 /** Where the behavioural layer has to land for the config to mean anything. */
@@ -510,7 +529,12 @@ async function cmdInstall() {
   if (!existsSync(dist)) fail("dist/index.js missing. Run: npm run build")
 
   // The plugin link first: without it the guard is not enforcing anything.
-  cmdLink()
+  //
+  // The outcome is kept, because the link is the one target whose absence
+  // makes the kit do NOTHING: the prompts and the skills are still worth
+  // having, but the guard, the pruning and the lane failover are all in the
+  // plugin, and a copy somebody left at that path is not it.
+  const pluginOutcome = cmdLink()
 
   const legacy = removeLegacyAgentFiles()
   if (legacy.length) {
@@ -519,9 +543,26 @@ async function cmdInstall() {
     )
   }
 
+  // Every target the kit needs, and what happened to each of them.
+  //
+  // The list is the point. The install used to print "installed into" and
+  // exit 0 whether it had linked everything, linked nothing, or left the
+  // user's own file in place because the prompt was answered no - and a kit
+  // that is not installed is a kit that is not running, which is exactly the
+  // kind of thing this command is supposed to be the last word on.
+  //
+  // Two lists, because the two mean different things. A link that FAILED is
+  // a step that failed: the exit code is 1. A target that was LEFT ALONE is
+  // a file of the user's that the installer refused to destroy, which
+  // docs/EXIT-CODES.md says is exit 0 with the reason printed - and the
+  // reason is printed, loudly, and `verify` reports the target as missing.
+  const failed = []
+  const leftAlone = []
+
   for (const { src, dest, kind } of installTargets()) {
     if (!existsSync(src)) {
       console.log(`  ${yellow("!")} ${stamp(`${kind} missing in repo: ${src}`)}`)
+      failed.push(`${dest} (missing in the package)`)
       continue
     }
     const parent = dirname(dest)
@@ -529,6 +570,7 @@ async function cmdInstall() {
 
     // A link that already points at us needs no permission. A file that holds
     // something else would be destroyed by the link, so that gets a question.
+    let force = false
     if (kind === "file" && existsSync(dest) && interactive()) {
       let ours = false
       try {
@@ -538,9 +580,14 @@ async function cmdInstall() {
       } catch {
         ours = false
       }
-      if (!ours && !(await confirm(`overwrite ${dest}?`))) {
-        console.log(`  ${stamp(`left alone: ${dest}`)}`)
-        continue
+      if (!ours) {
+        if (await confirm(`overwrite ${dest}?`)) {
+          force = true
+        } else {
+          console.log(`  ${stamp(`left alone: ${dest}`)}`)
+          leftAlone.push(`${dest} (left alone at the prompt)`)
+          continue
+        }
       }
     }
 
@@ -553,14 +600,51 @@ async function cmdInstall() {
         if (!entry.isDirectory() && !entry.name.endsWith(".md") && !entry.name.endsWith(".json")) {
           continue
         }
-        linkOne(join(src, entry.name), join(dest, entry.name))
+        const outcome = linkOne(join(src, entry.name), join(dest, entry.name))
+        if (outcome === "failed") {
+          failed.push(`${join(dest, entry.name)} (could not be linked)`)
+        } else if (outcome === "left alone") {
+          leftAlone.push(`${join(dest, entry.name)} (a real file that is not the kit's)`)
+        }
       }
       continue
     }
-    linkOne(src, dest)
+    const outcome = linkOne(src, dest, { force })
+    if (outcome === "failed") {
+      failed.push(`${dest} (could not be linked)`)
+    } else if (outcome === "left alone") {
+      leftAlone.push(`${dest} (a real file that is not the kit's)`)
+    }
   }
 
-  console.log(`\n  ${green("✓")} installed into ${CONFIG_DIR}`)
+  if (pluginOutcome !== "linked") {
+    failed.push(
+      `${join(CONFIG_DIR, "plugins", "opencode-harness-kit.js")} (${pluginOutcome} - the guard, the pruning and the lane failover are all in it)`,
+    )
+  }
+
+  if (failed.length) {
+    console.log(`\n  ${red("✗")} the install failed: ${failed.length} target(s) are not in place`)
+    for (const t of failed) console.log(`    ${stamp(t)}`)
+    console.log(
+      `\n  ${stamp("the kit is not in place, so the parts that depend on it are not running")}`,
+    )
+    process.exit(1)
+  }
+
+  if (leftAlone.length) {
+    // Not a failure, and not a success either. The reason is printed, which
+    // is what docs/EXIT-CODES.md asks for, and the target is NOT counted as
+    // installed: a tick next to a file that holds somebody else's rules is a
+    // claim the installer cannot make.
+    console.log(`\n  ${yellow("!")} installed into ${CONFIG_DIR}, but ${leftAlone.length} target(s) were left alone:`)
+    for (const t of leftAlone) console.log(`    ${stamp(t)}`)
+    console.log(
+      `\n  ${stamp("the kit's own file is not in place, so whatever reads it reads somebody else's. Run: oc-harness verify")}`,
+    )
+  } else {
+    console.log(`\n  ${green("✓")} installed into ${CONFIG_DIR}`)
+  }
   for (const { dest } of installTargets()) {
     console.log(`  ${stamp(`  ${dest.replace(`${homedir()}/`, "~/")}`)}`)
   }
@@ -691,8 +775,19 @@ async function askChoice(question) {
  * /private/var, so a relative path computed from /var/... resolves against
  * /private/var/... and a link built that way ends up one level short of its
  * target - a broken symlink that only appears outside the home directory.
+ *
+ * The outcome is RETURNED, and the install needs it. This function used to
+ * print a warning and return nothing, so a caller that had linked nothing
+ * could not tell it apart from one that had linked everything - and the
+ * install said "installed" either way.
+ *
+ * @param {string} src
+ * @param {string} dest
+ * @param {{ force?: boolean }} [opts] `force` replaces a real file that is not
+ *   the kit's. The installer sets it only where the user has just said yes.
+ * @returns {"linked" | "left alone" | "failed"}
  */
-function linkOne(src, dest) {
+function linkOne(src, dest, opts = {}) {
   const parent = realpathSync(dirname(dest))
   const target = relative(parent, realpathSync(src))
 
@@ -704,7 +799,7 @@ function linkOne(src, dest) {
   } catch {
     // Nothing at `dest` yet.
   }
-  if (ours) return
+  if (ours) return "linked"
 
   if (isLink) {
     // A symlink is a symlink whether or not its target exists, and a
@@ -729,16 +824,26 @@ function linkOne(src, dest) {
     // agent was deleted and replaced by a symlink without a word. A real
     // directory is left alone too -- unlinking it is not this installer's
     // call to make.
-    const kind = lstatSync(dest).isDirectory() ? "directory" : "file"
-    console.log(`  ${yellow("!")} ${stamp(`left alone: ${dest} is a real ${kind} and was not ours to replace`)}`)
-    return
+    //
+    // `force` is the user having just said yes at the prompt. It replaces a
+    // FILE, and a file only: a directory is somebody's collection of prompts
+    // and no answer to one question is consent to delete it.
+    const isDir = lstatSync(dest).isDirectory()
+    if (isDir || !opts.force) {
+      const kind = isDir ? "directory" : "file"
+      console.log(`  ${yellow("!")} ${stamp(`left alone: ${dest} is a real ${kind} and was not ours to replace`)}`)
+      return "left alone"
+    }
+    rmSync(dest, { force: true })
   }
 
   try {
     symlinkSync(target, dest)
   } catch (err) {
     console.log(`  ${yellow("!")} ${stamp(`could not link ${dest}: ${err instanceof Error ? err.message : String(err)}`)}`)
+    return "failed"
   }
+  return "linked"
 }
 
 /**
@@ -788,11 +893,21 @@ function cmdVerify() {
   //    over a harness that was doing nothing.
   const instructions = /** @type {any} */ (actual?.instructions) ?? [globalInstructionsPath()]
   for (const raw of instructions) {
-    const target = raw.startsWith("~")
-      ? join(homedir(), raw.slice(1))
-      : raw.startsWith("/")
-        ? raw
-        : join(process.cwd(), raw)
+    // A relative path is not a path as far as opencode is concerned.
+    //
+    // The kit's own source says it: "A relative reference is silently ignored
+    // by opencode". The check here resolved it against the directory the
+    // command happened to be run from, so a relative instruction "resolved"
+    // or not depending on where the user was standing - and the verdict was
+    // a statement about the shell's working directory rather than about the
+    // config.
+    if (!raw.startsWith("~") && !raw.startsWith("/")) {
+      problems.push(
+        `instruction "${raw}" is a relative path, and opencode ignores relative instruction paths - the rules in it are not being loaded. Use an absolute path, or one that starts with ~`,
+      )
+      continue
+    }
+    const target = raw.startsWith("~") ? join(homedir(), raw.slice(1)) : raw
     if (existsSync(target)) {
       ok.push(`instruction ${raw} resolves`)
     } else {
@@ -813,6 +928,15 @@ function cmdVerify() {
     problems.push(
       `${kitInstruction} does not exist - the rules in it are not being loaded. Run: oc-harness install`,
     )
+  } else if (!pointsIntoKit(kitTarget)) {
+    // The kit's own file, and not a file that happens to have its name. The
+    // installer refuses to replace a real file, so a user who already had a
+    // GLOBAL.md keeps it - and the check above was satisfied by its mere
+    // existence, so the report said the rules were loaded while the file
+    // being read was somebody else's.
+    problems.push(
+      `${kitInstruction} is not the kit's file - the rules being loaded are not the ones this kit ships. Run: oc-harness install`,
+    )
   }
 
   // 3. Every lane the profile enables must have its prompt installed, and the
@@ -830,7 +954,25 @@ function cmdVerify() {
       )
       continue
     }
-    ok.push(`prompt ${role}.md installed`)
+    // The file has to be the KIT'S file, not a file that happens to sit at
+    // that path.
+    //
+    // The installer refuses to replace a real file, so a user who already
+    // had a prompts/build.md keeps it. The check above was happy with a file
+    // at that path, so the lane ran on the user's own prompt while the
+    // report said the prompt was installed - and the whole behavioural layer
+    // of the kit was absent with a green tick next to it.
+    //
+    // The config's own reference is still checked below: the lane's prompt
+    // path is a separate thing, and a broken one is worth saying whatever
+    // the file at that path happens to be.
+    if (!pointsIntoKit(file)) {
+      problems.push(
+        `prompts/${role}.md is not the kit's file - the ${role} lane runs on somebody else's instructions. Run: oc-harness install`,
+      )
+    } else {
+      ok.push(`prompt ${role}.md installed`)
+    }
     const ref = actual?.agent?.[role]?.prompt
     if (ref) {
       const target = ref.replace(/^\{file:/, "").replace(/\}$/, "")
@@ -874,10 +1016,17 @@ function cmdVerify() {
         problems.push(`agent file ${where}/${name} cannot be read (a broken symlink?)`)
         continue
       }
+      // A model reference, and only a model reference.
+      //
+      // The pattern used to match `opencode/opencode.jsonc` - the name of a
+      // FILE - and report it as a model that is not in the profile, so a
+      // perfectly good agent that mentioned its config was reported as a
+      // problem. The id has to look like a model id: no file extension.
       const named = text.match(/opencode\/([a-z0-9.\-]+)/i)
-      if (named && !modelsInPlay(p).includes(named[1])) {
+      const id = named?.[1]
+      if (id && !/\.(json|jsonc|md|js|ts|txt|ya?ml)$/i.test(id) && !modelsInPlay(p).includes(id)) {
         problems.push(
-          `agent file ${where}/${name} mentions opencode/${named[1]}, which is not in the active profile`,
+          `agent file ${where}/${name} mentions opencode/${id}, which is not in the active profile`,
         )
       }
     }
@@ -954,6 +1103,23 @@ function cmdVerify() {
           `skills/${name} has no SKILL.md - the ${name} step of the loop will never load. Run: oc-harness install`,
         )
         continue
+      }
+      // The kit's own skill, and not a file that happens to sit at that path.
+      // The installer leaves a real directory alone, so a user with their own
+      // skill under the kit's name keeps it - and the loop would run on it
+      // while the report said the skill was installed.
+      //
+      // The link is on the DIRECTORY: the installer links the skill folder
+      // itself, so the SKILL.md inside it is reached through that link and
+      // is not a link of its own.
+      //
+      // This does not stop the frontmatter check below. A directory that is
+      // not the kit's can still be a skill whose name has drifted away from
+      // its directory, and that is a second thing worth saying.
+      if (!pointsIntoKit(join(skillsDir, name))) {
+        problems.push(
+          `skills/${name} is not the kit's skill - the ${name} step of the loop runs on somebody else's instructions. Run: oc-harness install`,
+        )
       }
       const front = stripFrontmatter(readFileSync(skillFile, "utf8"))
       if (front.name !== name) {
@@ -1096,7 +1262,22 @@ function memorySpec() {
 
 async function cmdUse(id) {
   if (!id) fail("usage: oc-harness use <profile> [--print] [--yes]")
-  const p = loadProfile(id)
+  let p = null
+  try {
+    p = loadProfile(id)
+  } catch (err) {
+    // The loader refuses a model whose retention nobody has stated, and the
+    // message it produces does not say what to DO about it. The check below
+    // says exactly that, so it is worth reaching from here too.
+    const message = err instanceof Error ? err.message : String(err)
+    if (/has no retention\.yml entry/.test(message)) {
+      fail(
+        `retention for the models in ${id} is not recorded in retention.yml.\n` +
+          `Add an entry with retention: zero-retention | may-train before installing it.`,
+      )
+    }
+    fail(message)
+  }
 
   // A split profile puts the user behind every model in play, not just the base
   // one. `p.retention` describes the base only, so gating on it let a profile
@@ -1174,11 +1355,18 @@ async function cmdUse(id) {
       fail("left the existing config alone")
     }
     const kept = keepBackup(readFileSync(CONFIG_FILE, "utf8"))
-    if (kept) {
-      console.error(
-        stamp(`  existing config backed up to ${join(BACKUP_DIR, kept)}`),
+    if (!kept) {
+      // The backup is the safety net for an overwrite, and this is the one
+      // path that overwrites without asking. A backup that could not be
+      // written and was not mentioned leaves the user with no way back and
+      // no idea that they have none.
+      fail(
+        `could not write a backup of ${CONFIG_FILE}, so the config was left alone. Fix the permissions on ${join(CONFIG_DIR, BACKUP_DIR)} and run it again`,
       )
     }
+    console.error(
+      stamp(`  existing config backed up to ${join(BACKUP_DIR, kept)}`),
+    )
   }
   writeFileSync(CONFIG_FILE, out)
   console.log(`\n  ${green("✓")} wrote ${CONFIG_FILE}`)
@@ -1415,7 +1603,16 @@ function pointsIntoKit(p) {
     if (!lstatSync(p).isSymbolicLink()) return false
     const target = readlinkSync(p)
     const resolved = isAbsolute(target) ? target : resolve(dirname(p), target)
-    return resolved.startsWith(ROOT + sep) || resolved.startsWith(ROOT + "/")
+    // The kit's own directory is compared in its CANONICAL form.
+    //
+    // The link is written to `realpathSync(src)`, so its target is canonical,
+    // while ROOT is whatever path the package was reached through - and a
+    // package under a linked home, or under /tmp on macOS, is not canonical.
+    // Comparing the two as they are would call a correct install somebody
+    // else's, and the checks that use this would report a kit that is
+    // installed as one that is not.
+    const root = realpathSync(ROOT)
+    return resolved === root || resolved.startsWith(root + sep) || resolved.startsWith(root + "/")
   } catch {
     return false
   }
@@ -1511,6 +1708,9 @@ function keepProfileBackup(path, text) {
  * Keep a copy of the config before it is overwritten.
  *
  * @param {string} text the config as it is now
+ * @returns {string | null} the backup's name, or null when it could not be
+ *   written. The caller has to treat null as a refusal to go on: a backup
+ *   that silently did not happen is a safety net that is not there.
  */
 function keepBackup(text) {
   try {
@@ -1518,8 +1718,15 @@ function keepBackup(text) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     // The most recent first, and only a few: a backup nobody can read
     // through is not a backup.
+    //
+    // Ten of them, not one. The old code removed the nine OLDEST files and
+    // then wrote the new one, so the directory held a single config no
+    // matter how many times the command ran - and the comment above it
+    // promised a history.
     const files = readdirSync(dir).filter((f) => f.endsWith(".jsonc")).sort()
-    for (const f of files.slice(0, 9)) rmSync(join(dir, f), { force: true })
+    for (const f of files.slice(0, Math.max(0, files.length - 9))) {
+      rmSync(join(dir, f), { force: true })
+    }
     const stamp = new Date().toISOString().replace(/[:.]/g, "-")
     const name = `opencode-${stamp}.jsonc`
     writeFileSync(join(dir, name), text)
@@ -1577,27 +1784,45 @@ function cmdCost() {
   let saved = 0
   let stubbed = 0
   if (pruneLog && existsSync(pruneLog)) {
-    try {
-      for (const line of readFileSync(pruneLog, "utf8").split("\n")) {
-        if (!line.trim()) continue
-        const r = JSON.parse(line)
-        prunes++
-        // The published 0.4.3 wrote `savedBytes` into the same file, and the
-        // file is project-local and persistent, so the old records are still
-        // there. Reading only the new name would report every project that
-        // upgraded as having saved nothing.
-        saved += r.savedChars ?? r.savedBytes ?? 0
-        stubbed += r.stubbed ?? 0
+    for (const line of readFileSync(pruneLog, "utf8").split("\n")) {
+      if (!line.trim()) continue
+      // One bad line, not the whole log.
+      //
+      // The parse used to be wrapped around the LOOP, so a single malformed
+      // record - a half-written line, a record from a future version - threw
+      // the whole file away and the command said the pruner had never run.
+      // The log is append-only and project-local, so one bad line is a
+      // reason to skip a line and not a reason to lose the history.
+      let r = null
+      try {
+        r = JSON.parse(line)
+      } catch {
+        continue
       }
-    } catch {
-      // A log that cannot be read is a log with nothing in it.
+      prunes++
+      // The published 0.4.3 wrote `savedBytes` into the same file, and the
+      // file is project-local and persistent, so the old records are still
+      // there. Reading only the new name would report every project that
+      // upgraded as having saved nothing.
+      saved += r.savedChars ?? r.savedBytes ?? 0
+      stubbed += r.stubbed ?? 0
     }
   }
   console.log(`  ${bold("pruned")}`)
   if (!prunes) {
     console.log(`    ${stamp("nothing yet - the pruner has not run in this project")}`)
   } else {
-    console.log(`    ${bold(saved.toLocaleString("en-US"))} characters removed over ${prunes} pass(es)`)
+    // The number can be negative, and it is: the stub is a line of text
+    // standing in for a tool output, and the stub's own metadata is part of
+    // the request that goes out. A pass that made the request BIGGER says
+    // so, rather than being reported as a saving.
+    if (saved < 0) {
+      console.log(
+        `    ${bold(Math.abs(saved).toLocaleString("en-US"))} characters ADDED over ${prunes} pass(es) - the request grew`,
+      )
+    } else {
+      console.log(`    ${bold(saved.toLocaleString("en-US"))} characters removed over ${prunes} pass(es)`)
+    }
     console.log(`    ${bold(stubbed.toLocaleString("en-US"))} tool outputs stubbed`)
     console.log(`    ${stamp("the same context, re-sent on every request of the session")}`)
   }
@@ -1709,12 +1934,20 @@ function cmdUninstall() {
       kept.push(`${dir}/ holds real files`)
       continue
     }
+    let removedHere = 0
     for (const f of ours) {
       try {
         rmSync(join(full, f), { force: true })
-      } catch {}
+        removedHere++
+      } catch {
+        // A removal that did not happen is not a removal. The old code
+        // counted every link it had tried to unlink, so a directory the
+        // user could not write to was reported as removed and was still
+        // there, pointing into a package that was on its way out.
+        kept.push(`${dir}/${f} (could not be removed)`)
+      }
     }
-    removed.push(`${dir}/ (${ours.length} link(s))`)
+    if (removedHere) removed.push(`${dir}/ (${removedHere} link(s))`)
   }
   for (const t of targets) {
     if (!existsSync(t) && !isSymlink(t)) continue
@@ -1733,7 +1966,7 @@ function cmdUninstall() {
       rmSync(t, { force: true })
       removed.push(t)
     } catch {
-      kept.push(t)
+      kept.push(`${t} (could not be removed)`)
     }
   }
   console.log(`\n${bold("uninstall")}\n`)
