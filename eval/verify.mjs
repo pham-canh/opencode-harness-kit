@@ -263,6 +263,101 @@ export function gradeAnswer(target, text, want, { window = 1, exclude = [] } = {
  * says "in every one of the six profiles" is not done by editing the first two,
  * and a plain substring check would pass it happily.
  */
+/**
+ * Grade a change that spans many files.
+ *
+ * A long task is a change to many files at once, and a grader that only
+ * knows how to look at one of them cannot say whether the other eleven were
+ * touched. So the check is a COMPARISON against the pristine subject: each
+ * file in the run copy must be the original with exactly one thing changed -
+ * the named field, with the named entry appended - and everything else in it
+ * byte for byte the same.
+ *
+ * Without the comparison, "the last entry is right" passes an agent that
+ * also reformatted the file, dropped a lane, or deleted a profile. With it,
+ * the check says what the change was.
+ *
+ * @param {string} runDir the run's copy of the subject
+ * @param {{ field: string, append: string, files: string[], except?: string[] }} spec
+ * @param {{ pristine?: string }} [opts] the pristine subject, for the comparison
+ * @returns {{ ok: boolean, reason?: string, changed?: string[] }}
+ */
+export function gradeMutationMany(runDir, spec, { pristine } = {}) {
+  const changed = []
+  // The files that must NOT change. A model cannot fall back to itself, so
+  // the profile for the appended model is left alone - and an agent that
+  // appends it anyway has made a change nobody asked for.
+  for (const file of spec.except ?? []) {
+    const abs = resolveInTarget(runDir, file)
+    if (!abs) return { ok: false, reason: `${file} missing from the run copy` }
+    if (!pristine) continue
+    const origAbs = resolveInTarget(pristine, file)
+    if (!origAbs) return { ok: false, reason: `${file} missing from the pristine subject` }
+    let now
+    let orig
+    try {
+      now = readFileSync(abs, "utf8")
+      orig = readFileSync(origAbs, "utf8")
+    } catch (e) {
+      return { ok: false, reason: `${file} unreadable: ${errorMessage(e)}` }
+    }
+    if (now !== orig) {
+      return { ok: false, reason: `${file} was changed, and it was not one of the files to change` }
+    }
+  }
+  for (const file of spec.files ?? []) {
+    const abs = resolveInTarget(runDir, file)
+    if (!abs) return { ok: false, reason: `${file} missing from the run copy` }
+    let data
+    try {
+      data = JSON.parse(readFileSync(abs, "utf8"))
+    } catch (e) {
+      return { ok: false, reason: `${file} is not valid JSON: ${errorMessage(e)}` }
+    }
+    const arr = data?.[spec.field]
+    if (!Array.isArray(arr)) {
+      return { ok: false, reason: `${file} has no ${spec.field} array` }
+    }
+    if (arr[arr.length - 1] !== spec.append) {
+      return {
+        ok: false,
+        reason: `${file}: the last ${spec.field} entry is ${JSON.stringify(arr[arr.length - 1])}, not ${JSON.stringify(spec.append)}`,
+      }
+    }
+    // The comparison with the original. Everything but the one field has to
+    // be identical, and the field itself has to be the original plus the one
+    // entry - no reordering, no removal, nothing else added.
+    if (!pristine) continue
+    const origAbs = resolveInTarget(pristine, file)
+    if (!origAbs) return { ok: false, reason: `${file} missing from the pristine subject` }
+    let orig
+    try {
+      orig = JSON.parse(readFileSync(origAbs, "utf8"))
+    } catch (e) {
+      return { ok: false, reason: `${file} unreadable in the subject: ${errorMessage(e)}` }
+    }
+    const origArr = orig?.[spec.field]
+    if (!Array.isArray(origArr)) {
+      return { ok: false, reason: `${file} has no ${spec.field} array in the subject` }
+    }
+    const expected = origArr[origArr.length - 1] === spec.append ? origArr : [...origArr, spec.append]
+    if (JSON.stringify(arr) !== JSON.stringify(expected)) {
+      return {
+        ok: false,
+        reason: `${file}: the ${spec.field} list is not the original with ${JSON.stringify(spec.append)} appended`,
+      }
+    }
+    for (const key of Object.keys(orig)) {
+      if (key === spec.field) continue
+      if (JSON.stringify(data?.[key]) !== JSON.stringify(orig[key])) {
+        return { ok: false, reason: `${file}: ${key} changed, and only ${spec.field} was asked for` }
+      }
+    }
+    if (JSON.stringify(arr) !== JSON.stringify(origArr)) changed.push(file)
+  }
+  return { ok: true, changed }
+}
+
 export function gradeMutation(runDir, spec) {
   const abs = resolveInTarget(runDir, spec.file)
   if (!abs) return { ok: false, reason: `${spec.file} missing from the run copy` }

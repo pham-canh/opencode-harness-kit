@@ -5,11 +5,18 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { extractRefs, resolveInTarget, gradeAnswer, gradeMutation, isExcluded } from "../eval/verify.mjs"
+import {
+  extractRefs,
+  resolveInTarget,
+  gradeAnswer,
+  gradeMutation,
+  gradeMutationMany,
+  isExcluded,
+} from "../eval/verify.mjs"
 import { mkdtemp } from "./helpers.mjs"
 
 // A three-file fixture shaped like the snapshots the suite runs against.
@@ -327,4 +334,95 @@ test("a citation to an excluded directory is not evidence", () => {
   writeFileSync(join(dir, "dist", "index.js"), "export function theAnswer() { return 42 }")
   const graded = gradeAnswer(dir, "it is in dist/index.js line 1", WANT, { exclude: ["dist/"] })
   assert.equal(graded.ok, false, `an excluded citation was graded as evidence: ${JSON.stringify(graded.refs)}`)
+})
+
+// A change across many files, graded against the pristine subject.
+//
+// The point of the comparison: "the last entry is right" is not enough. An
+// agent that also reformatted the file, dropped a lane, or deleted a
+// profile would pass a check that only looked at one field.
+
+/**
+ * A subject with two profiles, one of which already ends with the entry.
+ *
+ * @param {string} dir
+ * @returns {string} the pristine root
+ */
+function fleet(dir) {
+  mkdirSync(join(dir, "profiles"), { recursive: true })
+  writeFileSync(
+    join(dir, "profiles", "a.json"),
+    JSON.stringify({ id: "a", model: "m1", fallback: ["x", "y"] }, null, 2),
+  )
+  writeFileSync(
+    join(dir, "profiles", "b.json"),
+    JSON.stringify({ id: "b", model: "m2", fallback: ["z", "target"] }, null, 2),
+  )
+  return dir
+}
+
+const SPEC = {
+  field: "fallback",
+  append: "target",
+  files: ["profiles/a.json"],
+  except: ["profiles/b.json"],
+}
+
+test("a many-file change is graded against the pristine subject", () => {
+  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
+  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  fleet(run)
+  // The right change: one entry appended, nothing else touched.
+  const a = JSON.parse(readFileSync(join(run, "profiles", "a.json"), "utf8"))
+  a.fallback = [...a.fallback, "target"]
+  writeFileSync(join(run, "profiles", "a.json"), JSON.stringify(a, null, 2))
+  const g = gradeMutationMany(run, SPEC, { pristine })
+  assert.equal(g.ok, true, g.reason)
+  assert.deepEqual(g.changed, ["profiles/a.json"])
+})
+
+test("a many-file change that touched something else is not correct", () => {
+  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
+  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  fleet(run)
+  const a = JSON.parse(readFileSync(join(run, "profiles", "a.json"), "utf8"))
+  a.fallback = [...a.fallback, "target"]
+  a.model = "something-else"
+  writeFileSync(join(run, "profiles", "a.json"), JSON.stringify(a, null, 2))
+  const g = gradeMutationMany(run, SPEC, { pristine })
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /model changed/)
+})
+
+test("a many-file change that reordered the list is not correct", () => {
+  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
+  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  fleet(run)
+  const a = JSON.parse(readFileSync(join(run, "profiles", "a.json"), "utf8"))
+  a.fallback = ["target", "x", "y"]
+  writeFileSync(join(run, "profiles", "a.json"), JSON.stringify(a, null, 2))
+  const g = gradeMutationMany(run, SPEC, { pristine })
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /profiles\/a\.json/)
+})
+
+test("a file that was not to be changed, and was, is not correct", () => {
+  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
+  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  fleet(run)
+  const b = JSON.parse(readFileSync(join(run, "profiles", "b.json"), "utf8"))
+  b.fallback = [...b.fallback, "target"]
+  writeFileSync(join(run, "profiles", "b.json"), JSON.stringify(b, null, 2))
+  const g = gradeMutationMany(run, SPEC, { pristine })
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /was changed/)
+})
+
+test("a many-file change that did nothing at all is not correct", () => {
+  const pristine = fleet(mkdtempSync(join(tmpdir(), "ock-fleet-")))
+  const run = mkdtempSync(join(tmpdir(), "ock-fleet-run-"))
+  fleet(run)
+  const g = gradeMutationMany(run, SPEC, { pristine })
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /last fallback entry/)
 })

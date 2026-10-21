@@ -139,6 +139,58 @@ export function checkPremises(target, suite) {
       continue
     }
 
+    if (t.mutateMany) {
+      // A change across many files. The premises: every file named exists,
+      // the field is an array in each of them, and the work is NOT already
+      // done - otherwise the task passes on a run that changed nothing.
+      const spec = t.mutateMany
+      let done = 0
+      for (const file of [...(spec.files ?? []), ...(spec.except ?? [])]) {
+        const abs = join(target, file)
+        if (!existsSync(abs)) {
+          fatal.push({ id, problem: `mutateMany file ${file} is not in the subject` })
+          continue
+        }
+        let data
+        try {
+          data = JSON.parse(readFileSync(abs, "utf8"))
+        } catch (e) {
+          fatal.push({
+            id,
+            problem: `mutateMany file ${file} is not valid JSON: ${e instanceof Error ? e.message : String(e)}`,
+          })
+          continue
+        }
+        const arr = data?.[spec.field]
+        if (!Array.isArray(arr)) {
+          fatal.push({ id, problem: `mutateMany file ${file} has no ${spec.field} array` })
+          continue
+        }
+        if (arr[arr.length - 1] === spec.append) done++
+      }
+      const total = (spec.files ?? []).length + (spec.except ?? []).length
+      if (done === total) {
+        fatal.push({
+          id,
+          problem: `every file already ends its ${spec.field} list with ${JSON.stringify(spec.append)}: the task is already done before the run`,
+        })
+      }
+      // The `except` files are the trap: they must NOT get the entry, so
+      // they have to end with something else for the check to mean anything.
+      for (const file of spec.except ?? []) {
+        const abs = join(target, file)
+        if (!existsSync(abs)) continue
+        const data = JSON.parse(readFileSync(abs, "utf8"))
+        const arr = data?.[spec.field]
+        if (Array.isArray(arr) && arr[arr.length - 1] === spec.append) {
+          fatal.push({
+            id,
+            problem: `mutateMany except file ${file} already ends with ${JSON.stringify(spec.append)}: it is meant to be left alone`,
+          })
+        }
+      }
+    }
+
     const hits = findAll(files, String(t.want ?? ""))
     if (hits.length === 0) {
       fatal.push({

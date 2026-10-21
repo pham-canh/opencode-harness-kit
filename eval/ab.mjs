@@ -31,7 +31,7 @@ import { join } from "node:path"
 
 import { elapsedSeconds, median } from "./metrics.js"
 import { countFlag, numberFlag } from "./flags.mjs"
-import { gradeAnswer, gradeMutation } from "./verify.mjs"
+import { gradeAnswer, gradeMutation, gradeMutationMany } from "./verify.mjs"
 import { checkPremises } from "./premises.mjs"
 import { parseJsonc, configDir } from "../src/profile.js"
 
@@ -625,6 +625,28 @@ if (rescoreDir) {
       if (invalid) {
         ok = null
         why = r.timedOut ? "TIMED OUT, not scored" : "no output, not scored"
+      } else if (job.mutateMany) {
+        // A change that spans many files. The pristine subject is the
+        // comparison: every file in the run copy must be the original with
+        // exactly the one change asked for.
+        const g = gradeMutationMany(runDir, job.mutateMany, { pristine: target })
+        const editOk = g.ok
+        // And the answer, if the task also asks a question. A task with both
+        // halves is finished only when both are done: an agent that made the
+        // change but did not find the code has not finished the work.
+        let answerOk = true
+        let cited = 0
+        if (job.want) {
+          const a = gradeAnswer(runDir, m.text, job.want, { exclude: SUITE_FILES })
+          answerOk = a.ok
+          cited = a.cited
+        }
+        ok = editOk && answerOk
+        why = !editOk
+          ? `edit MISS (${g.reason})`
+          : !answerOk
+            ? `edit ok, answer MISS (cited ${cited}, none held)`
+            : `edit ok (${g.changed?.length ?? 0} of ${job.mutateMany.files.length} file(s) changed), cited ${cited}`
       } else if (job.mutate) {
         const g = gradeMutation(runDir, job.mutate)
         ok = g.ok

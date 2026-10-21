@@ -1,0 +1,55 @@
+{
+  "$comment": [
+    "The long task: one change, many files, and a question about the code.",
+    "",
+    "The A/B in tasks-self.json is made of short tasks - a prompt of two or",
+    "three hundred characters, answered in one or two reads. On those the kit",
+    "is a cost, and the measurement says so: over five times the input tokens",
+    "and a tie on correctness.",
+    "",
+    "That is the wrong task for the kit's central claim. The claim is that",
+    "the pruner pays for itself on a LONG session, and nothing in the short",
+    "suite can show that: a short session never grows the history far enough",
+    "for pruning to matter.",
+    "",
+    "So this suite has one task, and it is long. It touches twelve files, so",
+    "the agent has to read twelve of them, and it has to answer a question",
+    "about the code that CONSUMES the thing it changed - so it has to find",
+    "that code and read it too. The conversation is long because the work is",
+    "long, which is the only way the measurement can be honest.",
+    "",
+    "It is graded on BOTH halves: the change is compared against the pristine",
+    "subject file by file, and the answer is graded by citation. An agent",
+    "that made the change but did not find the code has not finished.",
+    "",
+    "The change is one the kit's own history actually contains: a last-resort",
+    "fallback added to every profile."
+  ],
+  "snapshot": "this repository, at the commit the suite is committed with",
+  "tasks": [
+    {
+      "id": "long-fallback-sweep",
+      "$comment": "Twelve files to read, eleven to change, one trap, and a question about the code that reads the thing that changed.",
+      "task": "In this repository, every profile in `profiles/` has a `fallback` list: the models to try, in order, when the profile's own model is withdrawn from the tier. `big-pickle` is the cheapest text-only model on the tier, so it is the right last resort. Append `big-pickle` to the end of the `fallback` list of every profile — EXCEPT `profiles/big-pickle.json` itself, because a model cannot fall back to itself. Do not change any other field in those files, and do not change any other file. When you are done, report the file and the line where the code reads that `fallback` list and decides which model to use next, and quote the line.",
+      "want": "const queue = [id, ...(profile.fallback ?? [])]",
+      "mutateMany": {
+        "field": "fallback",
+        "append": "big-pickle",
+        "files": [
+          "profiles/beam-free.json",
+          "profiles/deepseek-v4.1-flash-free.json",
+          "profiles/fleet-all.json",
+          "profiles/fleet-safe.json",
+          "profiles/glm-5.3-flash-free.json",
+          "profiles/longcat-2.5-preview-free.json",
+          "profiles/mimo-v2.6-flash-free.json",
+          "profiles/minimax-m3.1-flash-free.json",
+          "profiles/nemotron-3-ultra-free.json",
+          "profiles/nemotron-3.5-lightning-free.json",
+          "profiles/nemotron-3.5-super-vl-free.json"
+        ],
+        "except": ["profiles/big-pickle.json"]
+      }
+    }
+  ]
+}
