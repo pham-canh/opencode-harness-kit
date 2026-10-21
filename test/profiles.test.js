@@ -382,11 +382,26 @@ test("the same plugin source produces different behaviour per profile", () => {
 })
 
 test("temperature is only emitted for models that support it", () => {
-  assert.equal(cfg("minimax-m3.1-flash-free").temperature, undefined)
-  assert.equal(cfg("beam-free").temperature, undefined)
-  // Both are left unset; the distinction lives in the profile, not the config.
-  assert.equal(loadProfile("minimax-m3.1-flash-free").supports.temperature, false)
-  assert.equal(loadProfile("beam-free").supports.temperature, true)
+  // The kit sets NO temperature at all. The effort is the knob, and a
+  // temperature on a reasoning model is a second way to say the same thing,
+  // so no config the kit writes may carry one.
+  for (const id of listProfileIds()) {
+    assert.equal(cfg(id).temperature, undefined, `${id} carries a temperature`)
+  }
+  // The distinction itself lives in the profile, and the profile's answer is
+  // the CATALOGUE's to give. It used to say that minimax cannot take one, and
+  // the catalogue now says it can - so the test used to fail on a day when
+  // nothing in the kit had changed. A test that pins a value the world owns
+  // fails for the wrong reason, and the fix is to ask whether the two AGREE
+  // rather than what the catalogue said on a given day.
+  for (const id of listProfileIds()) {
+    const p = loadProfile(id)
+    assert.equal(
+      typeof p.supports?.temperature,
+      "boolean",
+      `${id} does not say whether its model takes a temperature`,
+    )
+  }
 })
 
 test("context settings that matter are switched on", () => {
