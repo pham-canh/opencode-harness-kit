@@ -34,10 +34,11 @@ import { dirname, join, resolve } from "node:path"
  * The telemetry files for the project containing `startDir`.
  *
  * ALL of them, oldest first. The plugin rotates the file when it passes 4 MB
- * and renames the old one to `telemetry.jsonl.1` - and the reader used to
- * look at `telemetry.jsonl` alone, so a rotation silently threw away the
- * history and every lane reported "never used". The number that decides
- * whether the fleet stays at ten lanes was disappearing on a schedule.
+ * and keeps THREE generations - `telemetry.jsonl`, `telemetry.jsonl.1` and
+ * `telemetry.jsonl.2` - and the reader used to look at `telemetry.jsonl`
+ * alone, so a rotation silently threw away the history and every lane
+ * reported "never used". The number that decides whether the fleet stays at
+ * ten lanes was disappearing on a schedule.
  *
  * @param {string} startDir
  * @returns {string[]} the paths, or an empty array when the project has none
@@ -62,13 +63,19 @@ export function findTelemetryFiles(startDir) {
 }
 
 /**
- * The telemetry file for the project containing `startDir`.
+ * The CURRENT telemetry file for the project containing `startDir`.
+ *
+ * The current one, not the oldest one. The files are enumerated oldest
+ * first, so the current file is the LAST of them - and taking the first
+ * handed back the file that had been rotated away twice, which is the
+ * history rather than the present.
  *
  * @param {string} startDir
  * @returns {string | null} the path, or null when the project has no telemetry
  */
 export function findTelemetryFile(startDir) {
-  return findTelemetryFiles(startDir)[0] ?? null
+  const files = findTelemetryFiles(startDir)
+  return files.length ? files[files.length - 1] : null
 }
 
 /**

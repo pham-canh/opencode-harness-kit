@@ -361,13 +361,24 @@ re-reads stop: **-69% input tokens and -60% wall time** on that task, at the
 cost of a bigger context. It is a setting - `prune.keepDistinctOutputs` - and
 turning it off brings the old behaviour back.
 
-A `savedChars` of 0 in `prune.jsonl` is not a second, redundant pass. It means
-`bytesAfter` did not come out below `bytesBefore` for that turn, which happens
-when a stub is no shorter than the output it replaced (the stub's own label
-costs more than a short body), or when a `reasoning` part was under the 200
-byte floor and so was not shortened at all. These lines are still logged
-because a part was stubbed, which is the event worth recording. Savings
-aggregate correctly either way, since each line is measured independently.
+`savedChars` in `prune.jsonl` is the size of the request before the pass minus
+the size after it, measured on the parts as they are serialised - not on the
+text inside them. It used to measure the text only, and to ignore the state
+the stub put in a part's place, which carries about fifty characters of its
+own metadata per stubbed part. So a pass whose request GREW was reported as
+a saving of the difference between two texts.
+
+A negative `savedChars` therefore means the pass made the request BIGGER: the
+stub was longer than the output it replaced, because the stub carries its own
+label and its own metadata. Such a pass is still logged, because a part was
+stubbed, which is the event worth recording, and the negative number is the
+honest report of it.
+
+There is no minimum size under which a part is left alone. This file used to
+claim a 200 byte floor for `reasoning` parts; there was never such a floor in
+the code, and a reasoning part shorter than the stub - about seventy-eight
+characters - is still replaced, so the request grows. The measurement above
+is what makes that visible instead of silent.
 
 `baseline.mjs` measures permission pressure with its own glob approximation of
 OpenCode's matcher, not OpenCode's matcher. It handles the cases that matter

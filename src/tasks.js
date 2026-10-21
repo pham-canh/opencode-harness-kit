@@ -195,6 +195,12 @@ export const isBlocked = (t) => t.status === "blocked"
  * and its output became one string, and the driver handed that string to a
  * shell. A separate field cannot be mistaken for a command.
  *
+ * The writes happen in ONE order, and the order is part of the contract: the
+ * previous output is removed first, then the status is written, then the new
+ * output is written. A field line ends the output block, so a status line
+ * written before the old output was removed cut that block in half - and the
+ * half that survived was folded into the status by the parser.
+ *
  * @param {string} text
  * @param {Task} task
  * @param {{ status: string, verifyOutput?: string }} outcome
@@ -202,46 +208,100 @@ export const isBlocked = (t) => t.status === "blocked"
  */
 export function markTask(text, task, { status, verifyOutput }) {
   const lines = String(text).split("\n")
-  const boxLine = lines[task.start] ?? ""
+  // The lines of the task as they are RIGHT NOW.
+  //
+  // Every edit below moves the lines under it, so the range of the task is
+  // tracked here. The task the caller parsed was parsed before any of these
+  // edits, so its `end` goes stale as soon as one of them lands.
+  const range = { start: task.start, end: task.end }
+
+  const boxLine = lines[range.start] ?? ""
   // The indentation is part of the document: a task nested under a heading
   // keeps its nesting when it is marked.
-  lines[task.start] = boxLine.replace(
+  lines[range.start] = boxLine.replace(
     /^(\s*)-\s*\[[ xX]\]/,
     (_match, indent) => `${indent}- ${status === "done" ? "[x]" : "[ ]"}`,
   )
 
-  let statusLine = -1
-  for (let i = task.start; i <= task.end + 1 && i < lines.length; i++) {
-    const f = lines[i]?.match(fieldRe)
-    if (f && f[1] === "status") {
-      statusLine = i
-      break
+  // The PREVIOUS output is removed FIRST, before anything else is written
+  // into the task.
+  //
+  // A task that is marked twice keeps one output block, not two.
+  //
+  // It used to be removed after the status line had been written. The
+  // status line is a field line, and a field line ends the output block, so
+  // the removal took the FIRST line of the old output and left its wrapped
+  // lines behind. The parser folds a wrapped line back into the field above
+  // it, so those leftovers were folded into the status - and the status read
+  // back as "done old line 2 old line 3" instead of "done". The task was not
+  // done; it was done with a story attached.
+  if (verifyOutput) {
+    const previous = outputBlock(lines, range)
+    if (previous) {
+      const removed = previous.end - previous.start + 1
+      lines.splice(previous.start, removed)
+      if (previous.end <= range.end) range.end -= removed
     }
   }
-  if (statusLine >= 0) lines[statusLine] = lines[statusLine].replace(
-    /(\s-\s+status\s*:).*$/,
-    `$1 ${status}`,
-  )
+
+  const statusLine = fieldLine(lines, range, "status")
+  if (statusLine >= 0) {
+    lines[statusLine] = lines[statusLine].replace(
+      /(\s-\s+status\s*:).*$/,
+      `$1 ${status}`,
+    )
+  } else {
+    // A task with no `status:` field had the status EVAPORATE.
+    //
+    // The status was only ever written into a status line that already
+    // existed, so a task marked blocked without one kept its unticked box
+    // and nothing else. The parser reads the status back from that box, so
+    // the block became "pending" - and `nextPending()` offered the blocked
+    // work again. The driver contract says blocked work is never retried.
+    //
+    // The status line is written where the other fields are, so the parser
+    // reads it back the way it reads them - and AFTER the whole block of
+    // the last field, not after the field line itself.
+    //
+    // Written after the field line, the status line landed INSIDE the block
+    // of a field that has wrapped lines under it: the output field, once the
+    // driver has run the task. The parser folded the wrapped lines into the
+    // status, so it read back as "blocked continued", the block was gone,
+    // and the blocked work was offered again.
+    const block = lastFieldBlock(lines, range)
+    const indent = fieldIndent(lines, range, block.field)
+    lines.splice(block.end + 1, 0, `${indent}- status: ${status}`)
+    range.end += 1
+  }
 
   if (verifyOutput) {
-    // A task that is marked twice keeps one output block, not two.
-    const previous = outputBlock(lines, task)
-    if (previous) lines.splice(previous.start, previous.end - previous.start + 1)
-
-    const verifyLine = fieldLine(lines, task, "verify")
-    const anchor = verifyLine >= 0 ? verifyLine : lastFieldLine(lines, task)
-    const source = lines[anchor] ?? lines[task.start] ?? ""
+    // The output goes into its own `output:` field rather than under the
+    // `verify:` line. It used to be written as continuation lines under
+    // `verify:`, and the parser folded a continuation back into the field
+    // above it - so the command and its output became one string, and the
+    // driver handed that string to a shell. A separate field cannot be
+    // mistaken for a command.
+    //
+    // It is written after the whole block of the `verify:` field, so it
+    // cannot land inside that block either - a wrapped line under the
+    // verify field would be folded into the output above it.
+    const verifyAt = fieldLine(lines, range, "verify")
+    const block =
+      verifyAt >= 0
+        ? { field: verifyAt, end: fieldBlockEnd(lines, range, verifyAt) }
+        : lastFieldBlock(lines, range)
     // The field line sits at the same level as the field it belongs to; only
     // the continuation lines under it are indented deeper.
-    const fieldIndent = (source.match(/^\s*/) ?? [""])[0]
-    const contIndent = `${fieldIndent}  `
+    const indent = fieldIndent(lines, range, block.field)
+    const contIndent = `${indent}  `
     const quoted = String(verifyOutput)
       .trimEnd()
       .split("\n")
       .map((l) => `${contIndent}${l}`)
     // The first line rides on the field, the rest are continuations of it.
-    const block = [`${fieldIndent}- output: ${quoted[0].trim()}`, ...quoted.slice(1)]
-    lines.splice(anchor + 1, 0, ...block)
+    const written = [`${indent}- output: ${quoted[0].trim()}`, ...quoted.slice(1)]
+    lines.splice(block.end + 1, 0, ...written)
+    range.end += written.length
   }
 
   return lines.join("\n")
@@ -249,46 +309,139 @@ export function markTask(text, task, { status, verifyOutput }) {
 
 /**
  * The line a named field sits on, or -1.
+ *
+ * The scan stops at a task line or a heading: the fields under a nested
+ * task belong to that task, not to the one above it.
+ *
  * @param {string[]} lines
- * @param {Task} task
+ * @param {{ start: number, end: number }} range
  * @param {string} name
  * @returns {number}
  */
-function fieldLine(lines, task, name) {
-  for (let i = task.start; i <= task.end + 1 && i < lines.length; i++) {
-    const f = lines[i]?.match(fieldRe)
+function fieldLine(lines, range, name) {
+  // The scan starts below the task's own line: that line is the task, not
+  // one of its fields.
+  for (let i = range.start + 1; i <= range.end + 1 && i < lines.length; i++) {
+    const line = lines[i] ?? ""
+    if (taskRe.test(line) || headingRe.test(line)) break
+    const f = line.match(fieldRe)
     if (f && f[1] === name) return i
   }
   return -1
 }
 
 /**
- * The last field line of a task, or the task's own line when it has none.
+ * The last line of a field's block: the field line plus the lines wrapped
+ * under it.
+ *
+ * A field line is where a field is written, but it is not the end of the
+ * field: the parser folds a wrapped line back into the value above it, so
+ * the end of the block is the end of the value as the parser reads it. A
+ * field written inside that block takes the wrapped lines with it.
+ *
  * @param {string[]} lines
- * @param {Task} task
+ * @param {{ start: number, end: number }} range
+ * @param {number} fieldAt the line the field is written on
  * @returns {number}
  */
-function lastFieldLine(lines, task) {
-  let last = task.start
-  for (let i = task.start; i <= task.end + 1 && i < lines.length; i++) {
-    if (fieldRe.test(lines[i] ?? "")) last = i
+function fieldBlockEnd(lines, range, fieldAt) {
+  let end = fieldAt
+  for (let i = fieldAt + 1; i <= range.end + 1 && i < lines.length; i++) {
+    const line = lines[i] ?? ""
+    // A task, a heading or the next field ends the block.
+    if (taskRe.test(line) || headingRe.test(line)) break
+    if (fieldRe.test(line)) break
+    // A blank line is not part of the value, but it does not end the block
+    // either: the parser skips it and folds the wrapped line under it back
+    // into the field.
+    if (!line.trim()) continue
+    // A line that is not indented deeper is not a wrapped line.
+    if (!/^\s{4,}\S/.test(line)) break
+    end = i
   }
-  return last
+  return end
+}
+
+/**
+ * The last field of a task: the line it is written on, and the last line of
+ * its block.
+ *
+ * `field` is -1 when the task has no field of its own, and `end` is then
+ * the task's own line - the place a first field is written.
+ *
+ * @param {string[]} lines
+ * @param {{ start: number, end: number }} range
+ * @returns {{ field: number, end: number }}
+ */
+function lastFieldBlock(lines, range) {
+  let field = -1
+  // The scan starts below the task's own line: that line is the task, not
+  // one of its fields.
+  for (let i = range.start + 1; i <= range.end + 1 && i < lines.length; i++) {
+    const line = lines[i] ?? ""
+    if (taskRe.test(line) || headingRe.test(line)) break
+    if (fieldRe.test(line)) field = i
+  }
+  if (field < 0) return { field: -1, end: range.start }
+  return { field, end: fieldBlockEnd(lines, range, field) }
+}
+
+/**
+ * The indentation a field line of a task is written with.
+ *
+ * The fields of a task sit one level deeper than the task itself, so a
+ * field inserted into a task that has none yet follows that convention: a
+ * field at the task's own level reads as a task of its own, or as prose the
+ * parser skips.
+ *
+ * @param {string[]} lines
+ * @param {{ start: number, end: number }} range
+ * @param {number} fieldAt the line the field is written on, or -1 when the
+ *   task has no field of its own yet
+ * @returns {string}
+ */
+function fieldIndent(lines, range, fieldAt) {
+  const source = lines[fieldAt >= 0 ? fieldAt : range.start] ?? ""
+  const own = (source.match(/^\s*/) ?? [""])[0]
+  if (fieldAt < 0) return `${own}  `
+  return own
 }
 
 /**
  * The lines a task's `output:` field occupies, or null when it has none.
+ *
+ * The block ends at the first line that is NOT part of the output - and a
+ * task line or a heading is never part of it, however deeply it is indented.
+ *
+ * The indentation heuristic alone said otherwise: a nested task indented
+ * four spaces or more looked like a continuation of the output above it, so
+ * the block swallowed it and the rewrite DELETED it. The file's own header
+ * promises that every byte the loop does not own survives a rewrite, and a
+ * task the loop never owned was destroyed by marking the task above it.
+ *
+ * A blank line at the end of the block is not part of it: it belongs to the
+ * file, not to the output, and the rewrite must not swallow it.
+ *
  * @param {string[]} lines
- * @param {Task} task
+ * @param {{ start: number, end: number }} range
  * @returns {{ start: number, end: number } | null}
  */
-function outputBlock(lines, task) {
-  const start = fieldLine(lines, task, "output")
+function outputBlock(lines, range) {
+  const start = fieldLine(lines, range, "output")
   if (start < 0) return null
   let end = start
-  for (let i = start + 1; i <= task.end + 1 && i < lines.length; i++) {
-    if (fieldRe.test(lines[i] ?? "")) break
-    if (lines[i].trim() && !/^\s{4,}\S/.test(lines[i])) break
+  for (let i = start + 1; i <= range.end + 1 && i < lines.length; i++) {
+    const line = lines[i] ?? ""
+    // A task or a heading ends the block. This is checked BEFORE the
+    // indentation heuristic, because a nested task is indented deeper than
+    // the field it sits under - that is what nesting means here.
+    if (taskRe.test(line) || headingRe.test(line)) break
+    if (fieldRe.test(line)) break
+    // A blank line is not part of the output, but it does not end the block
+    // either: the parser skips it and folds the wrapped line under it back
+    // into the output.
+    if (!line.trim()) continue
+    if (!/^\s{4,}\S/.test(line)) break
     end = i
   }
   return { start, end }

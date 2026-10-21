@@ -186,11 +186,20 @@ const hook = await HarnessPlugin(
 const transform = hook["experimental.chat.messages.transform"]
 
 /**
- * The size the PRUNER measures.
+ * The size this measurement counts.
  *
- * The pruner counts CHARACTERS, not bytes: `part.text.length`. The report
- * labelled that "bytes", which is wrong for anything that is not ASCII - and
- * an agent's output is not ASCII. Both numbers are reported.
+ * CHARACTERS, not bytes: `part.text.length`. The report labelled that
+ * "bytes", which is wrong for anything that is not ASCII - and an agent's
+ * output is not ASCII. Both numbers are reported.
+ *
+ * This counts the TEXT of every part, while the pruner's own log counts the
+ * PART - and only the parts the pruner touched. So the two numbers answer
+ * two different questions and are not the same number twice: this one asks
+ * how much TEXT the pruner removed from a stored session, the log asks how
+ * much the REQUEST that went out shrank. The stub the pruner leaves behind
+ * carries about fifty characters of metadata of its own, so the log's
+ * saving is the smaller of the two, and it can even be negative where this
+ * one is positive. The gap is stated rather than hidden.
  */
 function sizeOf(part) {
   if (typeof part?.text === "string") return part.text.length
