@@ -69,6 +69,13 @@ config, run the layers individually and say so in the PR.
 not part of any check, and a PR does not need it. `npm run measure` does not
 spawn an agent either — it queries the install database read-only.
 
+The nightly workflow needs a provider to measure with, and the provider key
+is a **secret** — which a job-level `if` cannot read. The flag is therefore
+a repository **variable**: set `HAS_OPENCODE_KEY` to `true` when
+`OPENCODE_API_KEY` is there, and the job runs. Without the variable the job
+is skipped, not failed, because a schedule that is always red is a schedule
+nobody reads.
+
 `eval/models.mjs` spawns real agents too, one line each, against the live
 tier: it is what the routing table in `docs/ROUTING.md` is measured with,
 and it costs a request per model per rep. It is not part of any check
