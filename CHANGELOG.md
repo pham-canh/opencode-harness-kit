@@ -12,12 +12,16 @@ is not happening.
 
 ---
 
-## [0.4.4] — 2026-10-20, not yet published
+## [0.4.4] — 2026-10-21
 
-The tag does not exist yet, and the npm release has not happened. It is cut
-by `git tag v0.4.4 && git push origin main v0.4.4`, which is what the
-publish job watches for. Until that happens, the latest PUBLISHED version is
-0.4.3.
+Published. The tag is what cut it: `git tag v0.4.4 && git push origin main
+v0.4.4`, and the publish job watches for exactly that.
+
+This release is mostly about things that were quietly wrong. The guard let a
+wrapper through, the grader scored correct answers wrong, the A/B compared
+two different models, and the published type declarations did not resolve for
+a consumer. None of them announced itself: they were quiet, and a quiet
+failure in a harness is the kind that gets believed.
 
 ### Fixed
 
@@ -395,9 +399,9 @@ improvement from a NULL average.
   The kit's claim is a trade: a fixed overhead on every request, and the
   context it prunes back. Both numbers were already being written — the prune
   log records what each pass removed, and the telemetry records what each lane
-  cost — and nothing read them together. On the one measured here: 83.7 MB
-  removed over 272 prune passes, 48,122 tool outputs stubbed, and the lanes
-  sorted by what they cost.
+  cost — and nothing read them together. On the one measured here: 83.7
+  million characters removed over 272 prune passes, 48,122 tool outputs
+  stubbed, and the lanes sorted by what they cost.
 
 - **`oc-harness uninstall`.** The install SYMLINKS the plugin, the prompts,
   the skills and GLOBAL.md out of the kit's directory, so `npm uninstall` left
