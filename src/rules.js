@@ -615,26 +615,63 @@ function runsScript(stage) {
  * still a pipe into a shell, because the `;` ends the word and not the
  * pipe.
  *
+ * The shell does not have to be the stage right after the download. A filter
+ * in between (`curl x | grep y | sh`) does not change what the shell RUNS -
+ * it changes only what the agent sees on the way there - so the chain is
+ * the same download-and-execute. The rule used to look at the stage after
+ * the download only, so a filter in the middle hid the shell from it.
+ *
+ * The order still matters: the shell has to come AFTER the download.
+ * `sh | grep y` runs a shell over a pipe it did not fetch, and there is
+ * nothing downloaded for it to execute.
+ *
  * @param {string} command
  * @returns {boolean}
  */
 function pipesScriptIntoShell(command) {
   const stages = pipeStages(command)
-  for (let i = 1; i < stages.length; i++) {
-    if (!DOWNLOADERS.test(stages[i - 1])) continue
-    if (!runsScript(stages[i])) continue
-    return true
+  for (let i = 0; i < stages.length; i++) {
+    if (!DOWNLOADERS.test(stages[i])) continue
+    for (let j = i + 1; j < stages.length; j++) {
+      if (!runsScript(stages[j])) continue
+      return true
+    }
   }
   return false
 }
 
 /**
+ * Whether a token is a flag that makes an rm destructive.
+ *
+ * The short form is a CLUSTER of letters, so `-rf`, `-fr` and `-R` all name
+ * a recursive delete and `-f` names a forced one. The long form is GNU's
+ * own name for the same two flags.
+ *
+ * @param {string} token
+ * @returns {boolean}
+ */
+function isDestructiveRmFlag(token) {
+  if (/^--(recursive|force)$/i.test(token)) return true
+  return /^-[a-zA-Z]*[rf]/i.test(token)
+}
+
+/**
  * Whether a command is an rm with a flag that makes it destructive.
  *
- * The flag can be a short cluster (`-rf`) or the long GNU name of the same
- * two flags (`--recursive --force`), and it can be anywhere among the
- * options. A rule that only knew the short form allowed the long one, which
- * is the same command.
+ * The flags and the paths are read SEPARATELY, because GNU rm PERMUTES its
+ * options: the flags can come after the path, and `rm /tmp/x -rf` is the
+ * same delete as `rm -rf /tmp/x`. The rule used to return at the FIRST flag
+ * token and then look for a path AFTER it, so a flag that came after the
+ * path was invisible and the delete the rule exists to stop went through.
+ *
+ * So the question is not "is the first flag recursive" but "is ANY of the
+ * flags recursive or force, AND is there a path" - a delete of one named
+ * file (`rm file.txt`, `rm -i notes.md`) is not a recursive delete, and a
+ * command with no path at all (`rm`, `rm -rf`) is not a delete.
+ *
+ * `--` ends the options, so every word after it is a path whatever it looks
+ * like. That makes `rm -- -rf` a delete of a file NAMED `-rf`, and not a
+ * recursive delete.
  *
  * @param {string} text the segment, with its prefixes stripped
  * @returns {boolean}
@@ -643,15 +680,88 @@ function isRecursiveDelete(text) {
   const tokens = tokenize(text)
   if (tokens.length < 2) return false
   if (baseName(tokens[0]).toLowerCase() !== "rm") return false
+  let destructive = false
+  let hasPath = false
   for (let i = 1; i < tokens.length; i++) {
     const token = tokens[i]
-    if (!token.startsWith("-")) continue
-    if (!/^-[a-zA-Z]*[rf]/i.test(token) && !/^--(recursive|force)$/i.test(token)) continue
-    // The flag needs something to destroy: `rm --recursive` on its own does
-    // nothing, and a rule that blocks it blocks a typo.
-    return tokens.slice(i + 1).some((t) => !t.startsWith("-"))
+    if (token === "--") {
+      // Everything after `--` is a path, so the words that follow it are
+      // the path this rm destroys.
+      hasPath = tokens.length > i + 1
+      break
+    }
+    if (!token.startsWith("-")) {
+      hasPath = true
+      continue
+    }
+    if (isDestructiveRmFlag(token)) destructive = true
   }
-  return false
+  return destructive && hasPath
+}
+
+/**
+ * The chmod options that carry their value in the NEXT word.
+ *
+ * `chmod --reference FILE` takes the mode from another file, so the word
+ * after it is not the mode. A scanner that read that word as the mode would
+ * see `chmod --reference 777 file` as "chmod 777", and that command is a
+ * file named 777 rather than a mode.
+ */
+const CHMOD_VALUE_OPTIONS = new Set(["--reference"])
+
+/**
+ * The mode a chmod command sets, or null when it sets none.
+ *
+ * The mode is the first numeric OPERAND, and every option in front of it is
+ * skipped - INCLUDING the long forms. The rule used to accept only a short
+ * letter cluster in the flag position, so GNU's own `--recursive` put the
+ * mode out of the rule's reach: `chmod --recursive 777 /` was allowed while
+ * `chmod -R 777 /` was blocked, and the mode is the same mode.
+ *
+ * A symbolic mode (`a=rwx`) is not a numeric one, so it is not a mode this
+ * function returns. That is a policy gap and not a spelling one, and it is
+ * left alone on purpose.
+ *
+ * @param {string} text the segment, with its prefixes stripped
+ * @returns {string | null} the mode, as it was written
+ */
+function chmodMode(text) {
+  const tokens = tokenize(text)
+  if (tokens.length < 2) return null
+  if (baseName(tokens[0]).toLowerCase() !== "chmod") return null
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (token === "--") continue
+    if (token.startsWith("--")) {
+      // `--flag=value` carries its own value, and a boolean long option
+      // carries none. Only the option that takes the next word swallows
+      // it, and that word is then not the mode.
+      if (!token.includes("=") && CHMOD_VALUE_OPTIONS.has(token)) i++
+      continue
+    }
+    if (token.startsWith("-")) continue
+    // The first numeric operand is the mode; the words after it are the
+    // files the mode is applied to.
+    if (/^\d+$/.test(token)) return token
+    return null
+  }
+  return null
+}
+
+/**
+ * Whether a chmod command sets the mode that opens permissions to everyone.
+ *
+ * The mode may be written with leading zeros: `0777` and `777` are the same
+ * mode, and a rule that required the bare digits let one spelling of it
+ * through.
+ *
+ * @param {string} text the segment, with its prefixes stripped
+ * @returns {boolean}
+ */
+function opensPermissions(text) {
+  const mode = chmodMode(text)
+  if (mode === null) return false
+  return /^0*777$/.test(mode)
 }
 
 /**
@@ -711,10 +821,11 @@ export const BASH_RULES = [
   {
     name: "chmod 777",
     scope: "segment",
-    // The mode may be written with leading zeros: `0777` and `777` are the
-    // same mode, and a rule that required the bare digits let one spelling
-    // of it through.
-    test: /^chmod\s+(-[a-zA-Z]+\s+)*0*777\b/,
+    // The mode is read as an OPERAND rather than as a literal, because the
+    // flags in front of it can be long. `chmod --recursive 777 /` is the
+    // same chmod as `chmod -R 777 /`, and a rule that only knew the short
+    // flag cluster let the long spelling through.
+    check: (text) => opensPermissions(text),
     why: "opens permissions on everything",
   },
   {

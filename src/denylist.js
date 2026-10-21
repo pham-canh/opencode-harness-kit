@@ -39,12 +39,11 @@ export const BASH_DENYLIST = [
   // asked about by the config - the config asks about everything it does
   // not name, and asking is the safe direction.
   //
-  // A PERMUTED delete (`rm /tmp/x -rf`) is caught by neither layer today:
-  // the guard's rule needs the flag before the path, and the glob needs
-  // the flag in front. The config asks, so a human decides. Closing that
-  // hole is a change to the guard's rule in src/rules.js, which reads the
-  // tokens - a glob here could only name one spelling of it, and the
-  // spelling would still be the one it missed.
+  // A PERMUTED delete (`rm /tmp/x -rf`) is caught by the GUARD, which reads
+  // the tokens and does not care which order they come in. The glob cannot
+  // name it - a glob here could only name one spelling of it, and the
+  // spelling would still be the one it missed. So the config asks about it,
+  // and a human decides, and the code-level block is the guard's.
   "rm -f *",
   "rm -r *",
   "rm -R *",

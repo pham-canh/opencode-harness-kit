@@ -36,12 +36,11 @@ var BASH_DENYLIST = [
   // asked about by the config - the config asks about everything it does
   // not name, and asking is the safe direction.
   //
-  // A PERMUTED delete (`rm /tmp/x -rf`) is caught by neither layer today:
-  // the guard's rule needs the flag before the path, and the glob needs
-  // the flag in front. The config asks, so a human decides. Closing that
-  // hole is a change to the guard's rule in src/rules.js, which reads the
-  // tokens - a glob here could only name one spelling of it, and the
-  // spelling would still be the one it missed.
+  // A PERMUTED delete (`rm /tmp/x -rf`) is caught by the GUARD, which reads
+  // the tokens and does not care which order they come in. The glob cannot
+  // name it - a glob here could only name one spelling of it, and the
+  // spelling would still be the one it missed. So the config asks about it,
+  // and a human decides, and the code-level block is the guard's.
   "rm -f *",
   "rm -r *",
   "rm -R *",
@@ -432,24 +431,61 @@ function runsScript(stage) {
 }
 function pipesScriptIntoShell(command) {
   const stages = pipeStages(command);
-  for (let i = 1; i < stages.length; i++) {
-    if (!DOWNLOADERS.test(stages[i - 1])) continue;
-    if (!runsScript(stages[i])) continue;
-    return true;
+  for (let i = 0; i < stages.length; i++) {
+    if (!DOWNLOADERS.test(stages[i])) continue;
+    for (let j = i + 1; j < stages.length; j++) {
+      if (!runsScript(stages[j])) continue;
+      return true;
+    }
   }
   return false;
+}
+function isDestructiveRmFlag(token) {
+  if (/^--(recursive|force)$/i.test(token)) return true;
+  return /^-[a-zA-Z]*[rf]/i.test(token);
 }
 function isRecursiveDelete(text) {
   const tokens = tokenize(text);
   if (tokens.length < 2) return false;
   if (baseName(tokens[0]).toLowerCase() !== "rm") return false;
+  let destructive = false;
+  let hasPath = false;
   for (let i = 1; i < tokens.length; i++) {
     const token = tokens[i];
-    if (!token.startsWith("-")) continue;
-    if (!/^-[a-zA-Z]*[rf]/i.test(token) && !/^--(recursive|force)$/i.test(token)) continue;
-    return tokens.slice(i + 1).some((t) => !t.startsWith("-"));
+    if (token === "--") {
+      hasPath = tokens.length > i + 1;
+      break;
+    }
+    if (!token.startsWith("-")) {
+      hasPath = true;
+      continue;
+    }
+    if (isDestructiveRmFlag(token)) destructive = true;
   }
-  return false;
+  return destructive && hasPath;
+}
+var CHMOD_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--reference"]);
+function chmodMode(text) {
+  const tokens = tokenize(text);
+  if (tokens.length < 2) return null;
+  if (baseName(tokens[0]).toLowerCase() !== "chmod") return null;
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === "--") continue;
+    if (token.startsWith("--")) {
+      if (!token.includes("=") && CHMOD_VALUE_OPTIONS.has(token)) i++;
+      continue;
+    }
+    if (token.startsWith("-")) continue;
+    if (/^\d+$/.test(token)) return token;
+    return null;
+  }
+  return null;
+}
+function opensPermissions(text) {
+  const mode = chmodMode(text);
+  if (mode === null) return false;
+  return /^0*777$/.test(mode);
 }
 var ASK_GATED = [/^\s*git\s+push\b/];
 var BASH_RULES = [
@@ -495,10 +531,11 @@ var BASH_RULES = [
   {
     name: "chmod 777",
     scope: "segment",
-    // The mode may be written with leading zeros: `0777` and `777` are the
-    // same mode, and a rule that required the bare digits let one spelling
-    // of it through.
-    test: /^chmod\s+(-[a-zA-Z]+\s+)*0*777\b/,
+    // The mode is read as an OPERAND rather than as a literal, because the
+    // flags in front of it can be long. `chmod --recursive 777 /` is the
+    // same chmod as `chmod -R 777 /`, and a rule that only knew the short
+    // flag cluster let the long spelling through.
+    check: (text) => opensPermissions(text),
     why: "opens permissions on everything"
   },
   {
@@ -1958,7 +1995,26 @@ var TelemetryPlugin = async ({ worktree, directory }) => {
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
+  const requests = /* @__PURE__ */ new Map();
+  const REQUEST_MEMORY = 500;
+  const rememberRequest = (input) => {
+    const id = input?.message?.id;
+    if (typeof id !== "string") return;
+    const model = input?.model;
+    requests.set(id, {
+      agent: typeof input?.agent === "string" ? input.agent : void 0,
+      model: typeof model?.modelID === "string" ? model.modelID : void 0,
+      provider: typeof model?.providerID === "string" ? model.providerID : void 0
+    });
+    if (requests.size > REQUEST_MEMORY) {
+      const oldest = requests.keys().next();
+      if (!oldest.done) requests.delete(oldest.value);
+    }
+  };
   return {
+    "chat.params": async (input) => {
+      rememberRequest(input);
+    },
     event: async ({ event }) => {
       const type = event?.type;
       if (typeof type !== "string") return;
@@ -1967,7 +2023,7 @@ var TelemetryPlugin = async ({ worktree, directory }) => {
         return;
       }
       if (type === "message.updated") {
-        const lane = laneOf(event);
+        const lane = laneOf(event, requests);
         if (!lane || !lane.id) return;
         if (lane.ms !== void 0) {
           if (closed.has(lane.id)) return;
@@ -1991,15 +2047,16 @@ var TelemetryPlugin = async ({ worktree, directory }) => {
     }
   };
 };
-function laneOf(event) {
+function laneOf(event, requests) {
   const e = event;
   const info = e?.properties?.info ?? e?.properties;
   if (!info || typeof info !== "object") return null;
   if (info.role && info.role !== "assistant") return null;
   const id = typeof info.id === "string" ? info.id : void 0;
-  const agent = typeof info.agent === "string" ? info.agent : void 0;
-  const modelId = info.model?.modelID ?? info.modelID;
-  const providerId = info.model?.providerID ?? info.providerID;
+  const parent = typeof info.parentID === "string" ? requests.get(info.parentID) : void 0;
+  const agent = parent?.agent ?? (typeof info.agent === "string" ? info.agent : void 0);
+  const modelId = parent?.model ?? info.model?.modelID ?? info.modelID;
+  const providerId = parent?.provider ?? info.model?.providerID ?? info.providerID;
   const time = info.time ?? {};
   const created = typeof time.created === "number" ? time.created : void 0;
   const completed = typeof time.completed === "number" ? time.completed : void 0;
