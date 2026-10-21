@@ -231,7 +231,7 @@ jobs:
             # `npm stage list <package>` shows what is waiting, and
             # `npm stage approve <id>` publishes it.
             if grep -q "oidc/token/exchange" /tmp/publish.log; then
-              echo "::error::the OIDC exchange was refused, so the trusted publisher configuration does not match. Check that npmjs.com lists this PACKAGE (not the account) with: Organization or user = pham-canh, Repository = space-harness, Workflow filename = ci.yml, Environment name = EMPTY (the workflow declares no environment, so a claim that is never sent can never match), and Allowed actions includes npm publish."
+              echo "::error::the OIDC exchange was refused, so the trusted publisher configuration does not match. Check that npmjs.com lists this PACKAGE (not the account) with: Organization or user = pham-canh, Repository = opencode-harness-kit, Workflow filename = ci.yml, Environment name = EMPTY (the workflow declares no environment, so a claim that is never sent can never match), and Allowed actions includes npm publish."
             elif grep -q "one-time password" /tmp/publish.log; then
               # The token was accepted for reading - `npm whoami` passed - but
               # the publish was refused with EOTP. That is the account's

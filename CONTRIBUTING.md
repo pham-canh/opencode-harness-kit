@@ -139,7 +139,7 @@ repository secret to a granular token scoped to `opencode-harness-kit` with
 if it is absent the job uses OIDC.
 
 ```bash
-gh secret set NPM_TOKEN --repo pham-canh/space-harness
+gh secret set NPM_TOKEN --repo pham-canh/opencode-harness-kit
 ```
 
 > **`gh secret set` takes the secret NAME as its first argument**, and the
@@ -213,7 +213,7 @@ To set it without the script, the command is:
 ```bash
 npm trust github opencode-harness-kit \
   --file ci.yml \
-  --repo pham-canh/space-harness \
+  --repo pham-canh/opencode-harness-kit \
   --allow-publish --allow-stage-publish -y
 ```
 
@@ -222,7 +222,7 @@ The configuration it writes is:
 | field | value |
 |---|---|
 | Organization or user | `pham-canh` |
-| Repository | `space-harness` |
+| Repository | `opencode-harness-kit` |
 | Workflow filename | `ci.yml` (the filename only, not a path) |
 | Environment name | **empty** |
 | Allowed actions | `npm publish` and `npm stage publish` |
@@ -236,7 +236,7 @@ The workflow is the one in `.github/workflows/ci.yml`, and the claims it
 presents are printed by the publish job before it tries:
 
 ```
-repository    pham-canh/space-harness
+repository    pham-canh/opencode-harness-kit
 workflow file ci.yml
 environment   (absent) - the trusted publisher must name NO environment
 owner         pham-canh

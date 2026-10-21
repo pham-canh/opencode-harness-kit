@@ -12,6 +12,33 @@ is not happening.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **The repository is now `pham-canh/opencode-harness-kit`**, renamed from
+  `pham-canh/space-harness`. The npm package has been
+  `opencode-harness-kit` since 0.4.0, and the README's title with it; the
+  repository was the last one still carrying the old name, and a reader who
+  installed the package and followed the link landed somewhere that did not
+  look like the thing they had installed. GitHub redirects the old URL, and
+  the npm trusted publisher was re-pointed at the new name - the repository
+  field in the OIDC claim is what npm matches, so without that the next
+  release would not have published.
+
+### Removed
+
+- **The coverage report is no longer committed.** 131 files of it, four
+  megabytes, changing on every run, and nobody reads a diff of it. It is
+  ignored now and produced on demand.
+
+- **The two shell scripts are gone from the repository**: the demo setup
+  helper, which pointed at copies of two tools that live one directory up
+  with their own history, and the take script that filmed the published
+  demo, which is a shell file with one machine's paths in it and goes stale
+  the moment the thing it films changes. The recording guide is on the
+  machine that records.
+
 ## [0.5.1] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.5.1 && git push origin main
