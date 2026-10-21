@@ -12,6 +12,47 @@ is not happening.
 
 ---
 
+## [0.5.6] — 2026-10-21
+
+Published. The tag is what cut it: `git tag v0.5.6 && git push origin main
+v0.5.6`, and the publish job watches for exactly that.
+
+A patch, and it is a patch of the same kind as 0.5.5: the three holes the
+guard had left, one measurement that did not measure what it claimed, and
+one measurement that had never produced a number at all.
+
+### Fixed
+
+- **`rm /tmp/x -rf` was allowed.** The rule that blocks a recursive delete
+  read the first flag and then looked for a path after it, so a flag placed
+  after the path was invisible - and GNU rm permutes its options. The rule
+  now asks two separate questions: is any flag recursive or force, and is
+  there a path.
+
+- **`chmod --recursive 777 /` was allowed**, by the rule that blocks
+  `chmod 777`: the rule's flag position only accepted short letter flags,
+  and a long option put the mode out of reach.
+
+- **`curl <url> | grep y | sh` was allowed.** The pipe-to-a-shell rule
+  required the download to feed the shell directly, and a filter in between
+  hid the shell from it. A filter does not change what the shell runs.
+
+- **The pruner measurement and the pruner's own log measured different
+  things.** The log reports the REQUEST's size delta - the part before the
+  transform against the part after it - and the measurement script counted
+  the TEXT inside each part, so the two disagreed and only the log's number
+  matched the kit's claim. The script measures the request now, the way the
+  pruner does, and reports the text measure beside it under its own name.
+  The gate is computed from the request measure.
+
+- **The lane record was never written.** Not once, in any session, on any
+  machine. The plugin read the lane name from `agent` on the assistant
+  message, and opencode's assistant message has no `agent` field - so
+  `oc-harness lanes` was reading a file that could not exist, and the
+  advice to cut the lanes nobody calls had nothing behind it. The name is
+  on the request, and the assistant message names that request's user
+  message as its parent, so the two join there.
+
 ## [0.5.5] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.5.5 && git push origin main
@@ -1396,7 +1437,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.2...v0.5.3
