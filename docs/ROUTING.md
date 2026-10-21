@@ -4,9 +4,26 @@ The fleet is the point of this kit. One session, ten lanes, ten models, and a
 human who never switches a model by hand.
 
 This page records what the lanes are, which model serves each one, and the
-measurements behind those choices. Everything in the tables below was measured
-against the live tier on **2026-10-20** with OpenCode **1.19.0**, and is
-reproducible with `oc-harness doctor` and `oc-harness lanes`.
+measurements behind those choices.
+
+There are **two** sets of numbers here, and they measure different things:
+
+- The **install tables** are the telemetry of a real install: `oc-harness
+  lanes` over the requests a working session actually made, on
+  **2026-10-20**. They are the wait a person really had, and the `build` row
+  is not comparable with the others, because it counts the turns that did the
+  delegating.
+- The **direct table** is `node eval/models.mjs` - one line, one model, five
+  requests, whole-process wall time, on **2026-10-21**. It is the same
+  prompt for every model, so it compares models with each other, and it
+  includes the process start, which the install tables do not.
+
+Neither is the answer on its own. The install tables say what happened; the
+direct table says what a lane would wait for if the lane were all there was.
+
+Both are reproducible: `oc-harness doctor` for the catalogue, `oc-harness
+lanes` for the install, and `node eval/models.mjs --reps 5 --effort` for the
+direct table.
 
 ## The lanes
 
@@ -88,11 +105,59 @@ that did the delegating, so they count the work of the other nine lanes. A
 one-line `build` reply on its own measured **3130 ms** and **21137 ms** on a
 cold start.
 
+## Measured directly, one line, one model
+
+    node eval/models.mjs --reps 5 --effort
+
+Every model gets the same prompt - one line, one word back - and the same
+five requests. `wall` is the whole `opencode run`, so it includes the
+process start and the plugin load. `reasoning` is the tokens the model
+spent thinking, which on a prompt this small is close to nothing for most of
+them: the difference between a tier and no tier shows up on real work, not
+on a one-line reply.
+
+| model | wall avg | median | max | reasoning | wall @low | reasoning @low |
+|---|---|---|---|---|---|---|
+| `beam-free` | 7,800 | **6,118** | 13,782 | 24 | 6,308 | 28 |
+| `minimax-m3.1-flash-free` | 7,114 | 6,903 | 8,448 | 0 | **6,292** | 0 |
+| `nemotron-3.5-lightning-free` | 8,140 | 6,882 | 13,554 | 86 | 6,870 | 54 |
+| `glm-5.3-flash-free` | 10,604 | 7,408 | 21,002 | 0 | 10,718 | 12 |
+| `nemotron-3-ultra-free` | 9,282 | 7,847 | 15,402 | 36 | 7,534 | 35 |
+| `nemotron-3.5-super-vl-free` | 10,404 | 8,353 | 19,763 | 15 | 10,988 | 17 |
+| `mimo-v2.6-flash-free` | 8,875 | 9,345 | 9,635 | 8 | 11,742 | 16 |
+| `big-pickle` | 9,983 | 10,438 | 11,372 | 8 | 9,325 | 8 |
+| `deepseek-v4.1-flash-free` | 15,840 | 10,659 | 25,805 | 0 | 14,193 | 46 |
+| `longcat-2.5-preview-free` | 13,099 | 11,996 | 16,991 | 16 | 13,160 | 25 |
+
+**What this says that the install tables do not.** The margin between the
+fastest model and the fourth is under a second - 6.1 s for Beam against 7.4 s
+for GLM - so a plan that has to be quick does not need the fastest model, it
+needs any of the first four. The spread at the other end is real: LongCat
+costs twice what Beam costs, on the same one-line question.
+
+**And the `low` column is not a reason to ask for `low` on a small job.**
+On a prompt this small the difference is inside the noise, and on one of them
+it is the wrong way round. The tier earns its keep on real work, and that
+is the measurement below, on the install's own messages.
+
+**The free tier is noisy, and the table says so.** Five requests is five
+requests: `deepseek` had a 25.8 s outlier in a 10.7 s median, and Beam had a
+13.8 s one in a 6.1 s median. The median is the number to read, and a
+single request is not a measurement of anything.
+
 **What the safe ceiling costs, measured rather than assumed.** Planning is the
-lane that pays: 2624 ms on Beam against 5106 ms on DeepSeek, about twice the
-wait. Reviewing barely pays at all: 4716 ms on Nemotron 3 Ultra against 5757
-ms on GLM. Locating and verifying get *faster*, because DeepSeek publishes a
-`low` effort level and Big Pickle publishes none at all.
+lane that pays: the install measured 2624 ms on Beam against 5106 ms on
+DeepSeek, and the direct measurement says the same thing a different way -
+6.1 s against 10.7 s, about three quarters more.
+
+Reviewing does not pay at all. The install measured 4716 ms on Nemotron 3
+Ultra against 5757 ms on GLM, and the direct measurement has them level, with
+GLM marginally ahead: 7.4 s against 7.8 s. Either way, the model built for
+reviewing is not faster than the one the ceiling puts in its place, and
+neither is slow.
+
+Locating and verifying get *faster*, because DeepSeek publishes a `low` effort
+level and Big Pickle publishes none at all.
 
 **What a tier is worth, measured on this install rather than assumed.** The
 effort level is the cheapest lever there is: DeepSeek measures 320 reasoning
@@ -125,16 +190,48 @@ choice anyway.
 
 | model | measured | why it owns that lane |
 |---|---|---|
-| minimax-m3.1-flash-free | 3.1 s for a one-line reply, 512k output cap, reads an image in 7.7 s | The widest output cap on the tier and a stable tool call, so the lane that writes code fits, and it is also the fastest measured image reader. |
-| beam-free | **2.6 s average over 7 requests, the fastest on the tier**, 1M context, structured output | Planning is a reading-and-reasoning job with a long context and a structured answer. Nothing else on the tier does it faster. |
-| nemotron-3-ultra-free | 4.7 s average, but **34 s on a cold first request** | The largest open MoE available, which is what a two-pass review needs. The cold start is worth knowing about before blaming the route. |
-| nemotron-3.5-lightning-free | 3.7 s average over 4 requests, 5.5 s at worst, no selectable effort | No effort level, so it spends nothing on reasoning, and it can emit a file larger than 128k tokens. |
-| big-pickle | 6.5 s average over 2 requests, structured output, no effort levels, no images | Stable, and it answers in a shape a program can read. |
-| mimo-v2.6-flash-free | **19.2 s average with an image**, 23.8 s at worst - the slowest lane on the tier | It reads images correctly, which is the job. It publishes audio input too, and that path is unreachable (see below). |
-| glm-5.3-flash-free | 4.4-5.8 s, structured output, 3 effort levels | Careful and quick enough. A previous measurement put it at 16-27 s on a larger prompt; on the work a lane actually does it is five seconds. |
-| deepseek-v4.1-flash-free | 3.4-5.2 s, structured output, reasoning + agentic coding | The natural lane for JSON a program has to parse, and the best all-rounder inside a zero-retention ceiling. |
-| nemotron-3.5-super-vl-free | 4.2 s average over 3 requests, **the only model publishing a `none` effort level** | A lane that turns reasoning off entirely is a job of its own, and no other model can do it. |
-| longcat-2.5-preview-free | 9.4-13.2 s, 1M context, reads images, temperature on | The long-context lane. A preview endpoint: it can be withdrawn without a rename. |
+| minimax-m3.1-flash-free | 6.9 s median for a one-line reply, 512k output cap - the widest on the tier, reads an image in 7.7 s | The widest output cap on the tier and a stable tool call, so the lane that writes code fits, and it is also the fastest measured image reader. |
+| beam-free | **6.1 s median, the fastest of the ten**, 1M context, structured output | Planning is a reading-and-reasoning job with a long context and a structured answer. It is the fastest measured, but only by under a second over the next three - so the reason to pick it is the 1M context and the structured output as much as the speed. |
+| nemotron-3-ultra-free | 7.8 s median, but **34 s on a cold first request** | The largest open MoE available, which is what a two-pass review needs. The cold start is worth knowing about before blaming the route. |
+| nemotron-3.5-lightning-free | 6.9 s median, 13.6 s at worst, no selectable effort | No effort level, so it spends nothing on reasoning, and it can emit a file larger than 128k tokens. |
+| big-pickle | 10.4 s median, structured output, no effort levels, no images | Stable, and it answers in a shape a program can read. |
+| mimo-v2.6-flash-free | 9.3 s median for a line of text, **19.2 s average with an image** | It reads images correctly, which is the job. It publishes audio input too, and that path is unreachable (see below). |
+| glm-5.3-flash-free | 7.4 s median, structured output, 3 effort levels | Careful and quick enough. A previous measurement put it at 16-27 s on a larger prompt; on the work a lane actually does it is about seven seconds. |
+| deepseek-v4.1-flash-free | 10.7 s median, structured output, reasoning + agentic coding | The natural lane for JSON a program has to parse, and the best all-rounder inside a zero-retention ceiling. It was the slowest of the ten on the one-line measurement - the tier is free, and free is not fast. |
+| nemotron-3.5-super-vl-free | 8.4 s median, **the only model publishing a `none` effort level** | A lane that turns reasoning off entirely is a job of its own, and no other model can do it. |
+| longcat-2.5-preview-free | 12.0 s median - the slowest of the ten, 1M context, reads images, temperature on | The long-context lane. A preview endpoint: it can be withdrawn without a rename. |
+
+## What each model publishes
+
+From the live catalogue, 2026-10-21. `oc-harness doctor` re-checks all of
+it, and a model that is withdrawn says so rather than being measured.
+
+| model | effort levels | context | output cap | reads |
+|---|---|---|---|---|
+| `beam-free` | low, medium, high, xhigh, max | 1M | 131k | text |
+| `big-pickle` | **none** | 200k | 32k | text |
+| `deepseek-v4.1-flash-free` | low, high, max | 200k | 32k | text, image |
+| `minimax-m3.1-flash-free` | low, medium, high, xhigh, max | 1M | **512k** | text, image, video |
+| `nemotron-3-ultra-free` | **none** | 1M | 128k | text |
+| `nemotron-3.5-lightning-free` | **none** | 262k | **262k** | text |
+| `mimo-v2.6-flash-free` | **none** | 200k | 32k | text, image, audio, video |
+| `glm-5.3-flash-free` | low, high, max | 200k | 32k | text, image, video, pdf |
+| `nemotron-3.5-super-vl-free` | **none**, minimal, low, medium, high, xhigh | 1M | 131k | text, image |
+| `longcat-2.5-preview-free` | **none** | 1M | 131k | text, image |
+
+Two things fall out of this table that the prose above rests on.
+
+**Only one model can turn reasoning off entirely**, and it is
+`nemotron-3.5-super-vl-free`. The `sweep` lane is a bulk mechanical search,
+so reasoning on it is pure waste - and the model that could switch it off
+publishes `none` and the four zero-retention models do not, so under the
+ceiling that lane cannot ask for it. It runs on DeepSeek, which publishes
+`low`, and that is the closest thing available.
+
+**A model that publishes no effort level still spends what it spends.** It
+runs at its natural rate. That is not a defect: it is the reason Big Pickle
+is cheap to use, and the reason the kit asks for a tier only where the tier
+is worth having.
 
 ## What the tier cannot do
 
@@ -232,18 +329,25 @@ is to count the requests:
 ```
 $ oc-harness lanes
 
-  lane            reqs     avg ms  model
-  ----------------------------------------------------------------
-  plan                7       2624  beam-free
-  build              21      10104  minimax-m3.1-flash-free
-  reviewer            2       4716  nemotron-3-ultra-free
+  lane             reqs     avg ms  model
+  ----------------------------------------------------------------------
+  plan                0          -  deepseek-v4.1-flash-free     never used
+  build              87       9935  minimax-m3.1-flash-free
+  reviewer            0          -  glm-5.3-flash-free           never used
   ...
-  8 lane(s) were never used    cut candidates, not defects
+  9 lane(s) were never used    cut candidates, not defects
 ```
 
 A lane that is never used is a description the model reads on every turn and a
 free model doing nothing. Cut it from the profile's `roles`, and the lane
 leaves the config with it.
+
+That is also the counter that says a lane is NOT earning its place, and it
+is the honest one to act on: it counts the requests a working session
+actually made. `node eval/models.mjs` answers the other question - how long
+a lane would wait - and the two together are what a routing decision needs.
+The counter alone would cut a lane that is slow but used, and the
+measurement alone would keep a lane nobody calls.
 
 The counter reads `.space/telemetry.jsonl` in the project, written by the
 plugin: one record per assistant message, with the lane, the model and the
