@@ -106,10 +106,10 @@ test("a browser that cannot be opened is reported as such", () => {
 })
 
 test("the repository is reduced to the owner/repo form npm matches on", () => {
-  assert.equal(repoOf("git+https://github.com/pham-canh/space-harness.git"), "pham-canh/space-harness")
-  assert.equal(repoOf("https://github.com/pham-canh/space-harness"), "pham-canh/space-harness")
-  assert.equal(repoOf("git@github.com:pham-canh/space-harness.git"), "pham-canh/space-harness")
-  assert.equal(repoOf({ type: "git", url: "git+https://github.com/pham-canh/space-harness.git" }), "pham-canh/space-harness")
+  assert.equal(repoOf("git+https://github.com/pham-canh/opencode-harness-kit.git"), "pham-canh/opencode-harness-kit")
+  assert.equal(repoOf("https://github.com/pham-canh/opencode-harness-kit"), "pham-canh/opencode-harness-kit")
+  assert.equal(repoOf("git@github.com:pham-canh/opencode-harness-kit.git"), "pham-canh/opencode-harness-kit")
+  assert.equal(repoOf({ type: "git", url: "git+https://github.com/pham-canh/opencode-harness-kit.git" }), "pham-canh/opencode-harness-kit")
   // A repository that is not a GitHub one is an error, not a silent guess.
   assert.throws(() => repoOf("git+https://gitlab.com/a/b.git"), /cannot read a GitHub repository/)
 })

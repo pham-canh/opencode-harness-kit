@@ -1,6 +1,6 @@
 # opencode-harness-kit
 
-[![CI](https://github.com/pham-canh/space-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/pham-canh/space-harness/actions/workflows/ci.yml)
+[![CI](https://github.com/pham-canh/opencode-harness-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/pham-canh/opencode-harness-kit/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/opencode-harness-kit.svg)](https://www.npmjs.com/package/opencode-harness-kit)
 
 <p align="center">
@@ -31,7 +31,7 @@ your side — `npx` only downloads the published kit. Prefer git? The same three
 steps from a checkout (see [Install](#install)):
 
 ```bash
-git clone https://github.com/pham-canh/space-harness.git
+git clone https://github.com/pham-canh/opencode-harness-kit.git
 ./bin/oc-harness.mjs init
 ```
 
@@ -690,8 +690,8 @@ Without registry access, the checkout path works identically:
 
 ```bash
 pkg install nodejs git
-git clone https://github.com/pham-canh/space-harness.git
-./space-harness/bin/oc-harness.mjs init
+git clone https://github.com/pham-canh/opencode-harness-kit.git
+./opencode-harness-kit/bin/oc-harness.mjs init
 ```
 
 The kit writes to `$HOME/.config/opencode` like everywhere else, so there is

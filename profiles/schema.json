@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/pham-canh/space-harness/profiles/schema.json",
+  "$id": "https://github.com/pham-canh/opencode-harness-kit/profiles/schema.json",
   "title": "OpenCode harness profile",
   "description": "Everything that changes when you change model. Plugins read this file and contain no model names of their own.",
   "type": "object",

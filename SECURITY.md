@@ -12,7 +12,7 @@
 ## Reporting a vulnerability
 
 Please report privately through GitHub's
-[private vulnerability reporting](https://github.com/pham-canh/space-harness/security/advisories/new)
+[private vulnerability reporting](https://github.com/pham-canh/opencode-harness-kit/security/advisories/new)
 rather than opening a public issue.
 
 Include the affected version, a reproduction, and the expected behaviour.
@@ -21,7 +21,7 @@ plan within 7 days.
 
 ## Scope
 
-`space-harness` runs agent subprocesses and reads harness config. Reports
+`opencode-harness-kit` runs agent subprocesses and reads harness config. Reports
 that are in scope include path traversal when resolving a capability
 profile, command injection through harness config values, and any way a
 harness writes outside its configured working directory.

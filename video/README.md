@@ -1,8 +1,14 @@
-# space-harness demo
+# The demo video
 
 `docs/demo/pitch.mp4` — 4:47, 2880x1800 retina, English narration, recorded
-live from a real terminal. Not slides: every command on screen is typed into a
-Terminal window and executed while the camera runs.
+live from a real terminal. Not slides: every command on screen is typed into
+a Terminal window and executed while the camera runs.
+
+**It was recorded against an earlier version of the kit.** The numbers it
+names are the ones from then; the ones in the README are the ones now. The
+file is here because a demo you can watch beats a demo you have to imagine,
+and because the shape of it — a terminal, real commands, a result you can
+read back — has not changed.
 
 The point of the demo is the last third of it. The take stages a config file
 carrying a comment and a trailing comma, regenerates it with
@@ -11,74 +17,61 @@ That is the bug this branch fixed, and the previous bug — an unreadable config
 made the reader return `{}`, and `use` wrote the user's settings back out
 deleted — is not something a demo of winning numbers would have shown.
 
-## Files
+## What is here
 
 | | |
 |---|---|
-| `take.sh` | the take script: what gets typed, in what order, and what must be true when it ends |
-| `narration.txt` | the voiceover, in beats, with `[[slnc N]]` pauses that hold the voice against the screen |
+| `narration.txt` | the voiceover of the published video, in beats, with `[[slnc N]]` pauses that hold the voice against the screen |
 | `../docs/demo/pitch.mp4` | the published file |
+| `../docs/demo-loop.gif` | the short loop on the README's front page |
+| `legacy/` | the first dubbing pipeline, kept because its notes explain the timing method |
 
-## Rebuild
+## What is not here, and why
 
-Recording needs [`vrec`](https://github.com/pham-canh/vrec), which drives the
-keyboard and mouse through the accessibility API and checks every claim in the
-take afterwards. It and `btake` are separate repos with their own history, so
-this repo holds no copy of either. Keep them next to this one:
+**The take script.** A take is a script that gets typed, and a script that
+gets typed has to be reviewable before it is filmed — but it is also a shell
+file with the recording machine's paths in it, and it goes stale the moment
+the thing it films changes. The one that filmed the video above is on the
+machine that recorded it, next to the recorder that ran it.
+
+**The recording guide.** Same reason, and the same place. It is a document
+about one machine and one take; publishing it would publish the paths and
+the private workspace it points at.
+
+**`setup-demo.sh`.** The recorder and the dubbing tool are separate
+repositories with their own history. Copies inside this repository are how
+they drifted: a bug fixed in one, a take recorded with the other. They live
+one directory up, and there is exactly one of each.
+
+## Rebuilding it, if you are reproducing it
 
 ```sh
-git clone https://github.com/pham-canh/space-harness.git
-cd space-harness
+git clone https://github.com/pham-canh/opencode-harness-kit.git
+cd opencode-harness-kit
 git clone https://github.com/pham-canh/vrec.git   ../tools/vrec
 git clone https://github.com/pham-canh/btake.git  ../tools/btake
-bash tools/setup-demo.sh          # one-time, see below
 ```
 
-If you keep them somewhere else, point `HARNESSTOOLS` at that directory and
-`setup-demo.sh` will use it.
+`vrec` is macOS-only: it posts real keyboard and mouse events, so the
+recording looks like a person using the machine rather than a script driving
+a screen. One-time setup is `bash tools/vrec/lib/setup_env.sh` plus the
+Accessibility and Screen Recording permissions in System Settings —
+`vrec doctor` reports both, and it records a real three-second clip to prove
+the encoder works before you spend an hour on it.
 
-```sh
-export PATH="$PWD/../tools/vrec/bin:$PATH"
-export HI_TYPE_SPEED=1.0
-
-vrec reset   "$PWD/take.sh"       # clean slate before anything
-vrec rehearse "$PWD/take.sh"      # runs every gate with no recording
-vrec record  --take "$PWD/take.sh" --max-duration 400
-```
-
-Then voice it:
+The dubbing step is `say` for the voice and `btake dub` to fit the audio to
+the picture:
 
 ```sh
 say -v Reed -r 160 -f narration.txt -o vo.m4a \
     --data-format=aac@44100 --file-format=m4af
 
-python3 "$PWD/../tools/btake/btake.py" dub <recording>.mp4 \
+python3 ../tools/btake/btake.py dub <recording>.mp4 \
     --narration vo.m4a --offset 5 --out final.mp4
 ```
 
-Every path is relative to the clone. Nothing here refers to one machine's
-home directory, so the same commands work on a fresh laptop.
-
-## On a machine that has never run this
-
-`tools/setup-demo.sh` does the one-time setup and is safe to re-run:
-
-- checks `python3`, `node`, `npm` and the macOS `say` voice
-- creates a `.venv` inside the cloned `vrec` and installs the pinned
-  `pyobjc-framework-Quartz` that posts the keyboard events
-- confirms the driver imports before anything is recorded
-- grants the terminal Accessibility and Screen Recording permissions, which
-  macOS otherwise blocks silently — `vrec doctor` is the way to confirm
-
-No browser is involved. `vrec` posts CGEvents to a Terminal window; Playwright
-and a Chromium download are not part of this pipeline.
-
-Permissions are the part that cannot be scripted. `vrec doctor` reports
-`osascript is not trusted for Accessibility` or a missing Screen Recording
-entry; both are approved by hand in System Settings → Privacy & Security.
-
-`--max-duration` is not advisory. `vrec` finalises the file and then fails the
-take if it overran, because a 7:12 recording whose narration ran 4:34 was
+`--max-duration` is not advisory. `vrec` finalises the file and then fails
+the take if it overran, because a 7:12 recording whose narration ran 4:34 was
 handed over as done once already.
 
 ## Two things that will bite you
@@ -90,7 +83,14 @@ unbalanced quote and a `dquote>` prompt, which looks like a flaky shell rather
 than a typing bug. Time comes back from `wait_settle` instead — it watches the
 screen instead of guessing how long a command takes.
 
-**Run `vrec rehearse` before every record.** The gates run in the vrec process,
-not in the recorded Terminal, so a gate can pass while the shell on camera did
-something else. Rehearsing is what catches that. It is also cheaper than
+**Rehearse before every record.** The gates run in the recorder's process,
+not in the recorded Terminal, so a gate can pass while the shell on camera
+did something else. Rehearsing is what catches that. It is also cheaper than
 discovering it in the footage.
+
+## The file size is a one-way door
+
+`docs/demo/pitch.mp4` is under the 12 MB that a git repository accepts for
+a large file on its first push. Replacing it later means Git LFS, and a
+repository that suddenly needs LFS is a repository whose media stops
+updating. The take that produced it was cut to fit.

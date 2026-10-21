@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/pham-canh/space-harness/lanes.schema.json",
+  "$id": "https://github.com/pham-canh/opencode-harness-kit/lanes.schema.json",
   "title": "OpenCode harness lane table",
   "description": "The jobs a fleet can hand out. A lane says what it is for and nothing about models: a profile says which lanes it enables and which model serves each one. The lane table is the single list of lane names in the kit; `src/profile.js` reads it, `src/config.js` compiles it into the generated config, and `profiles/schema.json` must name the same lanes.",
   "type": "object",
