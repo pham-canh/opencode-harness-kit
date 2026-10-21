@@ -12,6 +12,38 @@ is not happening.
 
 ---
 
+## [0.5.7] — 2026-10-21
+
+Published. The tag is what cut it: `git tag v0.5.7 && git push origin main
+v0.5.7`, and the publish job watches for exactly that.
+
+A patch, and a small one: the shipped profiles are refreshed against the
+live catalogue, and a test that pinned the catalogue's old answer stops
+pinning it.
+
+### Changed
+
+- **The profiles are refreshed against the live catalogue.**
+  `oc-harness refresh --all` is the kit's own command for this, and it had
+  not been run since the 19th. The catalogue now says that
+  `minimax-m3.1-flash-free` takes a temperature, and that
+  `longcat-2.5-preview-free` does not; the profiles said the opposite in one
+  case each. The `verified` date is the day the profile was last checked
+  against the catalogue, and leaving it stale after a check makes it a lie.
+
+  Nothing in the generated config changes: the kit sets no temperature at
+  all, so the profile's answer only decides what the header says.
+
+### Fixed
+
+- **A test failed on a day when nothing in the kit had changed.** The test
+  for "temperature is only emitted for models that support it" asserted
+  that one particular model does not support one - a value the catalogue
+  owns and changes. The test now asks whether the rule holds: no config the
+  kit writes may carry a temperature, and every profile has to say whether
+  its model takes one. A test that pins a value the world owns fails for
+  the wrong reason.
+
 ## [0.5.6] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.5.6 && git push origin main
@@ -1437,7 +1469,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.3...v0.5.4
