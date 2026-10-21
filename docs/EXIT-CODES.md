@@ -75,6 +75,13 @@ attributable measurement carries the gate.
 | 0 | The install is in place, or the change was confirmed. Something may have been left alone - a file that was already there, a prompt that was not answered - and the reason is printed. |
 | 1 | The install was refused, or a step failed. |
 
+A target that was left alone is NOT counted as installed: the install says
+so in place of its tick, and `verify` reports the file that is not the kit's
+- because a file of the user's own at `GLOBAL.md` means the kit's rules are
+not being loaded, and a tick next to that is a claim the installer cannot
+make. A link that could not be created is a step that failed, and the
+install exits 1.
+
 `doctor` also exits 1 when there is no config, or no profile recorded in
 it: a kit that is installed but points at nothing is a broken install, and
 a check that passes it is not a check.
