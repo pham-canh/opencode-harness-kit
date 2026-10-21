@@ -307,14 +307,44 @@ export declare function pruneThreshold(p: Profile, opts?: {
     unhealthy?: Set<string>;
 }): number;
 /**
- * Every model a profile can put behind the user: the base model plus the model
- * each lane actually resolves to.
+ * Every model a profile can put behind the user: the base model, the model
+ * each lane actually resolves to, and the utility route.
+ *
+ * The utility route belongs in this list because it is WRITTEN into the
+ * config as `small_model` and opencode sends real requests down it - a
+ * title, a one-line summary, a rewritten question. It used to be a chain
+ * rung only, so it never appeared here, and a profile could name a
+ * may-train utility route under a zero-retention claim: the file said
+ * "zero-retention" while a training provider served the calls.
+ *
+ * Every caller of this list wants the same thing - the models that can
+ * serve a request - so the list is widened rather than a second one
+ * invented beside it. The one caller that needs the lanes alone is
+ * `validate()`, which cross-checks the profile's DECLARED retention against
+ * the base model and the lanes; that is `laneModelsInPlay`.
  *
  * @param {Profile} p
  * @param {{ unhealthy?: Set<string> }} [opts]
  * @returns {string[]}
  */
 export declare function modelsInPlay(p: Profile, opts?: {
+    unhealthy?: Set<string>;
+}): string[];
+/**
+ * The models the profile's own base and lanes put behind the user, without
+ * the utility route.
+ *
+ * This is the set the profile's own `retention` field is about: the base
+ * model and the lanes it resolves to. The utility route is an extra route
+ * the profile adds on top of them, and it is reported where it belongs - the
+ * config header names it, and `oc-harness use` warns about it - so it does
+ * not decide what the profile may declare about itself.
+ *
+ * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {string[]}
+ */
+export declare function laneModelsInPlay(p: Profile, opts?: {
     unhealthy?: Set<string>;
 }): string[];
 /**
