@@ -173,3 +173,71 @@ test("every profile the README lists is loadable and has a retention class", () 
     )
   }
 })
+
+// The two documents carry the same A/B, and they have to.
+//
+// The README is what a reader lands on; eval/RESULTS.md is where the method
+// is written down. When they disagree, one of them is a number nobody can
+// check - and the A/B is the one number in this project that decides
+// whether the kit is worth its cost.
+//
+// It has already happened once: a section was replaced while another was
+// being inserted, and the A/B table went with it. Nothing failed, because
+// nothing looked.
+test("the README and eval/RESULTS.md quote the same A/B", () => {
+  const results = readFileSync(join(ROOT, "eval", "RESULTS.md"), "utf8")
+  const readme = readFileSync(join(ROOT, "README.md"), "utf8")
+
+  // The table of the A/B on this repository, in both files, as rows. The
+  // README's is a SUBSET - it leaves out the rows a reader does not need -
+  // so the check is that every row both of them carry says the same thing.
+  const rowsIn = (text) => {
+    const i = text.indexOf("| metric (median) | kit on | kit off |")
+    if (i < 0) return null
+    const out = new Map()
+    for (const line of text.slice(i).split("\n")) {
+      if (!line.startsWith("|")) break
+      const cells = line.split("|").slice(1, -1).map((c) => c.trim())
+      if (cells.length < 3) continue
+      if (cells[0].startsWith("---") || cells[0].startsWith("metric")) continue
+      out.set(cells[0], cells.slice(1).join(" | "))
+    }
+    return out
+  }
+  const a = rowsIn(results)
+  const b = rowsIn(readme)
+  assert.ok(a, "eval/RESULTS.md has no A/B table")
+  assert.ok(b, "README.md has no A/B table")
+
+  // The rows a reader decides on. If one of them is missing from either
+  // file, the comparison below would pass without comparing it.
+  for (const row of ["**correct**", "input tokens", "final context", "wall seconds"]) {
+    assert.ok(a.has(row), `eval/RESULTS.md is missing the "${row}" row`)
+    assert.ok(b.has(row), `README.md is missing the "${row}" row`)
+  }
+
+  for (const [row, value] of a) {
+    if (!b.has(row)) continue
+    assert.equal(
+      b.get(row),
+      value,
+      `the "${row}" row differs between README.md and eval/RESULTS.md; one of them is a number nobody can check`,
+    )
+  }
+})
+
+test("eval/RESULTS.md still has every A/B section it is supposed to have", () => {
+  // The file is the record of what was measured. A section that goes missing
+  // takes its measurement with it, and nothing else notices.
+  const results = readFileSync(join(ROOT, "eval", "RESULTS.md"), "utf8")
+  for (const heading of [
+    "## The A/B on this repository, 10 reps per arm",
+    "## The A/B on TypeScript, against a PUBLIC subject",
+    "## The A/B on a LONG task",
+    "## The process, measured: a reviewer that does not edit",
+    "## The gate",
+    "## Not measured here",
+  ]) {
+    assert.ok(results.includes(heading), `eval/RESULTS.md is missing "${heading}"`)
+  }
+})

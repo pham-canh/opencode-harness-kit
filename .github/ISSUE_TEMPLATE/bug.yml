@@ -1,0 +1,83 @@
+name: Something is wrong
+description: A command did not do what it says, or the numbers are wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every claim this project makes is measured, so a report that says
+        "the numbers are wrong" is taken seriously. What helped most, when a
+        report turned out to be right: the exact command, its output, and the
+        version.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `oc-harness --version`, or the tag.
+      placeholder: 0.5.2
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node
+      description: The output of `node --version`.
+      placeholder: v22.22.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Linux, Windows, other]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did it happen
+      options:
+        - A command (oc-harness ...)
+        - The plugin, inside a session
+        - The measurement scripts (eval/...)
+        - The published package (npm)
+        - The documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got.
+      placeholder: |
+        $ oc-harness verify
+        expected: the install to be consistent
+        got: "the config does not load ~/.config/opencode/GLOBAL.md"
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: The output, if there was one
+      description: In a code block, so the formatting survives.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: The relevant configuration
+      description: |
+        The profile you were using, and anything you changed. Remove
+        anything that is a secret.
+      render: yaml
+    validations:
+      required: false
