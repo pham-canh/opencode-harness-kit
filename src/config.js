@@ -158,6 +158,11 @@ export function utilityModel(p) {
  * `instructions` array used to replace it wholesale, which unloaded the
  * whole behavioural layer while everything still looked correct.
  *
+ * A SINGLE string is a list of one. The parameter has always been typed
+ * `string[] | string | undefined`, but a string was dropped on the floor:
+ * the file that came back named only the kit's GLOBAL.md, so the user's own
+ * instructions were unloaded without a word.
+ *
  * The user's own files keep their order and come first; the kit's is
  * appended. Duplicates are dropped, so re-running `use` does not grow the
  * list.
@@ -167,7 +172,12 @@ export function utilityModel(p) {
  * @returns {string[]}
  */
 export function mergeInstructions(base, kitPath) {
-  const list = Array.isArray(base) ? base.filter((x) => typeof x === "string") : []
+  const given = Array.isArray(base)
+    ? base
+    : typeof base === "string"
+      ? [base]
+      : []
+  const list = given.filter((x) => typeof x === "string")
   /** @type {string[]} */
   const out = []
   for (const entry of [...list, kitPath]) {
@@ -236,6 +246,75 @@ export const BASH_ALLOWLIST = [
 export { BASH_DENYLIST } from "./denylist.js"
 
 /**
+ * The user's own bash rules, as a map the kit can merge into its own.
+ *
+ * The value has to be one of the three verbs opencode's schema defines. A
+ * rule the kit cannot express cannot work anyway, and writing it out
+ * unchanged would make the whole config invalid - which is a worse outcome
+ * than a rule the kit drops.
+ *
+ * A rule the kit drops is NOT dropped silently: the pattern and the verb it
+ * carried are returned in `dropped`, and the header of the generated file
+ * names them. The rule was the user's, and a file that comes back looking
+ * exactly as it did before is how a lost rule stays lost.
+ *
+ * `permission.bash` may also be a SINGLE verb, and a single verb is the
+ * blanket rule - every command that no other rule names. It used to be
+ * dropped on the floor with the rest of the non-object values, so a user
+ * who had `bash: "allow"` lost the blanket allow and got the kit's map
+ * instead.
+ *
+ * @param {any} base the config as it is on disk
+ * @returns {{ rules: Record<string, string>, dropped: string[] }}
+ */
+function userBashRules(base) {
+  const own = base?.permission?.bash
+  /** @type {Record<string, string>} */
+  const rules = {}
+  /** @type {string[]} */
+  const dropped = []
+
+  /**
+   * Keep a rule the kit can write, or name the one it cannot.
+   *
+   * @param {string} pattern
+   * @param {any} verb
+   */
+  const keep = (pattern, verb) => {
+    if (verb === "allow" || verb === "ask" || verb === "deny") {
+      rules[pattern] = verb
+      return
+    }
+    const said = typeof verb === "string" ? JSON.stringify(verb) : String(verb)
+    dropped.push(`permission.bash "${pattern}" -> ${said}`)
+  }
+
+  if (own === undefined || own === null) return { rules, dropped }
+
+  if (typeof own === "string") {
+    keep("*", own)
+    return { rules, dropped }
+  }
+
+  // Anything else that is not a map of rules cannot be merged, and it is
+  // named so the loss is not silent either.
+  if (typeof own !== "object" || Array.isArray(own)) {
+    dropped.push(
+      `permission.bash is ${Array.isArray(own) ? "a list" : String(own)}, which is not a rule the kit can write`,
+    )
+    return { rules, dropped }
+  }
+  for (const [pattern, verb] of Object.entries(own)) {
+    if (typeof pattern !== "string" || !pattern) {
+      dropped.push(`permission.bash has a rule with no pattern, which was dropped`)
+      continue
+    }
+    keep(pattern, verb)
+  }
+  return { rules, dropped }
+}
+
+/**
  * @param {Profile} p
  * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string> }} [opts]
  * @returns {string}
@@ -294,9 +373,34 @@ export function generateConfig(p, opts = {}) {
     agent[role] = existing
   }
 
+  // The user's own bash rules are merged in, not replaced.
+  //
+  // The map used to be built from the kit's two lists alone, so every rule
+  // the user had written was deleted on the next `oc-harness use` - and the
+  // file that came back looked exactly as it had before, so nothing said
+  // it. The rules that let somebody run their own tools without a prompt
+  // were the ones that vanished.
+  //
+  // The order is the precedence ladder, and it is the kit's denylist that
+  // closes it:
+  //
+  //   kit allowlist -> the user's rules -> kit denylist
+  //
+  // The denylist is last because a deny a user rule could re-allow would
+  // not be a deny, and the denylist is the mechanical half of the safety
+  // policy. The user's rules sit after the allowlist so a rule of their own
+  // is not shadowed by one of the kit's.
+  //
+  // The kit's own catch-all stays the FIRST key, so a user rule for `*`
+  // replaces its value and not its position: the catch-all remains the
+  // fallback for the commands no other rule mentions, and the allowlist
+  // still decides the ones it names. opencode takes the last matching rule,
+  // so this order is the whole rule.
+  const own = userBashRules(base)
   const bashRules = {
     "*": "ask",
     ...Object.fromEntries(BASH_ALLOWLIST.map((rule) => [rule, "allow"])),
+    ...own.rules,
     ...Object.fromEntries(BASH_DENYLIST.map((rule) => [rule, "deny"])),
   }
 
@@ -423,13 +527,19 @@ export function generateConfig(p, opts = {}) {
     },
   }
 
-  return render(out, p, { comments: opts.comments ?? true, instructionsPath, unhealthy })
+  return render(out, p, {
+    comments: opts.comments ?? true,
+    instructionsPath,
+    unhealthy,
+    dropped: own.dropped,
+  })
 }
 
 /**
  * @param {Record<string, any>} cfg
  * @param {Profile} p
- * @param {{ comments: boolean, instructionsPath?: string, unhealthy?: Set<string> }} opts
+ * @param {{ comments: boolean, instructionsPath?: string, unhealthy?: Set<string>,
+ *          dropped?: string[] }} opts
  * @returns {string}
  */
 function render(cfg, p, opts) {
@@ -479,6 +589,19 @@ function render(cfg, p, opts) {
     ...(p.maxRetention && p.maxRetention !== p.retention
       ? [
           `${c}ceiling      ${p.maxRetention} - a lane may only resolve to a model at or below this`,
+        ]
+      : []),
+    // The rules the kit could not carry over. They are named HERE, in the
+    // file the user reads, because a rule that is dropped without a word is
+    // a rule that is lost for good: the file comes back looking exactly as
+    // it did before, and the prompt it used to allow is back.
+    ...(opts.dropped?.length
+      ? [
+          `${c}`,
+          `${c}Dropped from your own permission.bash rules, and NOT in the file below.`,
+          `${c}The verb has to be one of allow, ask or deny - a rule the kit cannot`,
+          `${c}write would fail the schema for the whole file:`,
+          ...opts.dropped.map((d) => `${c}  ${d}`),
         ]
       : []),
     `${c}`,

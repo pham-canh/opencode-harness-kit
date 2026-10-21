@@ -180,6 +180,16 @@ export function loadProfile(id) {
     const msg = err instanceof Error ? err.message : String(err)
     throw new ProfileError(`cannot read ${path}: ${msg}`)
   }
+  // The file name IS the id. The generated header tells the user to edit
+  // `profiles/<id>.json` and to re-run `oc-harness use <id>`, and both
+  // come from this field, so a profile whose id disagrees with its file
+  // name sends them to a file that does not exist and to a command that
+  // cannot resolve. Nothing else would say so.
+  if (raw?.id && raw.id !== id) {
+    throw new ProfileError(
+      `${path}: profile id is "${raw.id}", which does not match the file name "${id}"`,
+    )
+  }
   validate(raw, path)
   return normalize(raw)
 }
@@ -463,25 +473,43 @@ export function resolveLaneChain(p, role) {
  * @returns {{ model: string, levels: string[] }}
  */
 export function resolveLaneModel(p, role, opts = {}) {
+  const model = laneModelId(p, role, opts)
+  return { model, levels: levelsOfModel(model) }
+}
+
+/**
+ * The model a lane runs on, decided without loading any profile.
+ *
+ * The split is what makes the answer safe to ask from inside `validate()`.
+ * Resolving a lane used to mean loading that model's profile to read its
+ * effort levels, and loading a profile validates it, and validating it
+ * resolves its lanes: a loop. The levels are not part of this question, so
+ * they are left out of it.
+ *
+ * @param {Profile} p
+ * @param {string} role
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {string}
+ */
+function laneModelId(p, role, opts = {}) {
   const unhealthy = opts.unhealthy ?? new Set()
   const ceiling = /** @type {Retention} */ (p.maxRetention ?? p.retention)
   for (const candidate of resolveLaneChain(p, role)) {
     if (unhealthy.has(candidate)) continue
     if (!retentionAllowed(candidate, ceiling)) continue
-    return { model: candidate, levels: levelsOfModel(candidate) }
+    return candidate
   }
   // Nothing in the chain qualifies. The base model is the next thing to try:
   // it is the profile's own route, and a lane pinned to a rung the router has
   // already recorded as spent is worse than a lane on a route that was never
   // preferred for this job but is alive.
   if (p.model && !unhealthy.has(p.model) && retentionAllowed(p.model, ceiling)) {
-    return { model: p.model, levels: levelsOfModel(p.model) }
+    return p.model
   }
   // Last resort: the first rung anyway rather than leaving the lane without a
   // model, and let the config header say what the effective retention turned
   // out to be.
-  const fallback = resolveLaneChain(p, role)[0] ?? p.model
-  return { model: fallback, levels: levelsOfModel(fallback) }
+  return resolveLaneChain(p, role)[0] ?? p.model
 }
 
 /**
@@ -578,29 +606,42 @@ export function resolveEffort(levels, requested) {
   // no variant" and let the model use its own default.
   if (requested === "none") return null
 
+  // `none` is not a candidate either, for the same reason: a lane that asked
+  // for `minimal` and was handed `none` had its reasoning switched off, which
+  // is the opposite of what it asked for. The distance search used to count
+  // `none` as the rung below `minimal`, so it won every near miss.
+  const rungs = levels.filter(
+    (level) => level !== "none" && CANON.indexOf(level) >= 0,
+  )
+
   const want = CANON.indexOf(requested)
   if (want < 0) {
-    // Unknown label. Snap to the top level, which is the safe reading of a
+    // Unknown label. Snap to the top rung, which is the safe reading of a
     // role that asked for something strong.
-    return levels[levels.length - 1] ?? null
+    return rungs[rungs.length - 1] ?? null
   }
   let best = null
   let bestDist = Infinity
-  for (const level of levels) {
+  for (const level of rungs) {
     const have = CANON.indexOf(level)
-    if (have < 0) continue
     const d = Math.abs(have - want)
     if (d < bestDist) {
       bestDist = d
       best = level
     }
   }
-  return best ?? levels[levels.length - 1] ?? null
+  return best ?? rungs[rungs.length - 1] ?? null
 }
 
 // --- validation -------------------------------------------------------------
 
-const VALID_RETENTION = ["zero-retention", "retained", "may-train", "unknown"]
+// The retention levels a profile may DECLARE. `unknown` is not one of them:
+  // it is the absence of a level, and a profile that says "nobody has stated
+  // the terms of this provider" is not a profile. It used to be accepted, and
+  // `normalize()` then derived a `maxRetention: "unknown"` from it - a value
+  // `validate()` refuses when it is written out by hand, and one the profile
+  // schema does not allow for `maxRetention` either.
+const DECLARABLE_RETENTION = ["zero-retention", "retained", "may-train"]
 
 /** @param {Profile} p @param {string} [path] */
 export function validate(p, path = "<memory>") {
@@ -608,24 +649,48 @@ export function validate(p, path = "<memory>") {
   if (!p?.id) throw new ProfileError(`${path}: missing "id"`)
   if (!p.provider) throw new ProfileError(`${where}: missing "provider"`)
   if (!p.model) throw new ProfileError(`${where}: missing "model"`)
-  if (!VALID_RETENTION.includes(p.retention)) {
-    throw new ProfileError(
-      `${where}: retention must be one of ${VALID_RETENTION.join(", ")}`,
-    )
+  if (p.retention === "unknown") {
+    throw new ProfileError(`${where}: retention cannot be unknown`)
   }
-  if (p.maxRetention && !VALID_RETENTION.includes(p.maxRetention)) {
+  if (!DECLARABLE_RETENTION.includes(p.retention)) {
     throw new ProfileError(
-      `${where}: maxRetention must be one of ${VALID_RETENTION.join(", ")}`,
+      `${where}: retention must be one of ${DECLARABLE_RETENTION.join(", ")}`,
     )
   }
   if (p.maxRetention === "unknown") {
     throw new ProfileError(`${where}: maxRetention cannot be unknown`)
   }
-  if (!p.limits?.context || p.limits.context <= 0) {
+  if (p.maxRetention && !DECLARABLE_RETENTION.includes(p.maxRetention)) {
+    throw new ProfileError(
+      `${where}: maxRetention must be one of ${DECLARABLE_RETENTION.join(", ")}`,
+    )
+  }
+  // The message said "must be a positive integer" and the check said "greater
+  // than zero", so 1.5 and "200000" were accepted. A context of 1.5 makes
+  // the prune threshold NEGATIVE, because the reserve has a floor of 8,000
+  // tokens and the cap is one and a half.
+  if (!Number.isInteger(p.limits?.context) || p.limits.context <= 0) {
     throw new ProfileError(`${where}: limits.context must be a positive integer`)
   }
-  if (!p.limits?.output || p.limits.output <= 0) {
+  if (!Number.isInteger(p.limits?.output) || p.limits.output <= 0) {
     throw new ProfileError(`${where}: limits.output must be a positive integer`)
+  }
+  // The levels are written into the config as each lane's `variant`, and
+  // opencode cannot resolve a variant the model does not publish. The scale
+  // is the canonical one: `none` is reasoning off, and the rest are the
+  // reasoning levels.
+  for (const level of p.effort?.levels ?? []) {
+    if (!CANON.includes(level)) {
+      throw new ProfileError(
+        `${where}: effort.levels contains "${level}", which is not one of ${CANON.join(", ")}`,
+      )
+    }
+  }
+  const wanted = p.effort?.default
+  if (wanted !== undefined && wanted !== null && !CANON.includes(wanted)) {
+    throw new ProfileError(
+      `${where}: effort.default is "${wanted}", which is not one of ${CANON.join(", ")}`,
+    )
   }
   const share = p.effort?.reserveShare
   if (share !== undefined && (share < 0 || share > 0.5)) {
@@ -743,14 +808,25 @@ export function validate(p, path = "<memory>") {
       )
     }
   }
+  // The base model is the model the config names as the session model, and
+  // the one every lane falls back to. It was never checked against
+  // retention.yml, so a profile could name a model nobody had stated the
+  // terms of and the header would print a level for a model that does not
+  // have one.
+  if (!retentionFor(p.model)) {
+    throw new ProfileError(
+      `${where}: model ${p.model} has no retention.yml entry`,
+    )
+  }
   // The utility route has to be a model this profile can actually run, or a
   // failover leaves opencode's short auxiliary calls pointing at a model that
   // is not in the fleet.
   //
   // The check is STATIC - the union of the profile's own model and every
-  // model its chains name. Asking `modelsInPlay` would be the obvious way,
-  // and it is a loop: resolving a lane reads the levels of a model, which
-  // loads that model's profile, which validates it, which resolves a lane.
+  // model its chains name - and it has to be: the route has to be reachable
+  // at all, not reachable today. A chain rung that is not resolving right
+  // now is still a route the profile runs when the rung above it is spent,
+  // and the utility route is written into the config once and kept.
   if (p.utility) {
     if (typeof p.utility.model !== "string" || !p.utility.model) {
       throw new ProfileError(`${where}: utility.model must be a model id`)
@@ -765,6 +841,15 @@ export function validate(p, path = "<memory>") {
         `${where}: utility.model is ${p.utility.model}, which this profile does not resolve to (it has ${[...reachable].join(", ")})`,
       )
     }
+    // The route is written into the config and serves real requests, so its
+    // terms have to be on record. A utility route with no retention.yml
+    // entry is an `unknown` in the header and a refusal at install time;
+    // saying so here names the field instead of leaving a surprise.
+    if (!retentionFor(p.utility.model)) {
+      throw new ProfileError(
+        `${where}: utility.model ${p.utility.model} has no retention.yml entry`,
+      )
+    }
   }
 
   // The fallback queue is walked at startup, and an id that does not resolve
@@ -776,6 +861,37 @@ export function validate(p, path = "<memory>") {
         `${where}: fallback names ${id}, which has no profile in this directory`,
       )
     }
+  }
+
+  // The retention the profile DECLARES may be equal to the worst level
+  // among the models its own base and lanes resolve to, or WORSE than that
+  // level. It may not be BETTER.
+  //
+  // The claim was never checked against retention.yml, so a profile could
+  // say "zero-retention" while a lane ran on a provider that may train -
+  // and the config header printed the claim as fact.
+  //
+  // The check is by SEVERITY and not by equality. Equality refused the
+  // conservative declaration: a profile that says "retained" while every
+  // model it runs on is zero-retention was rejected as though it had lied.
+  // It had not - it had promised less than the models give, and a promise
+  // that is stricter than the truth is the safe direction to err in. Only
+  // one direction is a lie, and it is the one the check now refuses.
+  //
+  // `retentionSeverity` is the same table the ceiling check uses, so the
+  // two cannot disagree about which of two levels is the worse one.
+  //
+  // The utility route is NOT part of this comparison. It is an extra route
+  // the profile adds on top of its own models, and it is reported where it
+  // belongs: the header names it as the reason the file is worse than the
+  // profile claims, and `oc-harness use` warns about it. A profile that
+  // names a may-train utility route is therefore installable, and the file
+  // it writes says may-train.
+  const actual = worstRetention(laneModelsInPlay(p))
+  if (retentionSeverity(p.retention) < retentionSeverity(actual.retention)) {
+    throw new ProfileError(
+      `${where}: retention is ${p.retention}, but ${actual.worst} is ${actual.retention} - a profile cannot be more private than the models it runs on`,
+    )
   }
 }
 
@@ -840,17 +956,53 @@ export function pruneThreshold(p, opts = {}) {
 }
 
 /**
- * Every model a profile can put behind the user: the base model plus the model
- * each lane actually resolves to.
+ * Every model a profile can put behind the user: the base model, the model
+ * each lane actually resolves to, and the utility route.
+ *
+ * The utility route belongs in this list because it is WRITTEN into the
+ * config as `small_model` and opencode sends real requests down it - a
+ * title, a one-line summary, a rewritten question. It used to be a chain
+ * rung only, so it never appeared here, and a profile could name a
+ * may-train utility route under a zero-retention claim: the file said
+ * "zero-retention" while a training provider served the calls.
+ *
+ * Every caller of this list wants the same thing - the models that can
+ * serve a request - so the list is widened rather than a second one
+ * invented beside it. The one caller that needs the lanes alone is
+ * `validate()`, which cross-checks the profile's DECLARED retention against
+ * the base model and the lanes; that is `laneModelsInPlay`.
  *
  * @param {Profile} p
  * @param {{ unhealthy?: Set<string> }} [opts]
  * @returns {string[]}
  */
 export function modelsInPlay(p, opts = {}) {
+  const out = laneModelsInPlay(p, opts)
+  const utility = p.utility?.model
+  if (typeof utility === "string" && utility && !out.includes(utility)) {
+    out.push(utility)
+  }
+  return out
+}
+
+/**
+ * The models the profile's own base and lanes put behind the user, without
+ * the utility route.
+ *
+ * This is the set the profile's own `retention` field is about: the base
+ * model and the lanes it resolves to. The utility route is an extra route
+ * the profile adds on top of them, and it is reported where it belongs - the
+ * config header names it, and `oc-harness use` warns about it - so it does
+ * not decide what the profile may declare about itself.
+ *
+ * @param {Profile} p
+ * @param {{ unhealthy?: Set<string> }} [opts]
+ * @returns {string[]}
+ */
+export function laneModelsInPlay(p, opts = {}) {
   const out = [p.model]
   for (const role of Object.keys(p.roleModels ?? {})) {
-    const model = resolveLaneModel(p, role, opts).model
+    const model = laneModelId(p, role, opts)
     if (!out.includes(model)) out.push(model)
   }
   return out
@@ -894,10 +1046,20 @@ export function roleSplitModels(p, opts = {}) {
  * @returns {{ retention: string, worst: string | null }}
  */
 export function effectiveRetention(p, opts = {}) {
+  return worstRetention(modelsInPlay(p, opts))
+}
+
+/**
+ * The worst retention among a list of models, and the model responsible.
+ *
+ * @param {string[]} ids
+ * @returns {{ retention: string, worst: string | null }}
+ */
+function worstRetention(ids) {
   /** @type {string | null} */
   let worst = null
   let retention = "zero-retention"
-  for (const id of modelsInPlay(p, opts)) {
+  for (const id of ids) {
     const declared = modelRetention(id)
     if (
       !worst ||
