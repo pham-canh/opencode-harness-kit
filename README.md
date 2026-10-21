@@ -8,9 +8,9 @@
 </p>
 
 *Four minutes forty-seven seconds, recorded live from a real terminal and
-narrated. The take script and the voiceover are in [`video/`](video/), and
-rebuilding it is documented there — including the two mistakes that cost the
-most time, so the next person does not repeat them.*
+narrated — every command on screen is typed and executed while the camera
+runs. The voiceover is in [`video/`](video/), along with what it took to
+record it and the two mistakes that cost the most time.*
 
 *It was recorded against an earlier version of the kit: the numbers it names
 are the ones from then, and the ones below are the ones now.*
@@ -907,9 +907,15 @@ and the measurements behind each choice.
 
 [`CHANGELOG.md`](CHANGELOG.md) records what each release changed and, for the
 releases before this one, what was broken in it — the silent failures that a
-config could look correct through. [`MIGRATION.md`](MIGRATION.md) covers
-0.2.x → 0.3.0: the profile ids changed, the config layout changed, and the
-telemetry file now means something different.
+config could look correct through. [`MIGRATION.md`](MIGRATION.md) covers the
+two upgrades that ask something of you: 0.2.x → 0.3.0 (the profile ids
+changed, the config layout changed, the telemetry file now means something
+different) and 0.3.x → 0.4.x (the guard started refusing in code what it used
+to only suggest, and the pre-commit hook started running your project's
+tests instead of the kit's).
+
+[`docs/EXIT-CODES.md`](docs/EXIT-CODES.md) lists what every command returns
+when it fails, so a script can tell "the kit says no" from "the kit broke".
 
 ## Contributing
 
