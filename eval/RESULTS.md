@@ -302,35 +302,43 @@ so it entered the medians as a fast, empty, wrong answer.
 
 | metric (median) | kit on | kit off |
 | --- | --- | --- |
-| **correct** | **55/60** | **54/60** |
-| tool calls | 11 | 7 |
-| read calls | 2.5 | 2 |
-| narrow reads | 58.4% | 66.7% |
+| **correct** | **54/60** | **55/60** |
+| tool calls | 12.5 | 8 |
+| read calls | 3 | 2 |
+| narrow reads | 66.7% | 66.7% |
 | grep/glob calls | 3 | 2 |
-| steps | 8 | 6 |
-| input tokens | 49,995 | 10,578 |
-| final context | 39,860 | 12,576 |
-| wall seconds | 51.4 | 25.1 |
+| steps | 9 | 6 |
+| input tokens | 56,205 | 10,540 |
+| final context | 39,928 | 12,718 |
+| wall seconds | 43 | 21 |
 | paths written outside the target | 0 | 0 |
 
 | per task | kit on | kit off |
 | --- | --- | --- |
 | `read-control` | 10/10 | 10/10 |
 | `read-multi-denylist` | 8/10 | 8/10 |
-| `read-multi-gate` | 8/10 | 6/10 |
-| `read-two-files` | 9/10 | 10/10 |
+| `read-multi-gate` | 6/10 | 7/10 |
+| `read-two-files` | 10/10 | 10/10 |
 | `edit-rename` | 10/10 | 10/10 |
 | `edit-multi` | 10/10 | 10/10 |
 
 ### What this says
 
-**On correctness, the kit is a tie.** 55 against 54, on sixty runs a side.
+**On correctness, the kit is a tie.** 54 against 55, on sixty runs a side.
 That is inside the noise of a single task flipping, and it is the opposite
 of what the previous version of this file said.
 
-**On everything else, the kit is a cost.** It spends **4.7x the input
+A second run of the same 120 runs - same subject, same suite, same model,
+a different day of model traffic - gave **55/60 against 54/60**, the kit
+ahead by one. Two independent measurements put the tie on either side of
+zero, which is what a tie looks like from both ends.
+
+**On everything else, the kit is a cost.** It spends **5.3x the input
 tokens** and takes **twice as long**, and it makes **more** tool calls.
-Those are the same numbers as before, and they are the honest ones.
+Those are the same numbers as before, and they are the honest ones. The
+narrow-read share is the same in both arms - 66.7% - so the kit's rules do
+not make the agent read more carefully; they make it read more, and the
+context that follows is the price.
 
 **The previous conclusion was the grader's fault, and it is worth writing
 down.** The earlier run said 52/60 against 59/59 - the kit looked clearly
@@ -372,13 +380,10 @@ answer right about as often, and buys process discipline and an 80% smaller
 context on a long one.** Whether that is worth it depends on whether the
 work is long. A repo of one-file lookups should not install this.
 
-The narrow-read share is worth one more line. The kit's instructions say
-*locate before you read*, and the share of reads that were bounded was
-**58% with the kit and 67% without it** - the rule is followed less often
-when the agent is also carrying the rule in its context, because the
-context is where the budget goes. A fleet that routes each job to the model
-built for it is the other half of what the kit offers, and this suite uses
-one model on both sides, so it cannot see that.
+A fleet that routes each job to the model built for it is the other half of
+what the kit offers, and this suite cannot see that half: it runs one model
+on both sides, deliberately, so that the only variable is the kit. The
+routing is measured separately, in `docs/ROUTING.md`.
 
 ## The gate
 
