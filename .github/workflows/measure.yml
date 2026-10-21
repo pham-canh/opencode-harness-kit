@@ -67,9 +67,11 @@ jobs:
     # because the secret is not set teaches people to ignore the schedule,
     # which is worse than not having one - and a scheduled workflow that has
     # never run is not evidence that it works.
-    if: >-
-      ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-          && secrets.OPENCODE_API_KEY != '' }}
+    # On one line: a folded YAML block leaves a newline inside the ${{ }},
+    # and the expression parser does not take that. The file failed to load,
+    # and the run said "this run likely failed because of a workflow file
+    # issue" - which is a red run every push for a job nobody wanted.
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.OPENCODE_API_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
