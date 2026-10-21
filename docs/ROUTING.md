@@ -120,14 +120,14 @@ on a one-line reply.
 |---|---|---|---|---|---|---|
 | `beam-free` | 7,800 | **6,118** | 13,782 | 24 | 6,308 | 28 |
 | `minimax-m3.1-flash-free` | 7,114 | 6,903 | 8,448 | 0 | **6,292** | 0 |
-| `nemotron-3.5-lightning-free` | 8,140 | 6,882 | 13,554 | 86 | 6,870 | 54 |
+| `nemotron-3.5-lightning-free` | 8,140 | 6,882 | 13,554 | 86 | — | — |
 | `glm-5.3-flash-free` | 10,604 | 7,408 | 21,002 | 0 | 10,718 | 12 |
-| `nemotron-3-ultra-free` | 9,282 | 7,847 | 15,402 | 36 | 7,534 | 35 |
+| `nemotron-3-ultra-free` | 9,282 | 7,847 | 15,402 | 36 | — | — |
 | `nemotron-3.5-super-vl-free` | 10,404 | 8,353 | 19,763 | 15 | 10,988 | 17 |
-| `mimo-v2.6-flash-free` | 8,875 | 9,345 | 9,635 | 8 | 11,742 | 16 |
-| `big-pickle` | 9,983 | 10,438 | 11,372 | 8 | 9,325 | 8 |
+| `mimo-v2.6-flash-free` | 8,875 | 9,345 | 9,635 | 8 | — | — |
+| `big-pickle` | 9,983 | 10,438 | 11,372 | 8 | — | — |
 | `deepseek-v4.1-flash-free` | 15,840 | 10,659 | 25,805 | 0 | 14,193 | 46 |
-| `longcat-2.5-preview-free` | 13,099 | 11,996 | 16,991 | 16 | 13,160 | 25 |
+| `longcat-2.5-preview-free` | 13,099 | 11,996 | 16,991 | 16 | — | — |
 
 **What this says that the install tables do not.** The margin between the
 fastest model and the fourth is under a second - 6.1 s for Beam against 7.4 s
@@ -139,6 +139,14 @@ costs twice what Beam costs, on the same one-line question.
 On a prompt this small the difference is inside the noise, and on one of them
 it is the wrong way round. The tier earns its keep on real work, and that
 is the measurement below, on the install's own messages.
+
+A dash in the `@low` columns means the model publishes **no `low` level**,
+so there is nothing to ask for: it runs at its natural rate. The script
+reads the catalogue to know which is which, rather than asking every model
+and reporting an answer it did not use.
+
+The model ids are shown without their provider; the script prints
+`opencode/beam-free`, and either spelling works with `--model`.
 
 **The free tier is noisy, and the table says so.** Five requests is five
 requests: `deepseek` had a 25.8 s outlier in a 10.7 s median, and Beam had a
@@ -400,5 +408,7 @@ directory is exactly as dangerous as one in the plural one.
   config, so it is sized by the **narrowest** lane: 24,000 tokens for
   `fleet-safe`, whose narrowest lane has a 200k window, and 19,200 for
   `fleet-all`, whose narrowest lane is Big Pickle at a 160k input cap.
+  (Big Pickle's CATALOGUE context is 200k; the profile pins its input cap to
+  160k, and the cap is the number that governs.)
   Sizing it by the widest model instead would reserve 125,829 tokens and
   leave every 200k lane with 74k usable.

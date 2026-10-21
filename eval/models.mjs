@@ -24,8 +24,8 @@
 // between models and not between prompts. It is not a benchmark of the
 // models: it is a measurement of what a lane would wait for.
 
-import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { execFileSync, spawnSync } from "node:child_process"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -138,6 +138,55 @@ function measure(model, variant) {
   return { ok: true, ms, reasoning, output, input, error: null }
 }
 
+/**
+ * The effort levels each model publishes, from the live catalogue.
+ *
+ * A model that publishes no `low` level cannot be asked for one: the
+ * request is ignored and the model runs at its natural rate. Measuring that
+ * and putting it in a column called "wall @low" would say a model is
+ * faster at a tier it does not have.
+ *
+ * @returns {Promise<Map<string, string[]>>}
+ */
+async function publishedEffort() {
+  const out = new Map()
+  const url = process.env.OPENCODE_HARNESS_CATALOG_URL ?? "https://models.dev/api.json"
+  try {
+    const body = url.startsWith("file://")
+      ? readFileSync(url.slice("file://".length), "utf8")
+      : execFileSync("curl", ["-sL", "--fail", "--max-time", "40", url], {
+          encoding: "utf8",
+          // The catalogue is over a megabyte, and the default buffer is one
+          // megabyte: without this the fetch fails with ENOBUFS, the catch
+          // swallows it, and every model looks like it publishes no effort
+          // level at all.
+          maxBuffer: 64 * 1024 * 1024,
+        })
+    const catalog = JSON.parse(body)
+    for (const [provider, p] of Object.entries(catalog ?? {})) {
+      for (const [id, m] of Object.entries(p?.models ?? {})) {
+        const levels = []
+        for (const ro of m?.reasoning_options ?? []) {
+          if (ro?.type === "effort") levels.push(...(ro?.values ?? []))
+        }
+        out.set(`${provider}/${id}`, levels)
+      }
+    }
+  } catch (err) {
+    // A catalogue that cannot be read is not a reason to refuse to measure.
+    // The levels are used to mark a column, not to decide anything - but the
+    // reason is printed, because a silent failure here marks every model as
+    // publishing no effort level, which is a false statement about them.
+    console.error(
+      `  could not read the catalogue: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    console.error("  the effort levels are unknown, so the @low column will read n/a.")
+  }
+  return out
+}
+
+const effort = await publishedEffort()
+
 const rows = []
 for (const { model, profiles } of await modelsInUse()) {
   // The docs name a model by its bare id, so both spellings work.
@@ -158,8 +207,13 @@ for (const { model, profiles } of await modelsInUse()) {
   }
   if (!samples.length) continue
   const ms = samples.map((s) => s.ms)
+  // The `low` variant is only measured for a model that PUBLISHES `low`.
+  // A model with no effort levels runs at its natural rate whatever is
+  // asked for, and a column that calls that "@low" is a lie.
+  const levels = effort.get(model) ?? []
+  const publishesLow = levels.includes("low")
   const low = []
-  if (withEffort) {
+  if (withEffort && publishesLow) {
     for (let i = 0; i < reps; i++) {
       const r = measure(model, "low")
       if (r.ok) low.push(r)
@@ -176,6 +230,8 @@ for (const { model, profiles } of await modelsInUse()) {
     reasoning: Math.round(median(samples.map((s) => s.reasoning))),
     output: Math.round(median(samples.map((s) => s.output))),
     input: Math.round(median(samples.map((s) => s.input))),
+    effort_levels: levels,
+    publishes_low: publishesLow,
     low_requests: low.length,
     low_reasoning: low.length ? Math.round(median(low.map((r) => r.reasoning))) : null,
     low_avg_ms: low.length ? Math.round(low.reduce((a, r) => a + r.ms, 0) / low.length) : null,
@@ -219,7 +275,7 @@ for (const r of rows) {
       String(r.reasoning).padStart(10) +
       String(r.output).padStart(10),
   )
-  if (r.low_requests) {
+  if (r.publishes_low) {
     console.log(
       "  " +
         `${r.model} @low`.padEnd(30) +
@@ -228,6 +284,13 @@ for (const r of rows) {
         "".padStart(10) +
         "".padStart(10) +
         String(r.low_reasoning).padStart(10),
+    )
+  } else if (withEffort) {
+    console.log(
+      "  " +
+        `${r.model} @low`.padEnd(30) +
+        "n/a".padStart(10) +
+        "  (publishes no low level - it runs at its natural rate)",
     )
   }
 }
