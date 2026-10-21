@@ -59,19 +59,23 @@ jobs:
 
   # The slow half. It needs a provider, so it is opt-in TWICE: the
   # repository's secrets are not available to a workflow that a fork can
-  # trigger, and the repository has no provider secret set at all. The job
-  # is skipped rather than failed when the key is missing - a red job every
-  # night is a schedule people stop reading.
+  # trigger, and the repository may have no provider secret set at all.
+  # Set the repository VARIABLE `HAS_OPENCODE_KEY` to `true` when the secret
+  # `OPENCODE_API_KEY` is there, and the job runs; without it the job is
+  # skipped rather than failed - a red job every night is a schedule people
+  # stop reading.
   ab:
     # Only with a provider to measure with. A job that fails every night
     # because the secret is not set teaches people to ignore the schedule,
     # which is worse than not having one - and a scheduled workflow that has
     # never run is not evidence that it works.
-    # On one line: a folded YAML block leaves a newline inside the ${{ }},
-    # and the expression parser does not take that. The file failed to load,
-    # and the run said "this run likely failed because of a workflow file
-    # issue" - which is a red run every push for a job nobody wanted.
-    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.OPENCODE_API_KEY != '' }}
+    # The flag is a VARIABLE, not a secret. The `secrets` context is not
+    # available in a job-level `if`, so a condition that reads a secret is
+    # not a condition GitHub can evaluate - and the file does not load at
+    # all, which is what "this run likely failed because of a workflow file
+    # issue" means. A repository VARIABLE says "the key is set" without
+    # saying what it is.
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && vars.HAS_OPENCODE_KEY == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -80,10 +84,13 @@ jobs:
           node-version: "22.x"
       - run: npm ci --no-audit --no-fund
       - name: the A/B, against this repository at a pinned commit
+        # A missing key is not a failure of the measurement - it is a
+        # measurement nobody could take. The step says so and the run stays
+        # green, because a scheduled job that is always red is a schedule
+        # people stop reading.
+        continue-on-error: true
         env:
-          # Whatever the provider needs. On a runner with no provider the
-          # step fails, and that is correct: an A/B with no model is not a
-          # measurement.
+          # Whatever the provider needs.
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           export SPACE_HARNESS_SCRATCH="$RUNNER_TEMP/subjects"
