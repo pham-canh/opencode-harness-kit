@@ -648,9 +648,23 @@ if (rescoreDir) {
             ? `edit ok, answer MISS (cited ${cited}, none held)`
             : `edit ok (${g.changed?.length ?? 0} of ${job.mutateMany.files.length} file(s) changed), cited ${cited}`
       } else if (job.mutate) {
-        const g = gradeMutation(runDir, job.mutate)
-        ok = g.ok
-        why = g.ok ? "edit ok" : `edit MISS (${g.reason})`
+        // A change, and sometimes a question as well. A task with both is
+        // finished only when both are done: an agent that reported the
+        // finding and then fixed it has not reviewed, it has edited.
+        const g = gradeMutation(runDir, job.mutate, { pristine: target })
+        let answerOk = true
+        let cited = 0
+        if (job.want) {
+          const a = gradeAnswer(runDir, m.text, job.want, { exclude: SUITE_FILES })
+          answerOk = a.ok
+          cited = a.cited
+        }
+        ok = g.ok && answerOk
+        why = !g.ok
+          ? `edit MISS (${g.reason})`
+          : !answerOk
+            ? `edit ok, answer MISS (cited ${cited}, none held)`
+            : `edit ok, cited ${cited}`
       } else {
         // The suite's own file is excluded from the citations: the subject
         // is a copy of this repository, so the answer key is inside it.
