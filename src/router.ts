@@ -24,7 +24,7 @@ import { join } from "node:path"
 import { safeStringify } from "./safe.js"
 import { projectRoot } from "./project.js"
 import { utilityModel } from "./config.js"
-import { readHealth, writeHealth, unhealthyModels } from "./health.js"
+import { readHealth, writeHealth, unhealthyModels, unhealthyRoutes } from "./health.js"
 import {
   loadProfile,
   pruneThreshold,
@@ -43,13 +43,167 @@ const SPENT = [
   /\b429\b/,
   /quota (?:exceeded|exhausted)/i,
   /overloaded_error/i,
-  /model .*not found/i,
+  // A withdrawn model, named in the error. The words have to sit next to
+  // each other - "model minimax-m3.1-flash-free not found", "model_not_found",
+  // "ModelNotFound" - because the text this runs against is the provider's
+  // own error and that can be a whole response body. The old pattern ran
+  // over the entire event, where a body that mentioned a model in one place
+  // and "not found" in another read as a withdrawn model: a live route
+  // written off by a coincidence.
+  /\bmodel[\W_]*not[\W_]*found\b/i,
+  /\bmodel\b[\w.:/-]*(?:\s+[\w.:/-]+){0,2}\s+not found\b/i,
   /no available provider/i,
 ]
 
-function classify(text: string): string | null {
+/**
+ * The text of a provider error, and nothing else.
+ *
+ * The old code classified the whole serialised event. An event carries the
+ * message, its token counts and the tool output, so a successful assistant
+ * message whose `tokens.input` was 429 matched /\b429\b/ and marked a live
+ * route as spent - and a fleet that loses a lane to a number in a token count
+ * fails over onto the wrong model for the rest of the day.
+ *
+ * Only the error's own fields are read, and the SDK keeps the human-readable
+ * text in `data.message`, with the status code and the raw body beside it.
+ *
+ * @param {any} err
+ * @returns {string}
+ */
+function errorText(err: any): string {
+  if (err == null) return ""
+  if (typeof err === "string") return err
+  if (typeof err !== "object") return String(err)
+  const parts: string[] = []
+  try {
+    const push = (v: unknown) => {
+      if (typeof v === "string" && v) parts.push(v)
+      else if (typeof v === "number" && Number.isFinite(v)) parts.push(String(v))
+      else if (v && typeof v === "object") parts.push(safeStringify(v))
+    }
+    push(err.name)
+    push(err.message)
+    push(err.code)
+    const data = err.data
+    if (data && typeof data === "object") {
+      push(data.name)
+      push(data.message)
+      push(data.code)
+      push(data.statusCode)
+      push(data.responseBody)
+    }
+  } catch {
+    // A field that throws on read is not a reason to take the session down.
+  }
+  return parts.join("\n")
+}
+
+/**
+ * Whether a provider error means the route is spent.
+ *
+ * @param {any} err
+ * @returns {string | null} the pattern that matched
+ */
+function classifyError(err: any): string | null {
+  const text = errorText(err)
+  if (!text) return null
   for (const p of SPENT) if (p.test(text)) return p.source
   return null
+}
+
+/**
+ * The provider error an event carries.
+ *
+ * `message.updated` carries it on the message, and `session.error` carries
+ * it directly. Both are read: a request that failed and a session that
+ * failed are the same news about the same route.
+ *
+ * @param {any} e
+ * @returns {any}
+ */
+function errorOf(e: any): any {
+  const props = e?.properties
+  if (!props || typeof props !== "object") return undefined
+  return props.info?.error ?? props.error
+}
+
+/**
+ * The key a route is filed under in the health file.
+ *
+ * The router files a failure under the route the EVENT names - the provider
+ * the SDK reported and the model it reported - and the config hook looks the
+ * same route up at startup to decide whether the session has to move. The
+ * two halves used different keys: the event's `provider/model` on one side,
+ * and a hardcoded `opencode/model` on the other. For a profile whose
+ * provider is not "opencode" the failure was filed under
+ * "openrouter/<model>" and looked up under "opencode/<model>", so the
+ * session-model failover never fired.
+ *
+ * The key is the QUALIFIED route, and both halves build it with this
+ * function. The file is not re-keyed to the bare model id: it already says
+ * WHICH provider died, `unhealthyModels()` reads the bare id out of it for
+ * the lane chains, and a file written by an earlier version of the kit
+ * would stop matching.
+ *
+ * @param {string | undefined} provider
+ * @param {string} model
+ * @returns {string} `provider/model`
+ */
+function routeKey(provider: string | undefined, model: string): string {
+  const p = typeof provider === "string" && provider ? provider : "opencode"
+  return `${p}/${model}`
+}
+
+/**
+ * The route an event is about, in the shape the SDK actually sends.
+ *
+ * `message.updated` carries the message under `properties.info`, and the
+ * message carries the model as `modelID` - or as `model.modelID` on a user
+ * message. The flat `properties.modelID` the router used to read is not in
+ * the SDK at all: it was a shape the router invented and then tested
+ * against, so the key it built was always undefined, nothing was ever
+ * recorded, and the failover this file exists for never ran in production.
+ *
+ * The flat shape is still read, after the SDK's own: some harnesses report
+ * it, and a route that is understood is a route that fails over.
+ *
+ * @param {any} e
+ * @returns {string | undefined} the route key, `provider/model`
+ */
+function routeOf(e: any): string | undefined {
+  const props = e?.properties
+  if (!props || typeof props !== "object") return undefined
+  const info = props.info ?? props
+  if (!info || typeof info !== "object") return undefined
+  const model = info.model
+  const id = model?.modelID ?? info.modelID ?? props.modelID ?? props.model?.modelID
+  if (typeof id !== "string" || !id) return undefined
+  const provider = model?.providerID ?? info.providerID ?? props.providerID
+  return routeKey(typeof provider === "string" ? provider : undefined, id)
+}
+
+/**
+ * The session an event belongs to.
+ *
+ * @param {any} e
+ * @returns {string | undefined}
+ */
+function sessionIdOf(e: any): string | undefined {
+  const props = e?.properties
+  const id = props?.info?.sessionID ?? props?.sessionID
+  return typeof id === "string" && id ? id : undefined
+}
+
+/**
+ * The route a config is pointed at.
+ *
+ * @param {any} cfg
+ * @returns {string | undefined} the route key, `provider/model`
+ */
+function routeOfConfig(cfg: any): string | undefined {
+  const model = cfg?.model ?? cfg?.harness?.sessionModel
+  if (typeof model !== "string" || !model) return undefined
+  return model.includes("/") ? model : `opencode/${model}`
 }
 
 const WARN_TEXT =
@@ -65,6 +219,15 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
   const project = projectRoot(directory, worktree)
   let failedSessions = 0
   let warned = false
+  // The route this session is on, and the one it was configured with.
+  //
+  // `session.error` carries an error and no model at all, so the event that
+  // reports a failure cannot always say which route failed. Without a
+  // fallback the failure is dropped, and a dropped failure is a dead route
+  // that stays live until the fleet hits it again.
+  const sessionRoutes = new Map<string, string>()
+  let lastRoute: string | undefined
+  let configuredRoute: string | undefined
 
   return {
     // Runs once, before the session does any work.
@@ -72,6 +235,10 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
       try {
         const cfg = config as Record<string, any>
         const health = readHealth(project)
+        // The routes that are spent RIGHT NOW. A record whose window has
+        // passed belongs to a provider quota that has come back, and
+        // failing over on it moves a live route off a model that works.
+        const routes = unhealthyRoutes(project)
         const unhealthy = unhealthyModels(project)
 
         // config.harness is stripped by schema validation, so the active
@@ -94,8 +261,15 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
         //    overwriting the lanes here would collapse ten jobs onto one
         //    model and throw away the chain that was supposed to survive the
         //    outage. Only the session model moves.
-        const baseKey = `opencode/${profile.model}`
-        if (health.unhealthy?.[baseKey]) {
+        //
+        //    The key is the profile's OWN route, qualified with the profile's
+        //    provider - the same key `routeKey` builds for the event that
+        //    filed the failure. A hardcoded "opencode/" prefix was a
+        //    different string from the one the failure was filed under for
+        //    every profile whose provider is not "opencode", so the check
+        //    could never fire for them.
+        const baseKey = routeKey(profile.provider, profile.model)
+        if (routes[baseKey]) {
           const queue = [id, ...(profile.fallback ?? [])]
           for (const candidate of queue) {
             let fallback
@@ -107,8 +281,8 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
             // The health file is keyed by MODEL, and a fleet's profile id is
             // not its model - so the check has to be against the model's own
             // key. Checking the id was a check that could never fire.
-            const key = `opencode/${fallback.model}`
-            if (health.unhealthy?.[key]) continue
+            const key = routeKey(fallback.provider, fallback.model)
+            if (routes[key]) continue
             const fleet = isFleet(profile)
             applySessionModel(cfg, fallback, {
               keepLanes: fleet,
@@ -124,6 +298,11 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
           }
         }
 
+        // The route this session runs on, for a failure that arrives without
+        // one. After the failover above, so it names the route the session
+        // actually got and not the one it asked for.
+        configuredRoute = routeOfConfig(cfg) ?? routeKey(profile.provider, profile.model)
+
         // 2. Every lane. A lane whose model is spent moves to the next rung of
         //    its own chain, so one dead route costs one lane, not the fleet.
         const roles = resolveRoles(profile, { unhealthy })
@@ -133,7 +312,10 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
           if (!agent) continue
           const resolved = resolveLaneModel(profile, lane, { unhealthy })
           if (resolved.model === profile.model && !profile.roleModels?.[lane]) continue
-          const wantModel = `opencode/${resolved.model}`
+          // The lane's model is written with the PROFILE's provider, the
+          // same way the config compiler writes it. The hardcoded "opencode/"
+          // prefix put a lane on a route the provider does not serve.
+          const wantModel = routeKey(profile.provider, resolved.model)
           if (agent.model !== wantModel) {
             agent.model = wantModel
             // The variant has to be resolved against the model the lane ended
@@ -155,20 +337,38 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
       const type = e?.type
       if (!type) return
 
-      // The event is opencode's object, and it can hold a reference back to
-      // itself. A plain JSON.stringify on a cyclic object throws, and a hook
-      // that throws takes the event down with it.
-      const text = safeStringify(e)
-      const reason = classify(text)
+      // Remember the route this session is on. `session.error` carries no
+      // model at all, so the failure has to be attributed to the route the
+      // session was last seen on, or to the one it was configured with.
+      const seen = routeOf(e)
+      if (seen) {
+        lastRoute = seen
+        const sessionID = sessionIdOf(e)
+        if (sessionID) sessionRoutes.set(sessionID, seen)
+      }
+
+      // Only the PROVIDER ERROR is classified. The event itself carries the
+      // message, its token counts and the tool output, and none of that says
+      // anything about the route.
+      const err = errorOf(e)
+      if (!err) return
+      const reason = classifyError(err)
       if (!reason) return
 
-      // Only mark the model this session is actually using.
-      const modelID = e.properties?.modelID ?? e.properties?.model ?? e.properties?.modelID
-      const key = modelID ? `opencode/${modelID}` : undefined
+      // The route the failure belongs to: the event's own, else the route
+      // this session was last seen on, else the route it was configured
+      // with. The last route seen anywhere is the last resort, because in a
+      // process with more than one session it belongs to a different job.
+      const sessionID = sessionIdOf(e)
+      const key =
+        seen ??
+        (sessionID ? sessionRoutes.get(sessionID) : undefined) ??
+        configuredRoute ??
+        lastRoute
       if (!key) return
 
       const health = readHealth(project)
-      if (health.unhealthy[key]) return // already recorded, do not spam
+      if (unhealthyRoutes(project)[key]) return // already recorded, do not spam
       health.unhealthy[key] = { at: new Date().toISOString(), reason }
       writeHealth(project, health)
       failedSessions++

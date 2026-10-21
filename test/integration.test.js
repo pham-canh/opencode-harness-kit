@@ -563,7 +563,7 @@ test("router walks the fallback queue when the session route is marked down", as
     join(dir, ".space", "health.json"),
     JSON.stringify({
       unhealthy: {
-        "opencode/minimax-m3.1-flash-free": { at: "2026-10-07T00:00:00Z", reason: "429" },
+        "opencode/minimax-m3.1-flash-free": { at: new Date().toISOString(), reason: "429" },
       },
     }),
   )
@@ -589,7 +589,7 @@ test("a spent session model does not collapse the fleet onto one model", async (
     join(dir, ".space", "health.json"),
     JSON.stringify({
       unhealthy: {
-        "opencode/minimax-m3.1-flash-free": { at: "2026-10-07T00:00:00Z", reason: "429" },
+        "opencode/minimax-m3.1-flash-free": { at: new Date().toISOString(), reason: "429" },
       },
     }),
   )
@@ -623,7 +623,7 @@ test("router moves one lane down its chain and leaves the rest alone", async () 
     join(dir, ".space", "health.json"),
     JSON.stringify({
       unhealthy: {
-        "opencode/beam-free": { at: "2026-10-07T00:00:00Z", reason: "429" },
+        "opencode/beam-free": { at: new Date().toISOString(), reason: "429" },
       },
     }),
   )
