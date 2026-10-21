@@ -27,10 +27,24 @@
 // one with a duration, so "how long does this lane take" and "was this lane
 // called at all" are answered from the same file without guessing.
 //
-// The `chat.message` hook is deliberately not used for this. Measured on
-// OpenCode 1.19, its `agent` field is undefined, so it cannot attribute a
-// call to a lane; and a second counter that cannot be correlated with the
-// first would double-count every call.
+// WHERE THE LANE NAME COMES FROM
+//
+// Not from the message. opencode's AssistantMessage has no `agent` field - it
+// has id, role, model, tokens, time and parentID - and the plugin read the
+// agent from exactly that missing field. The lane record was therefore never
+// written: not once, in any session, on any machine. The measurement that
+// decides whether the fleet stays at ten lanes was reading a file that could
+// not exist.
+//
+// The agent name is on the REQUEST. `chat.params` carries the agent and the
+// model of the call that is about to be made, and the user message that call
+// belongs to; the assistant message names that user message as its parent, so
+// the two join.
+//
+// The `chat.message` hook is not used for this. Measured on OpenCode 1.19 its
+// `agent` field is undefined, while `chat.params` declares it as required -
+// and a second counter that cannot be correlated with the first would
+// double-count every call.
 //
 // WHAT A DENIAL LOOKS LIKE HERE
 //
@@ -69,7 +83,47 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
   const opened = new Set<string>()
   const closed = new Set<string>()
 
+  // The lane a request ran on, and the model it ran on, keyed by the id of
+  // the user message the request was made from.
+  //
+  // The assistant message names that user message as its parent, so this is
+  // how a call is attributed to a lane.
+  //
+  // The map is bounded: a long session makes a lot of requests, and the map
+  // is only a bridge between a request and the assistant message that
+  // answers it. The oldest entries are dropped once it grows past what a
+  // session needs, so the plugin cannot grow without limit.
+  const requests = new Map<string, { agent?: string; model?: string; provider?: string }>()
+  const REQUEST_MEMORY = 500
+
+  /**
+   * Remember which lane a request was made from.
+   *
+   * @param {any} input the `chat.params` input
+   */
+  const rememberRequest = (input: any) => {
+    const id = input?.message?.id
+    if (typeof id !== "string") return
+    const model = input?.model
+    requests.set(id, {
+      agent: typeof input?.agent === "string" ? input.agent : undefined,
+      model: typeof model?.modelID === "string" ? model.modelID : undefined,
+      provider: typeof model?.providerID === "string" ? model.providerID : undefined,
+    })
+    if (requests.size > REQUEST_MEMORY) {
+      // The oldest first: a Map keeps its insertion order.
+      const oldest = requests.keys().next()
+      if (!oldest.done) requests.delete(oldest.value)
+    }
+  }
+
   return {
+    "chat.params": async (input: any) => {
+      // The lane and the model of the call that is about to be made. This is
+      // the only place opencode says which agent is running.
+      rememberRequest(input)
+    },
+
     event: async ({ event }: any) => {
       // Events are provider-specific and opencode may add shapes we have never
       // seen. Anything unrecognised is ignored rather than trusted.
@@ -91,7 +145,7 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
       // on which model, and how long it took. That record is what makes "cut
       // the lanes nobody uses" a measurement instead of a guess.
       if (type === "message.updated") {
-        const lane = laneOf(event)
+        const lane = laneOf(event, requests)
         if (!lane || !lane.id) return
         if (lane.ms !== undefined) {
           // The completed event. Written once, and only if the open record
@@ -142,7 +196,10 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
  *
  * The message id is what makes the record countable: one message is one call.
  */
-function laneOf(event: unknown): {
+function laneOf(
+  event: unknown,
+  requests: Map<string, { agent?: string; model?: string; provider?: string }>,
+): {
   id?: string
   agent?: string
   model?: string
@@ -159,9 +216,12 @@ function laneOf(event: unknown): {
   if (info.role && info.role !== "assistant") return null
 
   const id = typeof info.id === "string" ? info.id : undefined
-  const agent = typeof info.agent === "string" ? info.agent : undefined
-  const modelId = info.model?.modelID ?? info.modelID
-  const providerId = info.model?.providerID ?? info.providerID
+  // The request this message answers. The message does not name the agent;
+  // the request does, and the parent id is the join.
+  const parent = typeof info.parentID === "string" ? requests.get(info.parentID) : undefined
+  const agent = parent?.agent ?? (typeof info.agent === "string" ? info.agent : undefined)
+  const modelId = parent?.model ?? info.model?.modelID ?? info.modelID
+  const providerId = parent?.provider ?? info.model?.providerID ?? info.providerID
   const time = info.time ?? {}
   const created = typeof time.created === "number" ? time.created : undefined
   const completed = typeof time.completed === "number" ? time.completed : undefined
