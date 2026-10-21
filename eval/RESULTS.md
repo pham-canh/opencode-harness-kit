@@ -146,6 +146,115 @@ That is the mechanism the whole kit rests on, and it is the one thing the
 correlation in Results 1 and 2 could not show. The kit does not shrink what it
 costs; it shrinks what the agent drags along behind it.
 
+## The A/B on this repository, 10 reps per arm
+
+    node eval/prepare.mjs --repo . --ref <sha> --name self
+    node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json --reps 10
+
+**The subject is this repository at a pinned commit**, so the run is
+reproducible: `git clone && git checkout <sha>` and the same command. The
+previous suite ran against a private repository, which meant a result nobody
+else could check.
+
+Six tasks, ten reps per arm, 120 agent runs: four lookups and two edits. The
+lookups are graded on the `file:line` the agent cited, read out of the
+snapshot; the edits are graded on the file after the run.
+
+**Both arms ran on the same model**, `opencode/minimax-m3.1-flash-free`, and
+the report prints it. The kit-off arm used to run with an empty config, so
+opencode picked its own default: not the model the kit-on arm was on, and
+not a model that answered - four kit-off runs hit the 600-second ceiling
+with no output at all, and a timed-out run has zero tools and zero context,
+so it entered the medians as a fast, empty, wrong answer.
+
+| metric (median) | kit on | kit off |
+| --- | --- | --- |
+| **correct** | **54/60** | **55/60** |
+| tool calls | 12.5 | 8 |
+| read calls | 3 | 2 |
+| narrow reads | 66.7% | 66.7% |
+| grep/glob calls | 3 | 2 |
+| steps | 9 | 6 |
+| input tokens | 56,205 | 10,540 |
+| final context | 39,928 | 12,718 |
+| wall seconds | 43 | 21 |
+| paths written outside the target | 0 | 0 |
+
+| per task | kit on | kit off |
+| --- | --- | --- |
+| `read-control` | 10/10 | 10/10 |
+| `read-multi-denylist` | 8/10 | 8/10 |
+| `read-multi-gate` | 6/10 | 7/10 |
+| `read-two-files` | 10/10 | 10/10 |
+| `edit-rename` | 10/10 | 10/10 |
+| `edit-multi` | 10/10 | 10/10 |
+
+### What this says
+
+**On correctness, the kit is a tie.** 54 against 55, on sixty runs a side.
+That is inside the noise of a single task flipping, and it is the opposite
+of what the previous version of this file said. A second run of the same
+120 runs - same subject, same suite, same model, a different day of model
+traffic - gave **55/60 against 54/60**, the other way. Two measurements
+put the tie on either side of zero, which is what a tie looks like from
+both ends.
+
+**On everything else, the kit is a cost.** It spends **5.3x the input
+tokens** and takes **twice as long**, and it makes **more** tool calls.
+Those are the honest numbers.
+
+**The previous conclusion was the grader's fault, and it is worth writing
+down.** The earlier run said 52/60 against 59/59 - the kit looked clearly
+worse - and the reason was that the grader could not read a citation
+written as two markdown fields:
+
+    **File:** `src/profile.js`
+    **Line:** 105
+
+The old pattern stopped at the newline, so the file and the number were
+never paired, the citation was lost, and the answer was scored wrong. The
+kit's own instructions tell the agent to cite a file and a line, and the
+shape the kit produces is the shape the grader could not read. The kit-off
+arm had no such instructions, answered in prose, and was graded by a
+pattern that handled prose.
+
+Re-scoring the EARLIER run with the fixed grader - the same 120 agent runs,
+the same answers, only the grader changed - gives **34/40 against 30/40** on
+the four lookup tasks, the kit ahead. A harness that measures the harness
+is worse than one that measures nothing.
+
+### What this does not say
+
+It does not say the kit is not worth it. It says the kit's value is **not in
+short lookups**, and this suite only contains short lookups and two small
+edits. The value it does have is in two places this suite cannot see:
+
+- **Long sessions.** The pruner removes **65-80% of the context** across real
+  sessions, depending on which sessions it is measured over
+  (`npm run measure:prune`), and a task that fits in one read never gets
+  near the point where pruning matters. The long-task A/B below is the
+  measurement of that.
+- **Process.** A `reviewer` that reviews and does not edit, a `verify` that
+  runs the checks and does not fix them, a `space-finish` that hands the
+  publish decision to a human. Those are behaviours, not accuracy, and a
+  grader that counts correct answers cannot see them. The process section
+  below measures what it can - and what it found is that the lane and the
+  default agent behave the same, and that a task saying "fix it" overrides
+  the lane.
+
+The honest position is a trade, and it is now a trade with a number on it:
+**the kit costs about five times the input tokens on a small task, gets the
+answer right about as often, and buys process discipline and an 80% smaller
+context on a long one.** Whether that is worth it depends on whether the
+work is long. A repo of one-file lookups should not install this.
+
+The narrow-read share is worth one more line. The kit's instructions say
+*locate before you read*, and the share of reads that were bounded was
+**the same on both sides, 66.7%** - the rule is followed, and on a
+one-file question following it is waste either way. A fleet that routes
+each job to the model built for it is the other half of what the kit
+offers, and this suite uses one model on both sides, so it cannot see that.
+
 ## The A/B on TypeScript, against a PUBLIC subject
 
     node eval/prepare.mjs --clone https://github.com/typesense/typesense-js \

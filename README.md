@@ -67,6 +67,33 @@ src/                         ← no model name anywhere in here
 Same plugin source, twelve shipped profiles, twelve different behaviours. The
 test suite asserts that rather than taking it on faith.
 
+### How a request travels
+
+```mermaid
+flowchart LR
+  P[profile JSON<br/>model, effort, fallback, retention] --> C[oc-harness use<br/>compiles the profile]
+  C --> CFG[~/.config/opencode/opencode.jsonc<br/>agent.&lt;lane&gt;.model]
+  CFG --> PL[the plugin: guard, prune, router, telemetry]
+  PL --> LANES[10 lanes<br/>each on the model built for it]
+  LANES --> PR[prune: old tool output<br/>becomes a stub]
+  LANES --> GD[guard: denied commands<br/>and writes outside the project]
+  LANES --> RT[router: a spent route<br/>moves to the next rung]
+  LANES --> TL[telemetry: what each lane<br/>actually cost]
+```
+
+Four things happen to a request, and they are four separate files:
+
+| | |
+|---|---|
+| `src/guard.ts` | refuses the commands the kit never allows, and any write outside the project |
+| `src/prune.ts` | replaces old tool output with a one-line stub, so the window holds the work and not the noise |
+| `src/router.ts` | when a route is spent, moves the lane to the next rung of its own chain |
+| `src/telemetry.ts` | records what each lane actually cost, so `oc-harness lanes` can say which ones earn their place |
+
+The model for a lane is in the **config**, not in a prompt and not in a file
+the agent reads. That is the whole design: the answers are data, and a data
+edit is reviewable.
+
 ## A fleet, not a model
 
 The default profile is a **fleet**: ten jobs, ten free models, one session.
@@ -862,6 +889,38 @@ The short version: no OpenCode plugin hook can change the model of a running
 session, so switching happens at the next session, not mid-flight. What a
 plugin *can* do is move a lane to the next rung of its chain before the
 session starts.
+
+## What is next, and what is not measured yet
+
+The claims this project makes are measured, and where a measurement has not
+happened the claim is written down as a gap rather than as a fact. These are
+the open ones.
+
+**The pruner's rule was measured on one task.** Keeping the newest copy of
+each distinct tool output instead of a window on recent calls cut the input
+tokens by 69% and the wall time by 60% on the long-task A/B. One task is one
+workload. It needs the same treatment on a repository that is not this one,
+and on a session that runs for hours rather than minutes.
+
+**The reviewer's "you never fix" is an instruction, not a boundary.** The
+measurement of it came out even: the kit's reviewer lane and a default agent
+behaved the same on a review task, and a task that says "fix it" overrode
+the lane. The kit's own loop keeps the line by never asking a reviewer to
+fix anything. A guard that cannot be overridden by a task is worth having,
+and that is not built yet.
+
+**The nightly A/B needs a provider key on the repository.** The workflow
+exists, it runs, and it is skipped until the key is set — the variable
+`HAS_OPENCODE_KEY` says the secret is there. The numbers in
+[eval/RESULTS.md](eval/RESULTS.md) are the ones taken by hand.
+
+**The TypeScript pilot is one public repository.** It is now a real one
+(`typesense-js`, pinned by commit) rather than a private tree, which is what
+made it checkable. Two languages are not a survey.
+
+**The lanes are ten because ten models were available.** That is a
+hypothesis about the tier, not a number. `oc-harness lanes` counts the
+requests and says which lanes were never used; cutting them is a data edit.
 
 ## Development
 

@@ -1,0 +1,43 @@
+name: A change I would like
+description: An idea, a gap, or something that costs more than it should.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful reports here are the ones that say what the thing
+        SHOULD do, not only what it does now. If a measurement would settle
+        it, say which one.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What is hard, slow, or surprising today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like instead
+      description: The behaviour you want, in a sentence or two.
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurement
+    attributes:
+      label: How would we know it worked
+      description: |
+        What would be measured, and what number would count as better.
+        This project changes its claims only when a measurement says so.
+    validations:
+      required: false
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you have tried
+    validations:
+      required: false
