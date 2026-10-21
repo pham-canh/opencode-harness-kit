@@ -12,7 +12,18 @@ is not happening.
 
 ---
 
-## [Unreleased]
+## [0.5.0] — 2026-10-21
+
+A MINOR release, and the reason is the pruner: the rule that decides what
+survives changed, so the default behaviour of the kit changed. A patch
+would have been a lie about what is in the box.
+
+Published. The tag is what cut it: `git tag v0.5.0 && git push origin main
+v0.5.0`, and the publish job watches for exactly that.
+
+This release is the one where the kit measured itself properly, and what it
+found was a defect in the kit: the pruner was making the agent read the
+same files again.
 
 ### Added
 
