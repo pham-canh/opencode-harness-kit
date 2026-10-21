@@ -323,10 +323,28 @@ comparable, and the gate uses the number that IS comparable.
 `eval/measure-prune.mjs` is that number. opencode stores the message parts
 unpruned - the pruner rewrites the outgoing request, not the history - so the
 stored parts of a real session are exactly what the pruner was given, and
-replaying the real pruner over them measures exactly what it removed. On one
-install: **80.5% of the context
-across 60 real sessions**, 6,608 parts stubbed - the number
-`npm run measure:prune` prints.
+replaying the real pruner over them measures exactly what it removed.
+
+It reports **two** measures, because the script and the pruner's own log used
+to answer two different questions and only one of them is this kit's claim:
+
+- **REQUEST** - the size of the request that goes back to the model, counted
+  on the parts as they are serialised. This is the same definition
+  `savedChars` uses in `prune.jsonl`, so the script and the log ask the same
+  question of the same parts and their numbers reconcile rather than
+  disagree: the script's request delta IS the sum of the log's `savedChars`
+  for the same passes. It is the primary number and the one the `--min-saved`
+  gate is computed from, because "a smaller request" is what this kit claims.
+- **TEXT** - the text inside the parts: how much text was replaced. It is the
+  larger of the two, because the request measure also carries the parts the
+  pruner left alone, and because the stub's own metadata is part of the
+  request and counts against the saving.
+
+On one install: **80.5% of the text across 60 real sessions**, 6,608 parts
+stubbed. That is the TEXT measure - the number `npm run measure:prune`
+printed before the two were separated, when the script measured text and
+labelled it "context". The REQUEST measure on the same install is lower, and
+it is the one the gate checks.
 
 The controlled comparison of the two arms is `eval/ab.mjs`, and its result is
 in `eval/RESULTS.md`.
@@ -373,6 +391,19 @@ stub was longer than the output it replaced, because the stub carries its own
 label and its own metadata. Such a pass is still logged, because a part was
 stubbed, which is the event worth recording, and the negative number is the
 honest report of it.
+
+The measurement script measures the same thing on purpose.
+`eval/measure-prune.mjs` counts a part with the pruner's own expression -
+`JSON.stringify(part).length` - before and after the pass, and reports it as
+the REQUEST measure, so the two reconcile by construction instead of by
+coincidence: replaying twelve real sessions through the real pruner, the
+script measured a request delta of **6,049** characters and the log the
+pruner wrote during that replay said `savedChars: 6049`. The script also
+reports the TEXT measure, because the two answer different questions and the
+difference is worth stating rather than hiding: the request measure counts
+the stub's own metadata against the saving and carries the parts the pruner
+left alone, so it is the smaller of the two, and it can be negative where the
+text measure is positive.
 
 There is no minimum size under which a part is left alone. This file used to
 claim a 200 byte floor for `reasoning` parts; there was never such a floor in
