@@ -14,8 +14,31 @@ is not happening.
 
 ## [0.5.2] — 2026-10-21
 
-Published. The tag is what cut it: `git tag v0.5.2 && git push origin main
-v0.5.2`, and the publish job watches for exactly that.
+**Not published.** The tag was cut and pushed, the publish job ran, and npm
+refused the publish - so there is no 0.5.2 on the registry. The changes
+written for it shipped in 0.5.3.
+
+What npm said was `OIDC token exchange error - package not found`, which
+reads like a missing package. The package was there; the trusted publisher
+was not, because npm looks a publisher up by (package, repository) and the
+repository had just been renamed. The stored entry still named
+`pham-canh/space-harness`; the claim the runner presents names
+`pham-canh/opencode-harness-kit`. The package's name is in the error, and
+the field that was wrong is not.
+
+The entry this release was going to carry said that "the npm trusted
+publisher was re-pointed at the new name". It had not been. The re-point is
+an account change on npm and it needs the account's second factor, and a
+changelog that says a thing has been done that has not been done is worse
+than one that says nothing.
+
+## [0.5.3] — 2026-10-21
+
+Published. The tag is what cut it: `git tag v0.5.3 && git push origin main
+v0.5.3`, and the publish job watches for exactly that.
+
+This is the release that carries the rename, because 0.5.2 - the release the
+rename was written for - never reached the registry.
 
 ### Changed
 
@@ -24,10 +47,15 @@ v0.5.2`, and the publish job watches for exactly that.
   `opencode-harness-kit` since 0.4.0, and the README's title with it; the
   repository was the last one still carrying the old name, and a reader who
   installed the package and followed the link landed somewhere that did not
-  look like the thing they had installed. GitHub redirects the old URL, and
-  the npm trusted publisher was re-pointed at the new name - the repository
-  field in the OIDC claim is what npm matches, so without that the next
-  release would not have published.
+  look like the thing they had installed. GitHub redirects the old URL, so
+  the links that already exist keep working.
+
+  The npm page showed the old name until this release, and the reason is
+  worth writing down, because nothing about the rename explains it: the page
+  reads the `repository` and `homepage` out of the manifest of the LATEST
+  PUBLISHED version, and the latest published version was 0.5.1, whose
+  manifest was written before the rename. The manifest names the new
+  repository now, and this is the release that carries it.
 
 ### Fixed
 
@@ -37,6 +65,17 @@ v0.5.2`, and the publish job watches for exactly that.
   renamed repository stops publishing, with an exchange error that does not
   name the field that was wrong. The gate says which side is which and
   prints the command that fixes it.
+
+- **The installer no longer says "installed" when it replaced nothing.**
+  `existsSync` follows a symlink, so a link whose target no longer exists
+  reads as "not there" - and the branch that replaces what the installer put
+  there was never reached. `symlinkSync` then threw EEXIST over the link
+  that was already there, the warning was printed where nobody reads it, and
+  the install carried on. After the rename that is exactly the state a kit
+  installed from the old path was in: the skills, the prompts and GLOBAL.md
+  kept pointing at a directory that had moved, and `verify` then found
+  seventeen broken paths. `lstat` does not follow the link, and it is what
+  decides whether there is something to replace.
 
 ### Removed
 
@@ -1169,7 +1208,13 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.6...v0.5.0
+[0.4.6]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.4.1...v0.4.2
@@ -1185,4 +1230,4 @@ silent in the worst way:
 [0.3.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/pham-canh/space-harness/releases/tag/v0.1.0
+[0.1.0]: https://github.com/pham-canh/opencode-harness-kit/releases/tag/v0.1.0
