@@ -2628,6 +2628,8 @@ try {
     --strict       doctor: fail on perishable catalogue drift too
     --watch        doctor: keep watching the catalogue, report what disappeared
     --check-models doctor: one run, non-zero when a shipped model is gone
+    --json        doctor, show, lanes: print the machine-readable form, and
+                  nothing else
 
   run options
     --role <agent>  which agent does the work (default: build)
