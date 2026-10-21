@@ -5,6 +5,10 @@ export declare const BASH_DENYLIST: string[];
  *
  * `*` matches any run of characters, including none.
  *
+ * Every other metacharacter is literal. `?` is a regex quantifier, so an
+ * unescaped one made the character before it optional and the pattern
+ * matched a command it never named.
+ *
  * @param {string} command
  * @param {string} pattern
  * @returns {boolean}
@@ -23,7 +27,7 @@ export declare function matchesPattern(command: string, pattern: string): boolea
  * same list and one of them reads it more carefully; that is the price of
  * having the list in two places.
  *
- * The two PIPE patterns are for the config's side only. `segments()` splits
+ * The PIPE patterns are for the config's side only. `segments()` splits
  * on `|`, so a segment never contains " | sh" and the guard catches a piped
  * script through its own rule instead.
  *

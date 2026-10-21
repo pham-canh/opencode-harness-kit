@@ -16,10 +16,50 @@ var BASH_DENYLIST = [
   // so opencode prompts for human approval before publishing.
   "rm -rf *",
   "rm -fr *",
+  // The short forms of the same flags, one at a time.
+  //
+  // The guard's rule is a TOKEN scanner: it blocks an rm whose short flag
+  // cluster contains r or f in any case, and an rm whose long flag is
+  // --recursive or --force. So `rm -f file` and `rm -r dir` are blocked
+  // there - and the permission map has to deny what the guard blocks, or
+  // the two layers contradict each other: the map would ask about a
+  // command the guard refuses.
+  //
+  // `-R` is named too because the guard's rule is case-insensitive and
+  // GNU rm reads `-R` as `--recursive`.
+  //
+  // The two layers are not the same matcher. The guard reads the tokens
+  // and can see a destructive flag in any position; this list is a flat
+  // glob over the command, so it can only name the spellings.
+  //
+  // A cluster a glob cannot express (`-rfv`) is caught by the guard and
+  // asked about by the config - the config asks about everything it does
+  // not name, and asking is the safe direction.
+  //
+  // A PERMUTED delete (`rm /tmp/x -rf`) is caught by neither layer today:
+  // the guard's rule needs the flag before the path, and the glob needs
+  // the flag in front. The config asks, so a human decides. Closing that
+  // hole is a change to the guard's rule in src/rules.js, which reads the
+  // tokens - a glob here could only name one spelling of it, and the
+  // spelling would still be the one it missed.
+  "rm -f *",
+  "rm -r *",
+  "rm -R *",
+  // The long GNU names of the same two flags. A delete that is spelled
+  // `--recursive --force` is the delete the short forms name.
+  "rm --recursive *",
+  "rm --force *",
   "curl * | sh",
   "curl * | bash",
+  // The same pipe into a shell that is named by its path. The shell is the
+  // same shell either way, and the config can only match what it can see.
+  "curl * | */sh",
+  "curl * | */bash",
   "chmod 777 *",
   "chmod 777*",
+  // The same mode written with a leading zero.
+  "chmod 0777 *",
+  "chmod 0777*",
   "gh pr create*",
   "gh pr merge*",
   "gh pr close*",
@@ -45,7 +85,7 @@ var BASH_DENYLIST = [
 ];
 function matchesPattern(command, pattern) {
   const re = new RegExp(
-    "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[\\s\\S]*") + "$"
+    "^" + pattern.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, "[\\s\\S]*") + "$"
   );
   return re.test(command);
 }
@@ -91,7 +131,7 @@ function heredocEnd(command, at) {
     p = end + 1;
   }
 }
-function segments(command) {
+function split(command, kind) {
   const parts = [];
   let cur = "";
   let quote = null;
@@ -129,13 +169,26 @@ function segments(command) {
         continue;
       }
     }
-    if (ch === "\n" || ch === ";") {
-      flush();
-      continue;
-    }
     if (ch === "|") {
+      if (kind === "pipe") {
+        if (command[i + 1] === "|") {
+          cur += "||";
+          i++;
+          continue;
+        }
+        flush();
+        continue;
+      }
       flush();
       if (command[i + 1] === "|") i++;
+      continue;
+    }
+    if (kind === "pipe") {
+      cur += ch;
+      continue;
+    }
+    if (ch === "\n" || ch === ";") {
+      flush();
       continue;
     }
     if (ch === "&") {
@@ -155,6 +208,12 @@ function segments(command) {
   }
   flush();
   return parts;
+}
+function segments(command) {
+  return split(command, "command");
+}
+function pipeStages(command) {
+  return split(command, "pipe");
 }
 function tokenize(segment) {
   const tokens = [];
@@ -211,6 +270,9 @@ var GIT_WRAPPERS = /* @__PURE__ */ new Set([
   "xargs",
   "npx"
 ]);
+var SHELL_NAMES = /^(sh|bash|zsh|dash|ksh)(\.exe)?$/i;
+var SCRIPT_RUNNERS = /^python[0-9.]*$/i;
+var DOWNLOADERS = /\b(curl|wget)\b/i;
 var WRAPPER_VALUE_FLAGS = /* @__PURE__ */ new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"]);
 var GIT_VALUE_FLAGS = /* @__PURE__ */ new Set([
   "-C",
@@ -232,6 +294,35 @@ var GIT_GLOBAL_FLAGS = /* @__PURE__ */ new Set([
   "--glob-pathspecs",
   "--icase-pathspecs"
 ]);
+var TOOL_VALUE_FLAGS = {
+  gh: /* @__PURE__ */ new Set(["-R", "--repo", "-H", "--hostname"]),
+  npm: /* @__PURE__ */ new Set([
+    "--prefix",
+    "--cache",
+    "--registry",
+    "--userconfig",
+    "--globalconfig",
+    "--otp",
+    "--tag",
+    "--access",
+    "--loglevel",
+    "--workspace",
+    "--script-shell",
+    "--init-author-name",
+    "--init-author-email",
+    "--init-author-url",
+    "--init-license",
+    "--init-module",
+    "--init-version"
+  ]),
+  yarn: /* @__PURE__ */ new Set(["--cwd", "--registry", "--cache-folder", "--modules-folder"]),
+  pnpm: /* @__PURE__ */ new Set(["--dir", "-C", "--filter", "--store-dir", "--registry"]),
+  bun: /* @__PURE__ */ new Set(["--cwd", "--config", "--registry"])
+};
+function baseName(word) {
+  const slash = Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\"));
+  return slash === -1 ? word : word.slice(slash + 1);
+}
 function skipPrefixes(tokens) {
   let i = 0;
   for (; ; ) {
@@ -241,7 +332,7 @@ function skipPrefixes(tokens) {
       i++;
       continue;
     }
-    if (GIT_WRAPPERS.has(word)) {
+    if (GIT_WRAPPERS.has(baseName(word))) {
       i++;
       while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
         const flag = tokens[i];
@@ -258,9 +349,24 @@ function stripPrefixes(segment) {
   const i = skipPrefixes(tokens);
   if (i >= tokens.length) return "";
   const rest = tokens.slice(i);
-  const slash = Math.max(rest[0].lastIndexOf("/"), rest[0].lastIndexOf("\\"));
-  if (slash !== -1) rest[0] = rest[0].slice(slash + 1);
+  rest[0] = baseName(rest[0]);
   return rest.join(" ");
+}
+function stripToolFlags(command) {
+  const tokens = tokenize(command);
+  if (!tokens.length) return command;
+  const flags = TOOL_VALUE_FLAGS[baseName(tokens[0]).toLowerCase()];
+  if (!flags) return command;
+  const out = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (!flags.has(token.split("=")[0])) {
+      out.push(token);
+      continue;
+    }
+    if (!token.includes("=") && i + 1 < tokens.length) i++;
+  }
+  return out.join(" ");
 }
 function gitSubcommand(segment) {
   const tokens = tokenize(segment);
@@ -282,25 +388,87 @@ function gitSubcommand(segment) {
   }
   return tokens[i] ?? null;
 }
-var SHELL_BIN = /(^|[\\/])(sh|bash|zsh|dash|ksh)(\.exe)?$/i;
 var MAX_SHELL_DEPTH = 2;
+function shellCommandString(tokens, from) {
+  for (let n = from + 1; n < tokens.length; n++) {
+    const token = tokens[n];
+    if (!token.startsWith("-") || token === "-") continue;
+    const m = /^-([a-zA-Z]*)c/.exec(token);
+    if (!m) continue;
+    const after = token.slice(m[0].length);
+    if (after && !/^[a-zA-Z]+$/.test(after)) return after.trim();
+    return tokens.slice(n + 1).join(" ") || null;
+  }
+  return null;
+}
 function shellPayload(segment) {
   const tokens = tokenize(segment);
   if (tokens.length < 2) return null;
   const i = skipPrefixes(tokens);
   if (i >= tokens.length) return null;
   if (tokens[i] === "eval") return tokens.slice(i + 1).join(" ") || null;
-  if (!SHELL_BIN.test(tokens[i])) return null;
-  const c = tokens.findIndex((t, n) => n > i && /^-[a-zA-Z]*c$/.test(t));
-  if (c === -1 || c === tokens.length - 1) return null;
-  return tokens.slice(c + 1).join(" ") || null;
+  if (!SHELL_NAMES.test(baseName(tokens[i]))) return null;
+  return shellCommandString(tokens, i);
+}
+var GROUP_OPEN = /^[({[]+/;
+var GROUP_END = /[;)&,}\]]+$/;
+function commandName(word) {
+  return baseName(word).replace(GROUP_OPEN, "").replace(GROUP_END, "");
+}
+function runsScript(stage) {
+  for (const command of segments(stage)) {
+    const tokens = tokenize(command);
+    let i = skipPrefixes(tokens);
+    if (i >= tokens.length) continue;
+    let name = commandName(tokens[i]);
+    if (!name) {
+      i++;
+      if (i >= tokens.length) continue;
+      name = commandName(tokens[i]);
+    }
+    if (SHELL_NAMES.test(name) || SCRIPT_RUNNERS.test(name)) return true;
+  }
+  return false;
+}
+function pipesScriptIntoShell(command) {
+  const stages = pipeStages(command);
+  for (let i = 1; i < stages.length; i++) {
+    if (!DOWNLOADERS.test(stages[i - 1])) continue;
+    if (!runsScript(stages[i])) continue;
+    return true;
+  }
+  return false;
+}
+function isRecursiveDelete(text) {
+  const tokens = tokenize(text);
+  if (tokens.length < 2) return false;
+  if (baseName(tokens[0]).toLowerCase() !== "rm") return false;
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (!token.startsWith("-")) continue;
+    if (!/^-[a-zA-Z]*[rf]/i.test(token) && !/^--(recursive|force)$/i.test(token)) continue;
+    return tokens.slice(i + 1).some((t) => !t.startsWith("-"));
+  }
+  return false;
 }
 var ASK_GATED = [/^\s*git\s+push\b/];
 var BASH_RULES = [
   {
     name: "secret exfiltration via shell",
     scope: "command",
-    test: /\b(TOKEN|SECRET|KEY|PASSWORD|API_KEY)\s*=\s*\$\(\s*(curl|wget)\b/i,
+    // The credential word has to be the whole name or the tail of it: the
+    // name of the variable is `GITHUB_TOKEN`, not `GITHUB`. A word boundary
+    // never fires after an underscore, so the boundary alone left every
+    // prefixed credential name unmatched.
+    //
+    // The name is matched in whatever case it is written: the rule used to
+    // match the upper case spelling only, so `token=$(curl ...)` was
+    // allowed, and a lower case name is the same name.
+    //
+    // What the rule does NOT cover is an assignment whose value is not
+    // fetched: `GITHUB_TOKEN=ghp_example` sets a credential, it does not
+    // send one.
+    test: /(^|[^A-Za-z0-9])(?:[A-Za-z0-9]+_)*(TOKEN|SECRET|KEY|PASSWORD|API_KEY)\s*=\s*\$\(\s*(curl|wget)\b/i,
     why: "assigns a fetched value into a credential-named variable"
   },
   {
@@ -312,7 +480,7 @@ var BASH_RULES = [
   {
     name: "pipe remote script into a shell",
     scope: "command",
-    test: /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python[0-9.]*)\b/i,
+    check: (text) => pipesScriptIntoShell(text),
     why: "downloads and executes a script in one step"
   },
   // `git push` is ask-gated via permissions (`*` ask in the generated
@@ -321,13 +489,16 @@ var BASH_RULES = [
   {
     name: "recursive delete",
     scope: "segment",
-    test: /^rm\s+(-[a-zA-Z]*[rf][a-zA-Z]*)\s+/i,
+    check: (text) => isRecursiveDelete(text),
     why: "rm with a recursive or force flag"
   },
   {
     name: "chmod 777",
     scope: "segment",
-    test: /^chmod\s+(-[a-zA-Z]+\s+)*777\b/,
+    // The mode may be written with leading zeros: `0777` and `777` are the
+    // same mode, and a rule that required the bare digits let one spelling
+    // of it through.
+    test: /^chmod\s+(-[a-zA-Z]+\s+)*0*777\b/,
     why: "opens permissions on everything"
   },
   {
@@ -380,7 +551,7 @@ function checkDenied(command, depth = 0) {
   const parts = segments(command);
   const normalized = parts.map((seg) => stripPrefixes(seg));
   for (let i = 0; i < parts.length; i++) {
-    const pattern = deniedBy(normalized[i]);
+    const pattern = deniedBy(stripToolFlags(normalized[i]));
     if (pattern) return { pattern, segment: parts[i] };
   }
   if (depth < MAX_SHELL_DEPTH) {
@@ -433,15 +604,18 @@ function checkWrite(target, rules = WRITE_RULES, root = "") {
 }
 
 // src/telemetry-store.ts
-import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 var MAX_BYTES = 4 * 1024 * 1024;
 function logPath(dir) {
   return join(dir, "telemetry.jsonl");
 }
-function rotate(file) {
+function rotate(file, maxBytes = MAX_BYTES) {
   try {
-    if (existsSync(file) && statSync(file).size > MAX_BYTES) {
+    if (existsSync(file) && statSync(file).size > maxBytes) {
+      const oldest = `${file}.2`;
+      if (existsSync(oldest)) rmSync(oldest, { force: true });
+      if (existsSync(`${file}.1`)) renameSync(`${file}.1`, oldest);
       renameSync(file, `${file}.1`);
     }
   } catch {
@@ -475,19 +649,46 @@ function projectRoot(directory, worktree) {
 // src/guard.ts
 var MARKER = "[opencode-harness-kit] blocked";
 var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
+function hunkFollows(lines, from) {
+  for (let i = from; i < lines.length; i++) {
+    if (/^@@/.test(lines[i])) return true;
+    if (/^(?:---|\+\+\+)\s/.test(lines[i])) return false;
+  }
+  return false;
+}
 function pathsInPatch(text) {
   const out = [];
   const push = (p) => {
-    const v = p.trim();
+    const v = p.split("	")[0].trim();
     if (!v) return;
     if (v === "/dev/null") return;
     if (!out.includes(v)) out.push(v);
   };
-  for (const m of text.matchAll(/^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/gm)) {
-    push(m[1]);
-  }
-  for (const m of text.matchAll(/^\+\+\+\s+(?:b\/)?(.+)$/gm)) {
-    push(m[1]);
+  const lines = text.split("\n");
+  let seenHunk = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const marker = /^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/.exec(line);
+    if (marker) {
+      push(marker[1]);
+      continue;
+    }
+    if (/^@@/.test(line)) {
+      seenHunk = true;
+      continue;
+    }
+    const minus = /^---\s+(?:a\/)?(.+)$/.exec(line);
+    const next = i + 1 < lines.length ? /^\+\+\+\s+(?:b\/)?(.+)$/.exec(lines[i + 1]) : null;
+    if (minus && next) {
+      if (hunkFollows(lines, i + 2)) {
+        push(minus[1]);
+        push(next[1]);
+      }
+      i++;
+      continue;
+    }
+    const plus = /^\+\+\+\s+(?:b\/)?(.+)$/.exec(line);
+    if (plus && !seenHunk) push(plus[1]);
   }
   return out;
 }
@@ -653,6 +854,11 @@ function loadProfile(id) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new ProfileError(`cannot read ${path}: ${msg}`);
   }
+  if (raw?.id && raw.id !== id) {
+    throw new ProfileError(
+      `${path}: profile id is "${raw.id}", which does not match the file name "${id}"`
+    );
+  }
   validate(raw, path);
   return normalize(raw);
 }
@@ -817,6 +1023,10 @@ function resolveLaneChain(p, role) {
   return chain;
 }
 function resolveLaneModel(p, role, opts = {}) {
+  const model = laneModelId(p, role, opts);
+  return { model, levels: levelsOfModel(model) };
+}
+function laneModelId(p, role, opts = {}) {
   const unhealthy = opts.unhealthy ?? /* @__PURE__ */ new Set();
   const ceiling = (
     /** @type {Retention} */
@@ -825,13 +1035,12 @@ function resolveLaneModel(p, role, opts = {}) {
   for (const candidate of resolveLaneChain(p, role)) {
     if (unhealthy.has(candidate)) continue;
     if (!retentionAllowed(candidate, ceiling)) continue;
-    return { model: candidate, levels: levelsOfModel(candidate) };
+    return candidate;
   }
   if (p.model && !unhealthy.has(p.model) && retentionAllowed(p.model, ceiling)) {
-    return { model: p.model, levels: levelsOfModel(p.model) };
+    return p.model;
   }
-  const fallback = resolveLaneChain(p, role)[0] ?? p.model;
-  return { model: fallback, levels: levelsOfModel(fallback) };
+  return resolveLaneChain(p, role)[0] ?? p.model;
 }
 function levelsOfModel(model) {
   try {
@@ -864,47 +1073,65 @@ function resolveEffort(levels, requested) {
   if (!levels || levels.length === 0) return null;
   if (levels.includes(requested)) return requested;
   if (requested === "none") return null;
+  const rungs = levels.filter(
+    (level) => level !== "none" && CANON.indexOf(level) >= 0
+  );
   const want = CANON.indexOf(requested);
   if (want < 0) {
-    return levels[levels.length - 1] ?? null;
+    return rungs[rungs.length - 1] ?? null;
   }
   let best = null;
   let bestDist = Infinity;
-  for (const level of levels) {
+  for (const level of rungs) {
     const have = CANON.indexOf(level);
-    if (have < 0) continue;
     const d = Math.abs(have - want);
     if (d < bestDist) {
       bestDist = d;
       best = level;
     }
   }
-  return best ?? levels[levels.length - 1] ?? null;
+  return best ?? rungs[rungs.length - 1] ?? null;
 }
-var VALID_RETENTION = ["zero-retention", "retained", "may-train", "unknown"];
+var DECLARABLE_RETENTION = ["zero-retention", "retained", "may-train"];
 function validate(p, path = "<memory>") {
   const where = p?.id ?? path;
   if (!p?.id) throw new ProfileError(`${path}: missing "id"`);
   if (!p.provider) throw new ProfileError(`${where}: missing "provider"`);
   if (!p.model) throw new ProfileError(`${where}: missing "model"`);
-  if (!VALID_RETENTION.includes(p.retention)) {
-    throw new ProfileError(
-      `${where}: retention must be one of ${VALID_RETENTION.join(", ")}`
-    );
+  if (p.retention === "unknown") {
+    throw new ProfileError(`${where}: retention cannot be unknown`);
   }
-  if (p.maxRetention && !VALID_RETENTION.includes(p.maxRetention)) {
+  if (!DECLARABLE_RETENTION.includes(p.retention)) {
     throw new ProfileError(
-      `${where}: maxRetention must be one of ${VALID_RETENTION.join(", ")}`
+      `${where}: retention must be one of ${DECLARABLE_RETENTION.join(", ")}`
     );
   }
   if (p.maxRetention === "unknown") {
     throw new ProfileError(`${where}: maxRetention cannot be unknown`);
   }
-  if (!p.limits?.context || p.limits.context <= 0) {
+  if (p.maxRetention && !DECLARABLE_RETENTION.includes(p.maxRetention)) {
+    throw new ProfileError(
+      `${where}: maxRetention must be one of ${DECLARABLE_RETENTION.join(", ")}`
+    );
+  }
+  if (!Number.isInteger(p.limits?.context) || p.limits.context <= 0) {
     throw new ProfileError(`${where}: limits.context must be a positive integer`);
   }
-  if (!p.limits?.output || p.limits.output <= 0) {
+  if (!Number.isInteger(p.limits?.output) || p.limits.output <= 0) {
     throw new ProfileError(`${where}: limits.output must be a positive integer`);
+  }
+  for (const level of p.effort?.levels ?? []) {
+    if (!CANON.includes(level)) {
+      throw new ProfileError(
+        `${where}: effort.levels contains "${level}", which is not one of ${CANON.join(", ")}`
+      );
+    }
+  }
+  const wanted = p.effort?.default;
+  if (wanted !== void 0 && wanted !== null && !CANON.includes(wanted)) {
+    throw new ProfileError(
+      `${where}: effort.default is "${wanted}", which is not one of ${CANON.join(", ")}`
+    );
   }
   const share = p.effort?.reserveShare;
   if (share !== void 0 && (share < 0 || share > 0.5)) {
@@ -1004,6 +1231,11 @@ function validate(p, path = "<memory>") {
       );
     }
   }
+  if (!retentionFor(p.model)) {
+    throw new ProfileError(
+      `${where}: model ${p.model} has no retention.yml entry`
+    );
+  }
   if (p.utility) {
     if (typeof p.utility.model !== "string" || !p.utility.model) {
       throw new ProfileError(`${where}: utility.model must be a model id`);
@@ -1018,6 +1250,11 @@ function validate(p, path = "<memory>") {
         `${where}: utility.model is ${p.utility.model}, which this profile does not resolve to (it has ${[...reachable].join(", ")})`
       );
     }
+    if (!retentionFor(p.utility.model)) {
+      throw new ProfileError(
+        `${where}: utility.model ${p.utility.model} has no retention.yml entry`
+      );
+    }
   }
   for (const id of p.fallback ?? []) {
     if (!profileExists(id)) {
@@ -1025,6 +1262,12 @@ function validate(p, path = "<memory>") {
         `${where}: fallback names ${id}, which has no profile in this directory`
       );
     }
+  }
+  const actual = worstRetention(laneModelsInPlay(p));
+  if (retentionSeverity(p.retention) < retentionSeverity(actual.retention)) {
+    throw new ProfileError(
+      `${where}: retention is ${p.retention}, but ${actual.worst} is ${actual.retention} - a profile cannot be more private than the models it runs on`
+    );
   }
 }
 function profileExists(id) {
@@ -1045,6 +1288,14 @@ function reservedTokens(p, opts = {}) {
 function pruneThreshold(p, opts = {}) {
   return inputCap(p, opts) - reservedTokens(p, opts);
 }
+function laneModelsInPlay(p, opts = {}) {
+  const out = [p.model];
+  for (const role of Object.keys(p.roleModels ?? {})) {
+    const model = laneModelId(p, role, opts);
+    if (!out.includes(model)) out.push(model);
+  }
+  return out;
+}
 function roleSplitModels(p, opts = {}) {
   return Object.entries(p.roleModels ?? {}).map(([role]) => {
     const resolved = resolveLaneModel(p, role, opts);
@@ -1056,6 +1307,18 @@ function roleSplitModels(p, opts = {}) {
     }
     return { role, model: resolved.model, levels: resolved.levels, limits };
   });
+}
+function worstRetention(ids) {
+  let worst = null;
+  let retention = "zero-retention";
+  for (const id of ids) {
+    const declared = modelRetention(id);
+    if (!worst || retentionSeverity(declared) > retentionSeverity(retention)) {
+      worst = id;
+      retention = declared;
+    }
+  }
+  return { retention, worst };
 }
 function configDir() {
   return process.env.OPENCODE_CONFIG_DIR ?? join4(homedir3(), ".config", "opencode");
@@ -1181,10 +1444,13 @@ function toolSignature(part) {
   }
   return `${tool} ${input}`;
 }
-function sizeOf(part) {
-  if (typeof part?.text === "string") return part.text.length;
-  if (typeof part?.state?.output === "string") return part.state.output.length;
-  return 0;
+function partSize(part) {
+  try {
+    const json = JSON.stringify(part);
+    return typeof json === "string" ? json.length : 0;
+  } catch {
+    return 0;
+  }
 }
 function stub(part) {
   const tool = part?.tool ?? "tool";
@@ -1282,7 +1548,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
           if (!msg?.parts) continue;
           const isUser = msg.info?.role === "user";
           for (const part of msg.parts) {
-            const size = sizeOf(part);
+            const size = partSize(part);
             stats.bytesBefore += size;
             if (isUser && keepUsers) {
               stats.bytesAfter += size;
@@ -1302,7 +1568,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
                 break;
               case "reasoning": {
                 part.text = REASONING_STUB;
-                stats.bytesAfter += sizeOf(part);
+                stats.bytesAfter += partSize(part);
                 stats.stubbed++;
                 break;
               }
@@ -1321,7 +1587,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
                   time: state.time,
                   metadata: { ...state.metadata ?? {}, pruned: true, prunedAt: (/* @__PURE__ */ new Date()).toISOString() }
                 };
-                stats.bytesAfter += sizeOf(part);
+                stats.bytesAfter += partSize(part);
                 stats.stubbed++;
                 break;
               }
@@ -1336,7 +1602,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
           }
         }
         if (stats.stubbed > 0) {
-          const saved = Math.max(0, stats.bytesBefore - stats.bytesAfter);
+          const saved = stats.bytesBefore - stats.bytesAfter;
           await logPrune(project, profile.id, {
             ...stats,
             saved,
@@ -1394,27 +1660,67 @@ function utilityModel(p) {
 // src/health.js
 import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync } from "node:fs";
 import { join as join6 } from "node:path";
+var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
+function spentWindowMs() {
+  const raw = process.env.HARNESS_SPENT_WINDOW_HOURS;
+  if (!raw) return DEFAULT_WINDOW_MS;
+  const hours = Number(raw);
+  if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_WINDOW_MS;
+  return hours * 60 * 60 * 1e3;
+}
+function isSpent(entry, now = Date.now()) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+  const at = (
+    /** @type {any} */
+    entry.at
+  );
+  if (typeof at !== "string") return true;
+  const when = Date.parse(at);
+  if (Number.isNaN(when)) return true;
+  return now - when <= spentWindowMs();
+}
+function liveUnhealthy(health, now = Date.now()) {
+  const out = {};
+  const source = health?.unhealthy;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return out;
+  for (const [key, entry] of Object.entries(source)) {
+    if (isSpent(entry, now)) out[key] = entry;
+  }
+  return out;
+}
 function healthPath(dir) {
   return join6(dir, ".space", "health.json");
 }
 function readHealth(dir) {
+  let parsed;
   try {
-    return JSON.parse(readFileSync3(healthPath(dir), "utf8"));
+    parsed = JSON.parse(readFileSync3(healthPath(dir), "utf8"));
   } catch {
     return { unhealthy: {} };
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { unhealthy: {} };
+  }
+  const unhealthy = parsed.unhealthy;
+  if (!unhealthy || typeof unhealthy !== "object" || Array.isArray(unhealthy)) {
+    return { ...parsed, unhealthy: {} };
+  }
+  return parsed;
 }
 function writeHealth(dir, health) {
   try {
     if (!existsSync5(join6(dir, ".space"))) mkdirSync2(join6(dir, ".space"), { recursive: true });
-    writeFileSync(healthPath(dir), JSON.stringify(health, null, 2));
+    const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
+    writeFileSync(healthPath(dir), JSON.stringify(pruned, null, 2));
   } catch {
   }
 }
+function unhealthyRoutes(dir) {
+  return liveUnhealthy(readHealth(dir));
+}
 function unhealthyModels(dir) {
-  const health = readHealth(dir);
   const out = /* @__PURE__ */ new Set();
-  for (const key of Object.keys(health.unhealthy ?? {})) {
+  for (const key of Object.keys(unhealthyRoutes(dir))) {
     out.add(key.includes("/") ? key.slice(key.indexOf("/") + 1) : key);
   }
   return out;
@@ -1427,24 +1733,94 @@ var SPENT = [
   /\b429\b/,
   /quota (?:exceeded|exhausted)/i,
   /overloaded_error/i,
-  /model .*not found/i,
+  // A withdrawn model, named in the error. The words have to sit next to
+  // each other - "model minimax-m3.1-flash-free not found", "model_not_found",
+  // "ModelNotFound" - because the text this runs against is the provider's
+  // own error and that can be a whole response body. The old pattern ran
+  // over the entire event, where a body that mentioned a model in one place
+  // and "not found" in another read as a withdrawn model: a live route
+  // written off by a coincidence.
+  /\bmodel[\W_]*not[\W_]*found\b/i,
+  /\bmodel\b[\w.:/-]*(?:\s+[\w.:/-]+){0,2}\s+not found\b/i,
   /no available provider/i
 ];
-function classify(text) {
+function errorText(err) {
+  if (err == null) return "";
+  if (typeof err === "string") return err;
+  if (typeof err !== "object") return String(err);
+  const parts = [];
+  try {
+    const push = (v) => {
+      if (typeof v === "string" && v) parts.push(v);
+      else if (typeof v === "number" && Number.isFinite(v)) parts.push(String(v));
+      else if (v && typeof v === "object") parts.push(safeStringify(v));
+    };
+    push(err.name);
+    push(err.message);
+    push(err.code);
+    const data = err.data;
+    if (data && typeof data === "object") {
+      push(data.name);
+      push(data.message);
+      push(data.code);
+      push(data.statusCode);
+      push(data.responseBody);
+    }
+  } catch {
+  }
+  return parts.join("\n");
+}
+function classifyError(err) {
+  const text = errorText(err);
+  if (!text) return null;
   for (const p of SPENT) if (p.test(text)) return p.source;
   return null;
+}
+function errorOf(e) {
+  const props = e?.properties;
+  if (!props || typeof props !== "object") return void 0;
+  return props.info?.error ?? props.error;
+}
+function routeKey(provider, model) {
+  const p = typeof provider === "string" && provider ? provider : "opencode";
+  return `${p}/${model}`;
+}
+function routeOf(e) {
+  const props = e?.properties;
+  if (!props || typeof props !== "object") return void 0;
+  const info = props.info ?? props;
+  if (!info || typeof info !== "object") return void 0;
+  const model = info.model;
+  const id = model?.modelID ?? info.modelID ?? props.modelID ?? props.model?.modelID;
+  if (typeof id !== "string" || !id) return void 0;
+  const provider = model?.providerID ?? info.providerID ?? props.providerID;
+  return routeKey(typeof provider === "string" ? provider : void 0, id);
+}
+function sessionIdOf(e) {
+  const props = e?.properties;
+  const id = props?.info?.sessionID ?? props?.sessionID;
+  return typeof id === "string" && id ? id : void 0;
+}
+function routeOfConfig(cfg) {
+  const model = cfg?.model ?? cfg?.harness?.sessionModel;
+  if (typeof model !== "string" || !model) return void 0;
+  return model.includes("/") ? model : `opencode/${model}`;
 }
 var WARN_TEXT = "[opencode-harness-kit] This session's model route is rate limited or withdrawn. No plugin can swap a live session's model, so stop retrying and ask the human to start a new session. Run `oc-harness list` to see the lanes and their chains, or `oc-harness doctor` to check whether the profile still matches live metadata.";
 var RouterPlugin = async ({ worktree, directory }) => {
   const project = projectRoot(directory, worktree);
   let failedSessions = 0;
   let warned = false;
+  const sessionRoutes = /* @__PURE__ */ new Map();
+  let lastRoute;
+  let configuredRoute;
   return {
     // Runs once, before the session does any work.
     config: async (config) => {
       try {
         const cfg = config;
         const health = readHealth(project);
+        const routes = unhealthyRoutes(project);
         const unhealthy = unhealthyModels(project);
         const activeId = cfg.harness?.profile ?? profileIdFromConfig();
         if (!activeId) return;
@@ -1455,8 +1831,8 @@ var RouterPlugin = async ({ worktree, directory }) => {
         } catch {
           return;
         }
-        const baseKey = `opencode/${profile.model}`;
-        if (health.unhealthy?.[baseKey]) {
+        const baseKey = routeKey(profile.provider, profile.model);
+        if (routes[baseKey]) {
           const queue = [id, ...profile.fallback ?? []];
           for (const candidate of queue) {
             let fallback;
@@ -1465,8 +1841,8 @@ var RouterPlugin = async ({ worktree, directory }) => {
             } catch {
               continue;
             }
-            const key = `opencode/${fallback.model}`;
-            if (health.unhealthy?.[key]) continue;
+            const key = routeKey(fallback.provider, fallback.model);
+            if (routes[key]) continue;
             const fleet = isFleet(profile);
             applySessionModel(cfg, fallback, {
               keepLanes: fleet,
@@ -1481,6 +1857,7 @@ var RouterPlugin = async ({ worktree, directory }) => {
             break;
           }
         }
+        configuredRoute = routeOfConfig(cfg) ?? routeKey(profile.provider, profile.model);
         const roles = resolveRoles(profile, { unhealthy });
         for (const [lane, level] of Object.entries(roles)) {
           if (level === void 0) continue;
@@ -1488,7 +1865,7 @@ var RouterPlugin = async ({ worktree, directory }) => {
           if (!agent) continue;
           const resolved = resolveLaneModel(profile, lane, { unhealthy });
           if (resolved.model === profile.model && !profile.roleModels?.[lane]) continue;
-          const wantModel = `opencode/${resolved.model}`;
+          const wantModel = routeKey(profile.provider, resolved.model);
           if (agent.model !== wantModel) {
             agent.model = wantModel;
             const requested = profile.roles?.[lane] ?? null;
@@ -1504,14 +1881,21 @@ var RouterPlugin = async ({ worktree, directory }) => {
       const e = event;
       const type = e?.type;
       if (!type) return;
-      const text = safeStringify(e);
-      const reason = classify(text);
+      const seen = routeOf(e);
+      if (seen) {
+        lastRoute = seen;
+        const sessionID2 = sessionIdOf(e);
+        if (sessionID2) sessionRoutes.set(sessionID2, seen);
+      }
+      const err = errorOf(e);
+      if (!err) return;
+      const reason = classifyError(err);
       if (!reason) return;
-      const modelID = e.properties?.modelID ?? e.properties?.model ?? e.properties?.modelID;
-      const key = modelID ? `opencode/${modelID}` : void 0;
+      const sessionID = sessionIdOf(e);
+      const key = seen ?? (sessionID ? sessionRoutes.get(sessionID) : void 0) ?? configuredRoute ?? lastRoute;
       if (!key) return;
       const health = readHealth(project);
-      if (health.unhealthy[key]) return;
+      if (unhealthyRoutes(project)[key]) return;
       health.unhealthy[key] = { at: (/* @__PURE__ */ new Date()).toISOString(), reason };
       writeHealth(project, health);
       failedSessions++;

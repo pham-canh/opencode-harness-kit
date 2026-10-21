@@ -12,6 +12,169 @@ is not happening.
 
 ---
 
+## [0.5.5] — 2026-10-21
+
+Published. The tag is what cut it: `git tag v0.5.5 && git push origin main
+v0.5.5`, and the publish job watches for exactly that.
+
+A patch, and a large one: thirty-odd defects, nearly all of them the kind
+this kit exists to catch - a command that reported success while the thing
+it promised was not happening. Most of them were found by reading the code
+with the question "what does this say when it did nothing?", and every one
+of them now has a test that fails without the fix.
+
+### Fixed
+
+**The installer**
+
+- **The install said "installed into" when it had linked nothing.** A link
+  that could not be created was a warning in a corner of the output, and the
+  command exited 0. A config directory the user could not write to produced a
+  green install and a kit that was not there. A failed link is now exit 1.
+
+- **A file of the user's own was left alone, and the install said
+  "installed".** The installer refuses to destroy a file it did not put
+  there, which is right; the tick was not. A target that was left alone is
+  now named, in place of the tick, and `verify` reports the file that is not
+  the kit's.
+
+- **Answering "yes" at the overwrite prompt replaced nothing.** The answer
+  was collected and thrown away: the linker refused to replace a real file
+  whatever the user had said. "yes" now replaces the file, and "no" leaves
+  it.
+
+- **`verify` called a prompt installed when it was the user's own file.** The
+  check asked whether a file existed at the path, not whether it was the
+  kit's - so a user with their own `prompts/build.md` had a lane running on
+  their own instructions, with a green tick next to it. The same is now
+  checked for `GLOBAL.md` and for the kit's skills.
+
+- **`verify` failed an agent file that mentioned its own config.** The
+  pattern read `opencode/opencode.jsonc` as a model that was not in the
+  profile.
+
+- **`verify` called a relative instruction path resolved.** opencode ignores
+  relative instruction paths, and the check resolved it against the
+  directory the command happened to be run from - so the verdict was a
+  statement about the shell's working directory.
+
+- **`uninstall` reported links it could not remove.** A directory the user
+  could not write to was reported as "removed prompts/ (10 link(s))" while
+  all ten links were still there.
+
+- **`use` overwrote the config when the backup could not be written.** The
+  prompt promises "a dated backup is kept in backups/", and the backup was
+  best-effort: a failure was not even mentioned. The overwrite is refused
+  now, and the backups directory keeps ten configs instead of one.
+
+- **One malformed line lost the whole prune log.** The parse was wrapped
+  around the loop, so a single bad record threw the file away and `cost`
+  said the pruner had never run.
+
+**The guard**
+
+- **The pipe-to-a-shell rule missed `curl … | sh; echo done`.** A `;` inside
+  a pipe stage left the shell's name glued to the punctuation, so the stage
+  was not read as a shell - and the guard was the only layer that had it.
+
+- **`bash -c"rm -rf /"` was never inspected.** The glued form of the flag
+  defeated the payload extraction.
+
+- **A wrapper named by its path defeated the prefix stripping.**
+  `/usr/bin/env rm -rf /` was allowed, while `env rm -rf /` was blocked.
+
+- **`rm --recursive --force /` was allowed** by the rule that exists to
+  block it, which knew only the short flags.
+
+- **A credential name with a prefix was not a credential name.**
+  `GITHUB_TOKEN=$(curl …)` was allowed, because the word boundary never
+  fires after an underscore.
+
+- **`chmod 0777` was allowed** by the rule that blocks `chmod 777`.
+
+- **A tool's own global flags stepped over the denylist.**
+  `gh -R owner/repo pr create` and `npm --prefix /tmp publish` were allowed.
+
+- **A patch that deleted a file outside the project was allowed.** The
+  deletion names the file in the `---` header, and that header was not read,
+  so the path was never scope-checked.
+
+**The merge and the profiles**
+
+- **The user's own bash rules were deleted from their config.** The kit's
+  allowlist and denylist replaced the map wholesale, so every rule the user
+  had was gone after the next `oc-harness use`. The user's rules are merged
+  in, and the kit's deny rules still win.
+
+- **A string-valued `instructions` was dropped** from the user's config.
+
+- **The utility route was not counted towards the retention the file
+  claimed.** A may-train model could be written into the config as
+  `small_model` while the header said "zero-retention" - and the file says
+  "zero-retention" to a human who reads it.
+
+- **`resolveEffort` could snap a request to `none`**, which is reasoning
+  off rather than a rung.
+
+- **`validate()` accepted a limit that was not an integer** (a context of
+  `1.5` produced a negative prune threshold), an effort level that is not
+  on the scale, a retention of "unknown", a base model nobody had recorded,
+  and a retention claim that was safer than the models allowed. A claim that
+  is *worse* than reality is still allowed: cautious is not wrong.
+
+- **A profile whose `id` did not match its file name was loaded anyway**,
+  and the config then told the user to edit a file that does not exist.
+
+**The runtime**
+
+- **The router never recorded a spent route.** It read the model from
+  `properties.modelID`, and no opencode event carries a model there - the
+  event that has one nests it under `properties.info`. So the failover was
+  dead code: the health file was never written, the warning never fired, and
+  the fallback chain was never walked.
+
+- **Any "429" anywhere in an event spent a live route.** The classifier ran
+  over the whole serialised event, so a message whose token count was 429
+  was recorded as a failed route.
+
+- **A spent route never came back.** The entry carries a timestamp and
+  nothing ever read it, so one transient rate limit demoted the model for
+  the life of the project directory. The window is the provider's day.
+
+- **The pruner booked a saving on turns where the request got bigger.** The
+  stub's own metadata is part of the request that goes out, and the log
+  measured the text inside the part - so the number was a claim about
+  something other than the request. It is the request's size now, and a turn
+  that grew reports a negative saving.
+
+- **A task marked `blocked` lost its block** when it had an `output:` field:
+  the status line was written inside the output block, and the parser folded
+  the output back into it. A task nested under another task's output was
+  DELETED by the rewrite.
+
+- **The telemetry rotation destroyed the previous generation.** The writer
+  renamed the current file straight to `.1`, and a rename replaces the
+  destination - so the oldest history was gone after two rotations and the
+  third generation the reader looks for never existed.
+
+- **The trusted-publishing setup could hang for hours.** The wait for the
+  browser answer had no timeout, so the documented window did not bound it.
+  The list of trusted publishers is also read in npm's own format now, which
+  is one JSON object per line rather than an array.
+
+- **The two sqlite backends disagreed** about a query with two statements:
+  the command line ran both and the python fallback refused.
+
+### Changed
+
+- **The install's exit code follows `docs/EXIT-CODES.md`**: a target left
+  alone is exit 0 with the reason printed, and a step that failed is exit 1.
+
+- **`savedChars` is the request's size delta**, not the text delta, and it
+  can be negative. `cost` says "characters ADDED" when it is negative,
+  because a number with the wrong sign on it is a lie in a different
+  direction.
+
 ## [0.5.4] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.5.4 && git push origin main
@@ -1233,7 +1396,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.1...v0.5.2

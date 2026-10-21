@@ -81,6 +81,11 @@ export declare function utilityModel(p: any): string | null;
  * `instructions` array used to replace it wholesale, which unloaded the
  * whole behavioural layer while everything still looked correct.
  *
+ * A SINGLE string is a list of one. The parameter has always been typed
+ * `string[] | string | undefined`, but a string was dropped on the floor:
+ * the file that came back named only the kit's GLOBAL.md, so the user's own
+ * instructions were unloaded without a word.
+ *
  * The user's own files keep their order and come first; the kit's is
  * appended. Duplicates are dropped, so re-running `use` does not grow the
  * list.
