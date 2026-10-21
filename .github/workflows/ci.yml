@@ -165,6 +165,29 @@ jobs:
             for (const k of ["aud", "sub", "workflow", "workflow_ref", "job_workflow_ref", "ref", "event_name"]) {
               console.log("    " + k + ": " + (c[k] === undefined ? "(absent)" : c[k]))
             }
+
+            // The GATE. npm matches the trusted publisher"s repository
+            // against this claim, and the claim says the repository the
+            // workflow ran in. So a repository that was renamed leaves the
+            // publisher pointing at a name that will never match again, and
+            // the publish fails with an exchange error that does not name
+            // the field that was wrong.
+            //
+            // So the claim and package.json are compared HERE, before the
+            // publish, and the failure is the one that says what to do.
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"))
+            const want = String(pkg.repository?.url ?? "").replace(/.*github\.com[/:]/, "").replace(/\.git$/, "")
+            const got = c.repository ?? ""
+            if (want && got && want !== got) {
+              console.error("")
+              console.error("::error::the OIDC claim names a different repository than package.json.")
+              console.error("::error::  the claim says:    " + got)
+              console.error("::error::  package.json says: " + want)
+              console.error("::error::the trusted publisher on npmjs.com is matched against the CLAIM, so a renamed repository stops publishing.")
+              console.error("::error::re-point it with:")
+              console.error("::error::  npm trust github " + pkg.name + " --file ci.yml --repo " + want + " --allow-publish --allow-stage-publish -y")
+              process.exit(1)
+            }
           '
       - name: check the publish credentials
         env:
