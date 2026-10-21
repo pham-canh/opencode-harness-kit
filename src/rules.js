@@ -93,12 +93,18 @@ function heredocEnd(command, at) {
 }
 
 /**
- * Split a shell command into the individual commands it runs. Separators
- * inside quotes, and heredoc bodies, are not command boundaries.
+ * Split a shell command at the separators of one kind.
+ *
+ * The quoting, the escaping and the heredoc body are handled once, so the
+ * command splitter and the pipe splitter can never disagree about where a
+ * command starts and ends.
+ *
  * @param {string} command
+ * @param {"command" | "pipe"} kind `command` splits at every separator,
+ *   `pipe` splits at the pipe only
  * @returns {string[]}
  */
-export function segments(command) {
+function split(command, kind) {
   /** @type {string[]} */
   const parts = []
   let cur = ""
@@ -139,13 +145,30 @@ export function segments(command) {
         continue
       }
     }
-    if (ch === "\n" || ch === ";") {
-      flush()
-      continue
-    }
     if (ch === "|") {
+      if (kind === "pipe") {
+        // `||` is a logical or, not a pipe: the second command runs only if
+        // the first one failed, and nothing was piped into it.
+        if (command[i + 1] === "|") {
+          cur += "||"
+          i++
+          continue
+        }
+        flush()
+        continue
+      }
       flush()
       if (command[i + 1] === "|") i++
+      continue
+    }
+    // A pipe stage is everything between two pipes. A `;` or an `&&` inside
+    // a stage is still part of that stage.
+    if (kind === "pipe") {
+      cur += ch
+      continue
+    }
+    if (ch === "\n" || ch === ";") {
+      flush()
       continue
     }
     if (ch === "&") {
@@ -170,6 +193,30 @@ export function segments(command) {
   }
   flush()
   return parts
+}
+
+/**
+ * Split a shell command into the individual commands it runs. Separators
+ * inside quotes, and heredoc bodies, are not command boundaries.
+ * @param {string} command
+ * @returns {string[]}
+ */
+export function segments(command) {
+  return split(command, "command")
+}
+
+/**
+ * Split a shell command into the stages a pipe connects.
+ *
+ * The command splitter loses the pipe: `curl x | sh` is two commands, and
+ * nothing in the two says which fed which. A rule about "download and run"
+ * needs that link, so it reads the pipe itself.
+ *
+ * @param {string} command
+ * @returns {string[]}
+ */
+function pipeStages(command) {
+  return split(command, "pipe")
 }
 
 /**
@@ -238,6 +285,14 @@ const GIT_WRAPPERS = new Set([
   "xargs",
   "npx",
 ])
+// The shells a script can be piped into, by name. The name is what matters:
+// `/bin/sh` is the same shell as `sh`.
+const SHELL_NAMES = /^(sh|bash|zsh|dash|ksh)(\.exe)?$/i
+// Python is not a shell, but `curl x | python3` runs what it was given
+// just the same.
+const SCRIPT_RUNNERS = /^python[0-9.]*$/i
+// The commands that fetch something over the network.
+const DOWNLOADERS = /\b(curl|wget)\b/i
 // Wrappers whose flag consumes the next word, e.g. `sudo -u deploy git push`.
 const WRAPPER_VALUE_FLAGS = new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"])
 // git options that take a value, so the subcommand is the word after them.
@@ -263,6 +318,67 @@ const GIT_GLOBAL_FLAGS = new Set([
 ])
 
 /**
+ * The global flags each tool accepts, and that take a value.
+ *
+ * A denylist pattern names a COMMAND, so a command with a global flag in
+ * front of it is not the command the pattern describes: `npm --prefix /tmp
+ * publish` is `npm publish`, and `gh -R owner/repo pr create` is `gh pr
+ * create`. A flag that changes nothing about what the command does must not
+ * be a way around the list.
+ *
+ * The lists come from the tools' own `--help` output: `gh --help` lists
+ * `--repo` and `--hostname` among the global options, `npm help 7 config`
+ * lists `--prefix`, `--workspace`, `--registry` and `--cache` among the
+ * global config flags, `yarn --help` lists `--cwd`, and `pnpm --help` lists
+ * `--dir` and `--filter`.
+ *
+ * git is not in the table: its own options are resolved by `gitSubcommand`,
+ * which reads the subcommand rather than the whole command line.
+ *
+ * @type {Record<string, Set<string>>}
+ */
+const TOOL_VALUE_FLAGS = {
+  gh: new Set(["-R", "--repo", "-H", "--hostname"]),
+  npm: new Set([
+    "--prefix",
+    "--cache",
+    "--registry",
+    "--userconfig",
+    "--globalconfig",
+    "--otp",
+    "--tag",
+    "--access",
+    "--loglevel",
+    "--workspace",
+    "--script-shell",
+    "--init-author-name",
+    "--init-author-email",
+    "--init-author-url",
+    "--init-license",
+    "--init-module",
+    "--init-version",
+  ]),
+  yarn: new Set(["--cwd", "--registry", "--cache-folder", "--modules-folder"]),
+  pnpm: new Set(["--dir", "-C", "--filter", "--store-dir", "--registry"]),
+  bun: new Set(["--cwd", "--config", "--registry"]),
+}
+
+/**
+ * The last path segment of a command word: `/usr/bin/env` is `env`.
+ *
+ * A tool named by its full path is the same tool, so every list of command
+ * names - the wrappers, the shells - has to be matched against the name and
+ * not against the path.
+ *
+ * @param {string} word
+ * @returns {string}
+ */
+function baseName(word) {
+  const slash = Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\"))
+  return slash === -1 ? word : word.slice(slash + 1)
+}
+
+/**
  * Skip the wrappers and environment assignments in front of a real command.
  * `env FOO=1 sudo -u deploy git -C /repo push` resolves at index 4.
  * @param {string[]} tokens
@@ -277,7 +393,11 @@ function skipPrefixes(tokens) {
       i++
       continue
     }
-    if (GIT_WRAPPERS.has(word)) {
+    // The wrapper is matched by NAME, so `/usr/bin/env` is `env`. Matching
+    // the raw token left the whole wrapper list one absolute path away from
+    // being decorative: `/usr/bin/env rm -rf /` was not a command the rules
+    // had ever seen.
+    if (GIT_WRAPPERS.has(baseName(word))) {
       i++
       while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
         const flag = tokens[i]
@@ -303,9 +423,37 @@ export function stripPrefixes(segment) {
   const i = skipPrefixes(tokens)
   if (i >= tokens.length) return ""
   const rest = tokens.slice(i)
-  const slash = Math.max(rest[0].lastIndexOf("/"), rest[0].lastIndexOf("\\"))
-  if (slash !== -1) rest[0] = rest[0].slice(slash + 1)
+  rest[0] = baseName(rest[0])
   return rest.join(" ")
+}
+
+/**
+ * A command with the tool's own global flags taken out.
+ *
+ * The flags are taken out wherever they appear, because that is where the
+ * tool itself accepts them: `gh pr --repo owner/repo create` is the same
+ * command as `gh pr create`, and gh's own flag parser reads it that way.
+ *
+ * @param {string} command
+ * @returns {string} the command as the tool will read it
+ */
+function stripToolFlags(command) {
+  const tokens = tokenize(command)
+  if (!tokens.length) return command
+  const flags = TOOL_VALUE_FLAGS[baseName(tokens[0]).toLowerCase()]
+  if (!flags) return command
+  /** @type {string[]} */
+  const out = []
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (!flags.has(token.split("=")[0])) {
+      out.push(token)
+      continue
+    }
+    // `--flag value` takes the next word; `--flag=value` carries its own.
+    if (!token.includes("=") && i + 1 < tokens.length) i++
+  }
+  return out.join(" ")
 }
 
 /**
@@ -338,8 +486,47 @@ export function gitSubcommand(segment) {
   return tokens[i] ?? null
 }
 
-const SHELL_BIN = /(^|[\\/])(sh|bash|zsh|dash|ksh)(\.exe)?$/i
 const MAX_SHELL_DEPTH = 2
+
+/**
+ * The command string a shell's `-c` flag carries.
+ *
+ * The shell reads the operand of `-c` from the NEXT argv element, whatever
+ * else is in the flag cluster: `bash -cv "rm -rf /"` runs `rm -rf /`, and
+ * the `v` is a flag, not a payload. Reading the rest of the word instead
+ * made the guard look at the letter `v` and at nothing else, so the
+ * command line it checked was a letter.
+ *
+ * A payload written INTO the word (`bash -c"rm -rf /"`) is a different
+ * spelling. bash and dash do not read it as the command line at all: they
+ * read the whole word as a cluster of option characters and refuse it
+ * (`bash: invalid option`). The guard reads the remainder as the command
+ * string anyway, because that is how the payload is spelled, and because
+ * refusing more than the shell would run is the safe direction - the guard
+ * is not the place to decide that a word is harmless.
+ *
+ * @param {string[]} tokens
+ * @param {number} from the index of the shell word
+ * @returns {string | null} the command line, or null when there is none
+ */
+function shellCommandString(tokens, from) {
+  for (let n = from + 1; n < tokens.length; n++) {
+    const token = tokens[n]
+    if (!token.startsWith("-") || token === "-") continue
+    // The flag cluster is the run of letters after the dash, and `c` is the
+    // flag that takes the command line.
+    const m = /^-([a-zA-Z]*)c/.exec(token)
+    if (!m) continue
+    // What follows the `c` in the same word is either the rest of the
+    // cluster (`-cv`, where the `v` is a flag) or the command line written
+    // into the word (`-c"rm -rf /"`, where the remainder has something in it
+    // that cannot be a flag). A run of letters is a cluster.
+    const after = token.slice(m[0].length)
+    if (after && !/^[a-zA-Z]+$/.test(after)) return after.trim()
+    return tokens.slice(n + 1).join(" ") || null
+  }
+  return null
+}
 
 /**
  * The command line hidden inside `sh -c "..."` or `eval "..."`.
@@ -356,10 +543,115 @@ export function shellPayload(segment) {
   const i = skipPrefixes(tokens)
   if (i >= tokens.length) return null
   if (tokens[i] === "eval") return tokens.slice(i + 1).join(" ") || null
-  if (!SHELL_BIN.test(tokens[i])) return null
-  const c = tokens.findIndex((t, n) => n > i && /^-[a-zA-Z]*c$/.test(t))
-  if (c === -1 || c === tokens.length - 1) return null
-  return tokens.slice(c + 1).join(" ") || null
+  if (!SHELL_NAMES.test(baseName(tokens[i]))) return null
+  return shellCommandString(tokens, i)
+}
+
+/**
+ * The punctuation that opens a group of commands and the punctuation that
+ * ends a word in a command list.
+ *
+ * `sh;` is the shell `sh` is - the `;` ends the word, it does not make the
+ * word something else. Reading the word whole made every pipe with a `;`
+ * after the shell look like a pipe into something that is not a shell.
+ *
+ * The opening braces are here for the same reason: the contents of a group
+ * read the pipe the same way a command outside it does, so `{ sh; }` is a
+ * pipe into a shell even though the first word of the group is `{`.
+ */
+const GROUP_OPEN = /^[({[]+/
+const GROUP_END = /[;)&,}\]]+$/
+
+/**
+ * The name of the command a word names, with the path and the punctuation
+ * that frames it taken off.
+ * @param {string} word
+ * @returns {string}
+ */
+function commandName(word) {
+  return baseName(word).replace(GROUP_OPEN, "").replace(GROUP_END, "")
+}
+
+/**
+ * Whether a command hands what it was given to a shell or an interpreter.
+ *
+ * A pipe stage is not always one command. `sh; echo done` is a command
+ * list, and `cd /tmp && sh` is a list whose shell is not first at all, so
+ * the stage is split into its commands and each one is looked at. The
+ * wrappers in front of a command are skipped, so `sudo /bin/bash` is the
+ * shell `bash` is, and the path is dropped, so `/bin/sh` is `sh`.
+ *
+ * @param {string} stage one stage of a pipe
+ * @returns {boolean}
+ */
+function runsScript(stage) {
+  for (const command of segments(stage)) {
+    const tokens = tokenize(command)
+    let i = skipPrefixes(tokens)
+    if (i >= tokens.length) continue
+    let name = commandName(tokens[i])
+    // A word that is nothing but an opener is a group, and the group's
+    // contents are the command: `{ sh; }` reads the pipe through the `sh`.
+    if (!name) {
+      i++
+      if (i >= tokens.length) continue
+      name = commandName(tokens[i])
+    }
+    if (SHELL_NAMES.test(name) || SCRIPT_RUNNERS.test(name)) return true
+  }
+  return false
+}
+
+/**
+ * Whether a command downloads something and pipes it into a shell.
+ *
+ * Both halves are read the way the shell reads them. The pipe target is
+ * named by its base name, so `/bin/sh` is the shell `sh` is, and the
+ * wrappers in front of it are skipped, so `sudo /bin/bash` is the shell
+ * `bash` is. A rule that only knew the bare spelling of the shell was one
+ * absolute path away from being decorative.
+ *
+ * The target stage is read as the list of commands it is: `curl x | sh;` is
+ * still a pipe into a shell, because the `;` ends the word and not the
+ * pipe.
+ *
+ * @param {string} command
+ * @returns {boolean}
+ */
+function pipesScriptIntoShell(command) {
+  const stages = pipeStages(command)
+  for (let i = 1; i < stages.length; i++) {
+    if (!DOWNLOADERS.test(stages[i - 1])) continue
+    if (!runsScript(stages[i])) continue
+    return true
+  }
+  return false
+}
+
+/**
+ * Whether a command is an rm with a flag that makes it destructive.
+ *
+ * The flag can be a short cluster (`-rf`) or the long GNU name of the same
+ * two flags (`--recursive --force`), and it can be anywhere among the
+ * options. A rule that only knew the short form allowed the long one, which
+ * is the same command.
+ *
+ * @param {string} text the segment, with its prefixes stripped
+ * @returns {boolean}
+ */
+function isRecursiveDelete(text) {
+  const tokens = tokenize(text)
+  if (tokens.length < 2) return false
+  if (baseName(tokens[0]).toLowerCase() !== "rm") return false
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (!token.startsWith("-")) continue
+    if (!/^-[a-zA-Z]*[rf]/i.test(token) && !/^--(recursive|force)$/i.test(token)) continue
+    // The flag needs something to destroy: `rm --recursive` on its own does
+    // nothing, and a rule that blocks it blocks a typo.
+    return tokens.slice(i + 1).some((t) => !t.startsWith("-"))
+  }
+  return false
 }
 
 /**
@@ -380,7 +672,19 @@ export const BASH_RULES = [
   {
     name: "secret exfiltration via shell",
     scope: "command",
-    test: /\b(TOKEN|SECRET|KEY|PASSWORD|API_KEY)\s*=\s*\$\(\s*(curl|wget)\b/i,
+    // The credential word has to be the whole name or the tail of it: the
+    // name of the variable is `GITHUB_TOKEN`, not `GITHUB`. A word boundary
+    // never fires after an underscore, so the boundary alone left every
+    // prefixed credential name unmatched.
+    //
+    // The name is matched in whatever case it is written: the rule used to
+    // match the upper case spelling only, so `token=$(curl ...)` was
+    // allowed, and a lower case name is the same name.
+    //
+    // What the rule does NOT cover is an assignment whose value is not
+    // fetched: `GITHUB_TOKEN=ghp_example` sets a credential, it does not
+    // send one.
+    test: /(^|[^A-Za-z0-9])(?:[A-Za-z0-9]+_)*(TOKEN|SECRET|KEY|PASSWORD|API_KEY)\s*=\s*\$\(\s*(curl|wget)\b/i,
     why: "assigns a fetched value into a credential-named variable",
   },
   {
@@ -392,7 +696,7 @@ export const BASH_RULES = [
   {
     name: "pipe remote script into a shell",
     scope: "command",
-    test: /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python[0-9.]*)\b/i,
+    check: (text) => pipesScriptIntoShell(text),
     why: "downloads and executes a script in one step",
   },
   // `git push` is ask-gated via permissions (`*` ask in the generated
@@ -401,13 +705,16 @@ export const BASH_RULES = [
   {
     name: "recursive delete",
     scope: "segment",
-    test: /^rm\s+(-[a-zA-Z]*[rf][a-zA-Z]*)\s+/i,
+    check: (text) => isRecursiveDelete(text),
     why: "rm with a recursive or force flag",
   },
   {
     name: "chmod 777",
     scope: "segment",
-    test: /^chmod\s+(-[a-zA-Z]+\s+)*777\b/,
+    // The mode may be written with leading zeros: `0777` and `777` are the
+    // same mode, and a rule that required the bare digits let one spelling
+    // of it through.
+    test: /^chmod\s+(-[a-zA-Z]+\s+)*0*777\b/,
     why: "opens permissions on everything",
   },
   {
@@ -485,7 +792,10 @@ export function checkDenied(command, depth = 0) {
   const parts = segments(command)
   const normalized = parts.map((seg) => stripPrefixes(seg))
   for (let i = 0; i < parts.length; i++) {
-    const pattern = deniedBy(normalized[i])
+    // The tool's own global flags come off before the list is read: the
+    // list names a command, and `npm --prefix /tmp publish` is the command
+    // `npm publish`.
+    const pattern = deniedBy(stripToolFlags(normalized[i]))
     if (pattern) return { pattern, segment: parts[i] }
   }
   if (depth < MAX_SHELL_DEPTH) {
