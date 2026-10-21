@@ -57,11 +57,19 @@ jobs:
         # script nobody knows works.
         run: node eval/measure-prune.mjs --sessions 1 --min-saved 0 || echo "no install here, so nothing to measure"
 
-  # The slow half. It needs a provider, so it is opt-in: the repository's
-  # secrets are not available to a workflow that a fork can trigger, and a
-  # scheduled run on a fork would fail on the missing key.
+  # The slow half. It needs a provider, so it is opt-in TWICE: the
+  # repository's secrets are not available to a workflow that a fork can
+  # trigger, and the repository has no provider secret set at all. The job
+  # is skipped rather than failed when the key is missing - a red job every
+  # night is a schedule people stop reading.
   ab:
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    # Only with a provider to measure with. A job that fails every night
+    # because the secret is not set teaches people to ignore the schedule,
+    # which is worse than not having one - and a scheduled workflow that has
+    # never run is not evidence that it works.
+    if: >-
+      ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+          && secrets.OPENCODE_API_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
