@@ -227,6 +227,18 @@ jobs:
       # red, and the tag ends up marked as a failed release for a package
       # that is in fact out. So the registry is asked first, and a re-run of
       # a published tag is green and says what it found.
+      #
+      # `npm view` alone is not enough, and finding that out cost a release.
+      # The registry takes a few minutes to make a newly published version
+      # visible, and in that window `npm view` answers "not found" for a
+      # version that IS already out. A re-run of the tag in that window then
+      # tries to publish it a second time, and the registry refuses that with
+      # E409 "Cannot publish over previously staged version" - so the re-run
+      # goes red for a package that is on npm, and the tag is marked as a
+      # failed release.
+      #
+      # The registry's staging area is the reliable answer: a version that is
+      # STAGED is a version that was published and is still being processed.
       - name: is this version already on the registry?
         id: already
         run: |
@@ -236,6 +248,9 @@ jobs:
           if npm view "opencode-harness-kit@$version" version >/dev/null 2>&1; then
             echo "published=true" >> "$GITHUB_OUTPUT"
             echo "  $version is already on the registry - there is nothing to publish"
+          elif npm stage list opencode-harness-kit 2>/dev/null | grep -qF "$version"; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "  $version is staged on the registry - it was published and is still being processed"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
@@ -277,7 +292,20 @@ jobs:
             #
             # `npm stage list <package>` shows what is waiting, and
             # `npm stage approve <id>` publishes it.
-            if grep -q "oidc/token/exchange" /tmp/publish.log; then
+            if grep -qE "E409|Cannot publish over previously staged version" /tmp/publish.log; then
+              # Checked BEFORE the OIDC branch, because npm's verbose log
+              # mentions the OIDC exchange on a publish that never had any
+              # trouble with it - so the OIDC branch used to claim the
+              # exchange was refused when it had succeeded, and sent whoever
+              # was reading it to fix a trusted publisher that was already
+              # correct.
+              #
+              # A 409 means the version is already on the registry and still
+              # being processed. The publish went through. Nothing is wrong.
+              echo "::error::the registry refused this publish with E409: this version is ALREADY STAGED."
+              echo "::error::That means the publish already went through and the registry is still processing it - the OIDC exchange was fine and there is nothing to fix."
+              echo "::error::Wait for the version to appear on npmjs.com, then re-run this job: the check above will find it and publish nothing."
+            elif grep -q "oidc/token/exchange" /tmp/publish.log; then
               echo "::error::the OIDC exchange was refused, so the trusted publisher configuration does not match."
               echo "::error::npm looks the publisher up by (package, repository), and a RENAMED repository is a repository name that will never match again."
               echo "::error::  it needs: Organization or user = pham-canh"
