@@ -288,6 +288,26 @@ test("auto --json reports a model that is no longer in the catalogue", () => {
   assert.ok(profiles, "the profiles were copied out of the repository")
 })
 
+test("doctor --check-models says a profile it could not check", () => {
+  // A profile that cannot be parsed was skipped without a word, and the run
+  // then said every shipped model was still in the catalogue - so a profile
+  // that was NEVER CHECKED was reported as one that was checked and found
+  // fine. It is the same hole `refresh --all` had, in the one place that
+  // runs from a cron.
+  const box = sandbox()
+  const { profiles, env } = driftingProfiles(box)
+  writeFileSync(join(profiles, "broken.json"), "{ this is not json")
+
+  const r = run(box, ["doctor", "--check-models"], { env })
+  assert.notEqual(r.code, 0, `a profile that was not checked is a failure:\n${r.out}`)
+  assert.match(r.out, /broken/, `the profile is named:\n${r.out}`)
+  assert.doesNotMatch(
+    r.out,
+    /every shipped model is still in the catalogue/,
+    `a run that checked nothing must not say everything is fine:\n${r.out}`,
+  )
+})
+
 test("baseline --db= measures the database it was given", () => {
   // Only `--db /path` was read. `--db=/path` - the spelling every other flag
   // in this kit accepts - was ignored, and the DEFAULT database was measured
