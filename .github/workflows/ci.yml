@@ -216,7 +216,27 @@ jobs:
           fi
       # prepublishOnly rebuilds dist, so the install above is what provides
       # the esbuild binary it runs with.
+      #
+      # Is the version already on the registry? A re-run of a tag whose
+      # publish already succeeded has nothing to publish: npm refuses a
+      # second publish of the same version (EPUBLISHCONFLICT), the job goes
+      # red, and the tag ends up marked as a failed release for a package
+      # that is in fact out. So the registry is asked first, and a re-run of
+      # a published tag is green and says what it found.
+      - name: is this version already on the registry?
+        id: already
+        run: |
+          set -uo pipefail
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if npm view "opencode-harness-kit@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "  $version is already on the registry - there is nothing to publish"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: publish
+        if: steps.already.outputs.published != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           # npm swallows the reason a failed OIDC exchange was refused and
@@ -276,3 +296,9 @@ jobs:
             fi
             exit $code
           fi
+      - name: nothing to publish
+        if: steps.already.outputs.published == 'true'
+        run: |
+          echo "  ${{ steps.already.outputs.version }} is already on the registry."
+          echo "  This run was a re-run of a publish that already happened, so it"
+          echo "  published nothing - and that is the correct answer, not a failure."
