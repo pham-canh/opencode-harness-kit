@@ -16,7 +16,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { loadProfile, validate } from "../src/profile.js"
+import { loadProfile, validate, normalize } from "../src/profile.js"
 import { mkdtemp } from "./helpers.mjs"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -329,4 +329,29 @@ test("the shipped profiles carry the rule on", () => {
   // and on - see eval/RESULTS.md.
   assert.equal(loadProfile("fleet-safe").prune.keepDistinctOutputs, true)
   assert.equal(loadProfile("fleet-all").prune.keepDistinctOutputs, true)
+})
+
+test("the profile refuses a keepDistinctBudgetChars that is not a size", () => {
+  // The ceiling is a number of characters, and a negative one would mean
+  // "keep nothing" by accident rather than by choice - the same as 0, which
+  // is a legitimate choice. A fractional one is not a size at all.
+  for (const bad of [-1, 1.5, "1000", true]) {
+    const p = {
+      ...loadProfile("fleet-safe"),
+      prune: { keepDistinctBudgetChars: bad },
+    }
+    assert.throws(() => validate(p, "test"), /keepDistinctBudgetChars/)
+  }
+})
+
+test("a profile may set the ceiling, and zero is a legal ceiling", () => {
+  const p = {
+    ...loadProfile("fleet-safe"),
+    prune: { keepDistinctBudgetChars: 0 },
+  }
+  assert.doesNotThrow(() => validate(p, "test"))
+  assert.equal(normalize(p).prune.keepDistinctBudgetChars, 0)
+  // Unset means the pruner's own budget decides, so the profile does not
+  // carry a number it never chose.
+  assert.equal(normalize(loadProfile("fleet-safe")).prune.keepDistinctBudgetChars, null)
 })

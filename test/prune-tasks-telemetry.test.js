@@ -95,7 +95,7 @@ function workspace(prefix) {
 }
 
 /** A completed bash call, with the output the agent saw. */
-function toolMessage(id, output) {
+function toolMessage(id, output, input = { command: "pytest -q" }) {
   return {
     info: { id, role: "assistant", time: { created: 1789000000000 } },
     parts: [
@@ -111,7 +111,7 @@ function toolMessage(id, output) {
           // The SAME input on every call: two calls with the same tool and
           // the same input have the same output, so only the newest copy
           // survives and the rest are stubbed.
-          input: { command: "pytest -q" },
+          input,
           output,
           title: "bash",
           metadata: {},
@@ -222,6 +222,61 @@ test("a pass that really did shrink the request still reports the shrink", async
   const line = lastPruneLine(dir)
   assert.ok(after < before, "the fixture must shrink the request")
   assert.equal(line.savedChars, before - after)
+  assert.ok(line.savedChars > 0, "a real shrink must be reported as a saving")
+})
+
+test("the distinct outputs of a long session are bounded, newest first", async () => {
+  // The rule that keeps the newest copy of each DISTINCT output was added
+  // so a long session would stop re-reading files: after six more tool calls
+  // the only copy of a file the agent had read was gone, and the agent read
+  // it again.
+  //
+  // It had no ceiling, and a rule with no ceiling is not a trade-off, it is a
+  // leak. Measured on a real 137-message session: the request was 5.26 MB,
+  // the pruner removed 0.04 MB of it (0.8%), and 4.74 MB of it - 92% - was
+  // the distinct outputs of the whole session, kept "however old it is". The
+  // profile's own budget for that request was 176,000 characters, so the
+  // request was twenty-nine times over its budget.
+  //
+  // The ceiling keeps the property the rule exists for - the newest copy of
+  // a recent output survives, so the agent does not read it again - and drops
+  // the part that was never wanted: the copy of everything the session has
+  // ever touched, for ever.
+  const dir = workspace("ock-prune-distinct-")
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
+  const hooks = await pruneHooks(dir)
+  const messages = []
+  for (let i = 0; i < 40; i++) {
+    // A DIFFERENT input on every call, so every output is distinct.
+    messages.push(toolMessage(`m${i}`, "x".repeat(20000), { command: `pytest -q ${i}` }))
+  }
+
+  const before = JSON.stringify(messages).length
+  await hooks["experimental.chat.messages.transform"]({}, { messages })
+  const after = JSON.stringify(messages).length
+
+  const outputOf = (i) => messages[i].parts[0].state.output
+
+  // The oldest distinct output is stubbed: it is past the ceiling.
+  assert.ok(
+    outputOf(0).length < 200,
+    `the oldest distinct output was kept verbatim (${outputOf(0).length} chars)`,
+  )
+  // A recent one survives, which is the property the rule was added for.
+  assert.equal(
+    outputOf(35).length,
+    20000,
+    "a recent distinct output was stubbed, so the agent would read it again",
+  )
+  // The request is bounded by the budget, not by the length of the session.
+  assert.ok(
+    after < before / 2,
+    `the request barely shrank: ${before} -> ${after} chars`,
+  )
+
+  const line = lastPruneLine(dir)
+  assert.ok(line.stubbed > 0, "nothing was stubbed, so the fixture proves nothing")
+  assert.equal(line.savedChars, before - after, "the reported saving is not the real delta")
   assert.ok(line.savedChars > 0, "a real shrink must be reported as a saving")
 })
 

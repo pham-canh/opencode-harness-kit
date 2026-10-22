@@ -77,7 +77,7 @@ export const ROOT = findRoot(resolve(HERE, ".."))
  * @property {Record<string, RoleModel>} [roleModels]
  * @property {{ enabled?: boolean, keepRecentToolCalls?: number,
  *             keepRecentTurns?: number, keepUserMessages?: boolean,
- *             keepDistinctOutputs?: boolean }} [prune]
+ *             keepDistinctOutputs?: boolean, keepDistinctBudgetChars?: number | null }} [prune]
  * @property {string[]} [fallback]
  * @typedef {{ retention: Retention, note?: string, verified?: string, source?: string }} RetentionRecord
  */
@@ -214,6 +214,9 @@ export function normalize(p) {
       keepRecentTurns: p.prune?.keepRecentTurns ?? 3,
       keepUserMessages: p.prune?.keepUserMessages ?? true,
       keepDistinctOutputs: p.prune?.keepDistinctOutputs ?? true,
+      // null means "the pruner's own budget decides" - the profile's context
+      // budget. A number is a ceiling in characters.
+      keepDistinctBudgetChars: p.prune?.keepDistinctBudgetChars ?? null,
     },
     fallback: p.fallback ?? [],
   }
@@ -737,6 +740,16 @@ export function validate(p, path = "<memory>") {
       typeof prune.keepDistinctOutputs !== "boolean"
     ) {
       throw new ProfileError(`${where}: prune.keepDistinctOutputs must be a boolean`)
+    }
+    if (prune.keepDistinctBudgetChars !== undefined && prune.keepDistinctBudgetChars !== null) {
+      if (
+        !Number.isInteger(prune.keepDistinctBudgetChars) ||
+        prune.keepDistinctBudgetChars < 0
+      ) {
+        throw new ProfileError(
+          `${where}: prune.keepDistinctBudgetChars must be an integer of at least 0`,
+        )
+      }
     }
     if (prune.enabled !== undefined && typeof prune.enabled !== "boolean") {
       throw new ProfileError(`${where}: prune.enabled must be a boolean`)

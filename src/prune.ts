@@ -174,6 +174,8 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
     // Whether the newest copy of each DISTINCT tool output survives, even
     // when it is older than the recent-calls window.
     keepDistinct: boolean
+    // The character budget the distinct outputs have to fit in.
+    distinctBudget: number
     threshold: number
   }
   const DISABLED: Resolved = {
@@ -182,6 +184,7 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
     keepTurns: 0,
     keepUsers: true,
     keepDistinct: false,
+    distinctBudget: 0,
     threshold: 0,
   }
   // Only a SUCCESSFUL lookup is cached. A lookup that found nothing is
@@ -199,13 +202,30 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
       profile = null
     }
     if (!profile?.prune?.enabled) return DISABLED
+    const threshold = pruneThreshold(profile)
     cached = {
       profile,
       keepCalls: profile.prune.keepRecentToolCalls ?? 6,
       keepTurns: profile.prune.keepRecentTurns ?? 3,
       keepUsers: profile.prune.keepUserMessages ?? true,
       keepDistinct: profile.prune.keepDistinctOutputs ?? true,
-      threshold: pruneThreshold(profile),
+      // The budget the distinct outputs have to fit in.
+      //
+      // It defaults to the profile's own context budget - the number the
+      // pruner is measured against - because a rule with no ceiling is not a
+      // trade-off, it is a leak. Measured on a real 137-message session: the
+      // request was 5.26 MB and the pruner removed 0.04 MB of it (0.8%),
+      // because EVERY distinct output the session had ever produced was kept
+      // (4.74 MB, 92% of the request) "however old it is". The threshold
+      // that session was supposed to live under was 176,000 characters and
+      // the request was 5,140,000 - twenty-nine times over.
+      //
+      // The ceiling keeps the property the rule was added for (the newest
+      // copy of a file the agent read survives, so it does not read it
+      // again) and drops the part that was never wanted (the copy of every
+      // file the session has EVER touched, for ever).
+      distinctBudget: profile.prune.keepDistinctBudgetChars ?? threshold,
+      threshold,
     }
     return cached
   }
@@ -213,7 +233,7 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
   return {
     "experimental.chat.messages.transform": async (_input: any, output: any) => {
       try {
-        const { profile, keepCalls, keepTurns, keepUsers, keepDistinct, threshold } = resolve()
+        const { profile, keepCalls, keepTurns, keepUsers, keepDistinct, distinctBudget, threshold } = resolve()
         if (!profile) return
         const messages = output.messages
         if (!Array.isArray(messages) || messages.length === 0) return
@@ -257,17 +277,45 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
         // same input have the same output.
         if (keepDistinct) {
           const seenSignatures = new Set<string>()
+          // What the distinct outputs kept so far cost the request.
+          let kept = 0
           for (let i = messages.length - 1; i >= 0; i--) {
             const msg = messages[i]
             if (!msg?.parts) continue
+            // The size of the NEW distinct outputs in this message. A message
+            // that repeats an output it already has adds nothing, so it is
+            // not charged twice.
+            let added = 0
             for (const part of msg.parts) {
               if (part?.type !== "tool") continue
               if (part.state?.status !== "completed") continue
               const sig = toolSignature(part)
-              if (!sig || seenSignatures.has(sig)) continue
+              if (!sig) continue
+              const seen = seenSignatures.has(sig)
               seenSignatures.add(sig)
-              keepToolMessageIds.add(msg.info?.id ?? String(i))
+              // A REPEAT is never kept by this rule - the newest copy is.
+              if (seen) continue
+              // Outside the prunable floor the part survives anyway, and it
+              // is the newest copy of its output, so it owns that output: an
+              // older copy of the same thing is stubbed and this one costs
+              // the budget nothing.
+              if (i >= floor) continue
+              added += partSize(part)
             }
+            if (added === 0) continue
+            // The ceiling. The walk is newest-first, so what the agent is
+            // working with survives and what the session touched at the start
+            // is stubbed like everything else.
+            //
+            // Without it the rule is not a trade-off but a leak: measured on a
+            // real 137-message session, the request was 5.26 MB, the pruner
+            // removed 0.04 MB of it, and 4.74 MB of it - 92% - was the
+            // distinct outputs of the whole session, kept "however old it
+            // is". The profile's own budget for that request was 176,000
+            // characters.
+            if (kept + added > distinctBudget) break
+            kept += added
+            keepToolMessageIds.add(msg.info?.id ?? String(i))
           }
         }
 
