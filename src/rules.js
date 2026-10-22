@@ -2,7 +2,8 @@
 // TypeScript runtime and reused by other tools.
 
 import { homedir, tmpdir } from "node:os"
-import { resolve as resolvePath, sep } from "node:path"
+import { resolve as resolvePath, sep, dirname, basename, join } from "node:path"
+import { realpathSync } from "node:fs"
 import { deniedBy } from "./denylist.js"
 
 // Two ideas here:
@@ -42,8 +43,45 @@ function expandHome(p) {
 }
 
 /**
+ * The real path of a file, or of the deepest part of it that exists.
+ *
+ * A path that does not exist yet cannot be resolved, and a write usually
+ * names a file that does not exist yet - so the walk goes up until it finds
+ * something real and puts the missing tail back on the end. That is what a
+ * symlink in the middle of the path is resolved THROUGH: the link is in the
+ * part that exists.
+ *
+ * @param {string} p
+ * @returns {string}
+ */
+function realpathOfNearestExisting(p) {
+  /** The parts of the path that do not exist yet. */
+  const missing = []
+  let current = p
+  for (;;) {
+    try {
+      const real = realpathSync(current)
+      return missing.length ? join(real, ...missing) : real
+    } catch {
+      // Not there yet. Go up one level, remember the part that is missing,
+      // and try again.
+    }
+    const parent = dirname(current)
+    if (parent === current) return current
+    missing.unshift(basename(current))
+    current = parent
+  }
+}
+
+/**
  * Whether a write target stays inside the project. A relative path is resolved
  * against the project root, which is where the agent's working directory is.
+ *
+ * The comparison is made on the REAL path, not on the text of the path. A
+ * symlink inside the project that points at /etc is a path inside the
+ * project, and it is a write outside it - and the text of the path is the
+ * only thing the lexical comparison ever saw.
+ *
  * @param {string} target
  * @param {string} root
  * @returns {boolean}
@@ -53,8 +91,11 @@ export function insideRoot(target, root) {
   const absTarget = resolvePath(root, expandHome(target))
   const absRoot = resolvePath(root)
   if (absTarget === absRoot) return true
-  const a = CASE_INSENSITIVE_FS ? absTarget.toLowerCase() : absTarget
-  const b = CASE_INSENSITIVE_FS ? absRoot.toLowerCase() : absRoot
+  const realTarget = realpathOfNearestExisting(absTarget)
+  const realRoot = realpathOfNearestExisting(absRoot)
+  if (realTarget === realRoot) return true
+  const a = CASE_INSENSITIVE_FS ? realTarget.toLowerCase() : realTarget
+  const b = CASE_INSENSITIVE_FS ? realRoot.toLowerCase() : realRoot
   return a.startsWith(b.endsWith(sep) ? b : b + sep)
 }
 
@@ -274,17 +315,53 @@ const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/
 // The wrappers that put another command in front of the real one. `npx`
 // runs a package's binary, so `npx npm publish` is `npm publish` with two
 // words in front of it.
-const GIT_WRAPPERS = new Set([
-  "env",
-  "sudo",
-  "doas",
-  "nohup",
-  "time",
-  "command",
-  "exec",
-  "xargs",
-  "npx",
-])
+//
+// The list is a table and not a set, because the flags that take a value are
+// the wrapper's OWN: `sudo -n` is a flag (non-interactive) and the word
+// after it is the COMMAND, while `stdbuf -o 0` takes a mode and the word
+// after it is the mode. One list for all of them made `sudo -n rm -rf /tmp/x`
+// read `rm` as the value of `-n`, so the delete was invisible - and the
+// wrappers nobody thought of (`timeout`, `nice`, `setsid`, `busybox`) were
+// commands the rules had never seen at all.
+const WRAPPERS = {
+  env: new Set([
+    "-u", "--unset", "-C", "--chdir", "-S", "--split-string", "--argv0",
+    "--block-signal", "--default-signal", "--ignore-signal",
+  ]),
+  sudo: new Set([
+    "-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt",
+    "-C", "--close-from", "-T", "--command-timeout", "-R", "--chroot",
+    "-D", "--chdir", "--other-user",
+  ]),
+  doas: new Set(["-u", "--user"]),
+  nohup: new Set(),
+  time: new Set(["-f", "--file", "-o", "--format", "-p", "--portability"]),
+  command: new Set(["-p", "--path", "-v", "--verbose"]),
+  exec: new Set(["-a", "--argv0", "-c", "--command", "-l", "--login"]),
+  xargs: new Set([
+    "-a", "--arg-file", "-d", "--delimiter", "-E", "--eof", "-I", "--replace",
+    "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs",
+    "-s", "--max-chars", "-t", "--verbose", "-x", "--exit-on-error",
+  ]),
+  npx: new Set(["-p", "--package", "-c", "--call", "--registry"]),
+  // The wrappers that run a command and are not in the list above are the
+  // ones that were missing from it, and every one of them was a way around
+  // the rules.
+  timeout: new Set(["-k", "--kill-after", "-s", "--signal"]),
+  nice: new Set(["-n", "--adjustment"]),
+  ionice: new Set(["-c", "--class", "-n", "--classdata", "-p", "--pid", "-t"]),
+  stdbuf: new Set(["-i", "--input", "-o", "--output", "-e", "--error"]),
+  setsid: new Set(),
+  chroot: new Set(["-u", "--users", "-g", "--groups", "--userspec", "--groupspec"]),
+  taskset: new Set(["-c", "--cpu-list", "-p", "--pid"]),
+  busybox: new Set(),
+}
+/**
+ * The same table, typed for the lookups by name.
+ *
+ * @type {Record<string, Set<string>>}
+ */
+const WRAPPER_TABLE = WRAPPERS
 // The shells a script can be piped into, by name. The name is what matters:
 // `/bin/sh` is the same shell as `sh`.
 const SHELL_NAMES = /^(sh|bash|zsh|dash|ksh)(\.exe)?$/i
@@ -295,6 +372,8 @@ const SCRIPT_RUNNERS = /^python[0-9.]*$/i
 const DOWNLOADERS = /\b(curl|wget)\b/i
 // Wrappers whose flag consumes the next word, e.g. `sudo -u deploy git push`.
 const WRAPPER_VALUE_FLAGS = new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"])
+// A duration, as `timeout` spells it: a number, and optionally a unit.
+const DURATION = /^\d+(\.\d+)?[smhd]?$/
 // git options that take a value, so the subcommand is the word after them.
 const GIT_VALUE_FLAGS = new Set([
   "-C",
@@ -379,6 +458,39 @@ function baseName(word) {
 }
 
 /**
+ * The index just past a wrapper's own arguments.
+ *
+ * A wrapper is a word that runs another word, so the words between the two
+ * are the wrapper's arguments and not the command. Which words those are
+ * depends on the wrapper: `timeout` takes a DURATION (`timeout 5 rm ...`),
+ * `chroot` takes a DIRECTORY (`chroot /jail rm ...`), and the rest take
+ * flags.
+ *
+ * @param {string[]} tokens
+ * @param {number} i the index just past the wrapper word
+ * @param {string} name the wrapper's name
+ * @returns {number} the index of the word after the wrapper's arguments
+ */
+function skipWrapperArgs(tokens, i, name) {
+  const valueFlags = WRAPPER_TABLE[name] ?? WRAPPER_VALUE_FLAGS
+  while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
+    const flag = tokens[i]
+    i++
+    // `--flag=value` carries its own value, so there is no word to skip.
+    if (valueFlags.has(flag) && !flag.includes("=") && i < tokens.length) i++
+  }
+  // `timeout 5 rm -rf /tmp/x`: the duration is the wrapper's, not the
+  // command's. It is only skipped when it LOOKS like a duration, so a
+  // command that happens to start with a number is still a command.
+  if (name === "timeout" && i < tokens.length && DURATION.test(tokens[i])) i++
+  // `chroot /jail rm -rf /tmp/x`: the directory is the wrapper's. It is
+  // always there - chroot cannot run without one - so the word after the
+  // flags is the directory and the word after THAT is the command.
+  if (name === "chroot" && i < tokens.length && !tokens[i].startsWith("-")) i++
+  return i
+}
+
+/**
  * Skip the wrappers and environment assignments in front of a real command.
  * `env FOO=1 sudo -u deploy git -C /repo push` resolves at index 4.
  * @param {string[]} tokens
@@ -397,13 +509,9 @@ function skipPrefixes(tokens) {
     // the raw token left the whole wrapper list one absolute path away from
     // being decorative: `/usr/bin/env rm -rf /` was not a command the rules
     // had ever seen.
-    if (GIT_WRAPPERS.has(baseName(word))) {
-      i++
-      while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
-        const flag = tokens[i]
-        i++
-        if (WRAPPER_VALUE_FLAGS.has(flag) && i < tokens.length) i++
-      }
+    const name = baseName(word)
+    if (name in WRAPPER_TABLE) {
+      i = skipWrapperArgs(tokens, i + 1, name)
       continue
     }
     return i
@@ -473,6 +581,15 @@ export function gitSubcommand(segment) {
   // would resolve to `push`.
   while (i < tokens.length) {
     const flag = tokens[i]
+    // A value flag with its value attached: `git -C/tmp reset --hard` is
+    // `git -C /tmp reset --hard`, and `git -ccore.pager=cat clean -f` is
+    // `git -c core.pager=cat clean -f`. The value was part of the same
+    // word, so the resolver read the FLAG as the subcommand - and the rule
+    // that watches for a history rewrite never saw the subcommand at all.
+    if (flag.length > 2 && !flag.startsWith("--") && (flag.startsWith("-C") || flag.startsWith("-c"))) {
+      i++
+      continue
+    }
     if (GIT_VALUE_FLAGS.has(flag)) {
       i += 2
       continue
@@ -529,6 +646,50 @@ function shellCommandString(tokens, from) {
 }
 
 /**
+ * The command line hidden inside `env -S "..."`.
+ *
+ * `env -S` takes a string and SPLITS it into words, so the string is a
+ * command line - the same thing `sh -c` carries. It used to be invisible:
+ * the string arrived as ONE token, and the command word was read out of it
+ * as the text after the last slash, so `env -S "rm -rf /tmp/x"` was read as
+ * a command called `x`.
+ *
+ * @param {string[]} tokens
+ * @returns {string | null}
+ */
+function envSplitPayload(tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const word = tokens[i]
+    if (word === undefined) return null
+    if (ENV_ASSIGN.test(word)) continue
+    const name = baseName(word)
+    if (name === "env") {
+      // The flag and its value, in the three spellings env accepts.
+      for (let j = i + 1; j < tokens.length; j++) {
+        const token = tokens[j]
+        if (token === "-S" || token === "--split-string") {
+          return tokens[j + 1] ?? null
+        }
+        if (token.startsWith("--split-string=")) {
+          return token.slice("--split-string=".length) || null
+        }
+        if (token.startsWith("-S") && token.length > 2) {
+          return token.slice(2) || null
+        }
+        if (ENV_ASSIGN.test(token)) continue
+        if (!token.startsWith("-")) break
+      }
+      return null
+    }
+    // Only `env` itself carries the flag. A command that happens to have
+    // `env` further along the line is not an env.
+    if (!(name in WRAPPER_TABLE)) return null
+    i = skipWrapperArgs(tokens, i + 1, name) - 1
+  }
+  return null
+}
+
+/**
  * The command line hidden inside `sh -c "..."` or `eval "..."`.
  * @param {string} segment
  * @returns {string | null}
@@ -536,6 +697,11 @@ function shellCommandString(tokens, from) {
 export function shellPayload(segment) {
   const tokens = tokenize(segment)
   if (tokens.length < 2) return null
+  // `env -S "..."` carries a command line too, and it is read before the
+  // wrappers: the flag and its value are the wrapper's, so the wrapper scan
+  // walks straight past them.
+  const split = envSplitPayload(tokens)
+  if (split) return split
   // The wrappers come off FIRST. `sudo bash -c "rm -rf /"` hides a whole
   // command line behind one argument, and the shell doing the hiding is the
   // second word - so looking only at the first word missed every command
@@ -777,6 +943,107 @@ function opensPermissions(text) {
  */
 export const ASK_GATED = [/^\s*git\s+push\b/]
 
+/**
+ * The file a download writes to, or null when the segment is not a download.
+ *
+ * `curl -o FILE URL` and `wget -O FILE URL` fetch a URL into a file. The
+ * file is named by the flag, and the flag carries its value in three
+ * spellings: two words, one word, and the long form with an `=`.
+ *
+ * @param {string} segment
+ * @returns {string | null}
+ */
+function downloadTarget(segment) {
+  const tokens = tokenize(segment)
+  const i = skipPrefixes(tokens)
+  if (i >= tokens.length) return null
+  const name = baseName(tokens[i]).toLowerCase()
+  if (name !== "curl" && name !== "wget") return null
+  for (let j = i + 1; j < tokens.length; j++) {
+    const token = tokens[j]
+    if (token === "--") break
+    if (token === "-o" || token === "--output" || token === "-O" || token === "--output-document") {
+      const value = tokens[j + 1]
+      return value && !value.startsWith("-") ? value : null
+    }
+    if (token.startsWith("--output=") || token.startsWith("--output-document=")) {
+      return token.slice(token.indexOf("=") + 1) || null
+    }
+    // `wget -Ofile` is one word.
+    if (name === "wget" && token.startsWith("-O") && token.length > 2) {
+      return token.slice(2) || null
+    }
+  }
+  return null
+}
+
+/**
+ * Whether two words name the same file.
+ *
+ * The comparison is exact when both names carry a directory, and by the last
+ * segment otherwise - so `x.sh` and `/tmp/x.sh` are the same file, and
+ * `/tmp/x.sh` and `/tmp/other/x.sh` are not.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+function sameFile(a, b) {
+  if (a === b) return true
+  if (!a.includes("/") || !b.includes("/")) return baseName(a) === baseName(b)
+  return false
+}
+
+/**
+ * Whether a segment runs a file.
+ *
+ * Either the file is the command itself (`/tmp/x.sh`), or it is an argument
+ * of a shell or an interpreter (`bash /tmp/x.sh`, `python3 /tmp/x.py`).
+ *
+ * @param {string} segment
+ * @param {string} file
+ * @returns {boolean}
+ */
+function runsFile(segment, file) {
+  const tokens = tokenize(segment)
+  const i = skipPrefixes(tokens)
+  if (i >= tokens.length) return false
+  if (sameFile(tokens[i], file)) return true
+  const name = baseName(tokens[i])
+  const runner =
+    SHELL_NAMES.test(name) ||
+    SCRIPT_RUNNERS.test(name) ||
+    name === "source" ||
+    name === "."
+  if (!runner) return false
+  for (let j = i + 1; j < tokens.length; j++) {
+    if (sameFile(tokens[j], file)) return true
+  }
+  return false
+}
+
+/**
+ * Whether a command fetches a file and then runs it.
+ *
+ * The pipe form (`curl x | sh`) is one rule and this is the other: the same
+ * download in two steps - fetch it to a file, then run the file - was
+ * ordinary work, because the rule only ever looked at a pipe.
+ *
+ * @param {string} command
+ * @returns {boolean}
+ */
+function downloadsAndRuns(command) {
+  const parts = segments(command)
+  for (let i = 0; i < parts.length; i++) {
+    const file = downloadTarget(parts[i])
+    if (!file) continue
+    for (let j = i + 1; j < parts.length; j++) {
+      if (runsFile(parts[j], file)) return true
+    }
+  }
+  return false
+}
+
 /** @type {Rule[]} */
 export const BASH_RULES = [
   {
@@ -808,6 +1075,16 @@ export const BASH_RULES = [
     scope: "command",
     check: (text) => pipesScriptIntoShell(text),
     why: "downloads and executes a script in one step",
+  },
+  {
+    name: "download and run",
+    scope: "command",
+    // The pipe rule above is the same download in ONE step. This is the
+    // same download in TWO: fetch it to a file, then run the file. The
+    // rules only ever looked at a pipe, so the two-step form was ordinary
+    // work - and it runs exactly the same downloaded script.
+    check: (text) => downloadsAndRuns(text),
+    why: "downloads a script to a file and then runs it",
   },
   // `git push` is ask-gated via permissions (`*` ask in the generated
   // config), not guard-blocked. Publishing needs human approval, but the
@@ -867,6 +1144,11 @@ export const WRITE_RULES = [
   {
     name: "write to a private key",
     test: /(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)\b/i,
+    // The PUBLIC half of a key pair is a file the user is meant to publish.
+    // The rule named the key FILES, and `id_rsa.pub` is one of them, so
+    // writing a public key - the ordinary thing to do with a key - was
+    // refused for a reason nobody could find.
+    unless: /(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)\.pub(\.[^/\\]*)?$/i,
     why: "private key material",
   },
 ]

@@ -1,14 +1,15 @@
 // src/index.ts
 import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 
 // src/guard.ts
 import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
-import { join as join3, resolve as resolve2 } from "node:path";
+import { join as join4, resolve as resolve2 } from "node:path";
 
 // src/rules.js
 import { homedir, tmpdir } from "node:os";
-import { resolve as resolvePath, sep } from "node:path";
+import { resolve as resolvePath, sep, dirname, basename, join } from "node:path";
+import { realpathSync } from "node:fs";
 
 // src/denylist.js
 var BASH_DENYLIST = [
@@ -104,13 +105,31 @@ function expandHome(p) {
   if (p.startsWith("~/")) return resolvePath(homedir(), p.slice(2));
   return p;
 }
+function realpathOfNearestExisting(p) {
+  const missing = [];
+  let current = p;
+  for (; ; ) {
+    try {
+      const real = realpathSync(current);
+      return missing.length ? join(real, ...missing) : real;
+    } catch {
+    }
+    const parent = dirname(current);
+    if (parent === current) return current;
+    missing.unshift(basename(current));
+    current = parent;
+  }
+}
 function insideRoot(target, root) {
   if (!root) return true;
   const absTarget = resolvePath(root, expandHome(target));
   const absRoot = resolvePath(root);
   if (absTarget === absRoot) return true;
-  const a = CASE_INSENSITIVE_FS ? absTarget.toLowerCase() : absTarget;
-  const b = CASE_INSENSITIVE_FS ? absRoot.toLowerCase() : absRoot;
+  const realTarget = realpathOfNearestExisting(absTarget);
+  const realRoot = realpathOfNearestExisting(absRoot);
+  if (realTarget === realRoot) return true;
+  const a = CASE_INSENSITIVE_FS ? realTarget.toLowerCase() : realTarget;
+  const b = CASE_INSENSITIVE_FS ? realRoot.toLowerCase() : realRoot;
   return a.startsWith(b.endsWith(sep) ? b : b + sep);
 }
 var HEREDOC = /^<<(-)?(?:'([A-Za-z_][A-Za-z0-9_]*)'|"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))/;
@@ -258,21 +277,84 @@ function tokenize(segment) {
   return tokens;
 }
 var ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
-var GIT_WRAPPERS = /* @__PURE__ */ new Set([
-  "env",
-  "sudo",
-  "doas",
-  "nohup",
-  "time",
-  "command",
-  "exec",
-  "xargs",
-  "npx"
-]);
+var WRAPPERS = {
+  env: /* @__PURE__ */ new Set([
+    "-u",
+    "--unset",
+    "-C",
+    "--chdir",
+    "-S",
+    "--split-string",
+    "--argv0",
+    "--block-signal",
+    "--default-signal",
+    "--ignore-signal"
+  ]),
+  sudo: /* @__PURE__ */ new Set([
+    "-u",
+    "--user",
+    "-g",
+    "--group",
+    "-h",
+    "--host",
+    "-p",
+    "--prompt",
+    "-C",
+    "--close-from",
+    "-T",
+    "--command-timeout",
+    "-R",
+    "--chroot",
+    "-D",
+    "--chdir",
+    "--other-user"
+  ]),
+  doas: /* @__PURE__ */ new Set(["-u", "--user"]),
+  nohup: /* @__PURE__ */ new Set(),
+  time: /* @__PURE__ */ new Set(["-f", "--file", "-o", "--format", "-p", "--portability"]),
+  command: /* @__PURE__ */ new Set(["-p", "--path", "-v", "--verbose"]),
+  exec: /* @__PURE__ */ new Set(["-a", "--argv0", "-c", "--command", "-l", "--login"]),
+  xargs: /* @__PURE__ */ new Set([
+    "-a",
+    "--arg-file",
+    "-d",
+    "--delimiter",
+    "-E",
+    "--eof",
+    "-I",
+    "--replace",
+    "-L",
+    "--max-lines",
+    "-n",
+    "--max-args",
+    "-P",
+    "--max-procs",
+    "-s",
+    "--max-chars",
+    "-t",
+    "--verbose",
+    "-x",
+    "--exit-on-error"
+  ]),
+  npx: /* @__PURE__ */ new Set(["-p", "--package", "-c", "--call", "--registry"]),
+  // The wrappers that run a command and are not in the list above are the
+  // ones that were missing from it, and every one of them was a way around
+  // the rules.
+  timeout: /* @__PURE__ */ new Set(["-k", "--kill-after", "-s", "--signal"]),
+  nice: /* @__PURE__ */ new Set(["-n", "--adjustment"]),
+  ionice: /* @__PURE__ */ new Set(["-c", "--class", "-n", "--classdata", "-p", "--pid", "-t"]),
+  stdbuf: /* @__PURE__ */ new Set(["-i", "--input", "-o", "--output", "-e", "--error"]),
+  setsid: /* @__PURE__ */ new Set(),
+  chroot: /* @__PURE__ */ new Set(["-u", "--users", "-g", "--groups", "--userspec", "--groupspec"]),
+  taskset: /* @__PURE__ */ new Set(["-c", "--cpu-list", "-p", "--pid"]),
+  busybox: /* @__PURE__ */ new Set()
+};
+var WRAPPER_TABLE = WRAPPERS;
 var SHELL_NAMES = /^(sh|bash|zsh|dash|ksh)(\.exe)?$/i;
 var SCRIPT_RUNNERS = /^python[0-9.]*$/i;
 var DOWNLOADERS = /\b(curl|wget)\b/i;
 var WRAPPER_VALUE_FLAGS = /* @__PURE__ */ new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"]);
+var DURATION = /^\d+(\.\d+)?[smhd]?$/;
 var GIT_VALUE_FLAGS = /* @__PURE__ */ new Set([
   "-C",
   "-c",
@@ -322,6 +404,17 @@ function baseName(word) {
   const slash = Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\"));
   return slash === -1 ? word : word.slice(slash + 1);
 }
+function skipWrapperArgs(tokens, i, name) {
+  const valueFlags = WRAPPER_TABLE[name] ?? WRAPPER_VALUE_FLAGS;
+  while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
+    const flag = tokens[i];
+    i++;
+    if (valueFlags.has(flag) && !flag.includes("=") && i < tokens.length) i++;
+  }
+  if (name === "timeout" && i < tokens.length && DURATION.test(tokens[i])) i++;
+  if (name === "chroot" && i < tokens.length && !tokens[i].startsWith("-")) i++;
+  return i;
+}
 function skipPrefixes(tokens) {
   let i = 0;
   for (; ; ) {
@@ -331,13 +424,9 @@ function skipPrefixes(tokens) {
       i++;
       continue;
     }
-    if (GIT_WRAPPERS.has(baseName(word))) {
-      i++;
-      while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
-        const flag = tokens[i];
-        i++;
-        if (WRAPPER_VALUE_FLAGS.has(flag) && i < tokens.length) i++;
-      }
+    const name = baseName(word);
+    if (name in WRAPPER_TABLE) {
+      i = skipWrapperArgs(tokens, i + 1, name);
       continue;
     }
     return i;
@@ -375,6 +464,10 @@ function gitSubcommand(segment) {
   i++;
   while (i < tokens.length) {
     const flag = tokens[i];
+    if (flag.length > 2 && !flag.startsWith("--") && (flag.startsWith("-C") || flag.startsWith("-c"))) {
+      i++;
+      continue;
+    }
     if (GIT_VALUE_FLAGS.has(flag)) {
       i += 2;
       continue;
@@ -400,9 +493,39 @@ function shellCommandString(tokens, from) {
   }
   return null;
 }
+function envSplitPayload(tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const word = tokens[i];
+    if (word === void 0) return null;
+    if (ENV_ASSIGN.test(word)) continue;
+    const name = baseName(word);
+    if (name === "env") {
+      for (let j = i + 1; j < tokens.length; j++) {
+        const token = tokens[j];
+        if (token === "-S" || token === "--split-string") {
+          return tokens[j + 1] ?? null;
+        }
+        if (token.startsWith("--split-string=")) {
+          return token.slice("--split-string=".length) || null;
+        }
+        if (token.startsWith("-S") && token.length > 2) {
+          return token.slice(2) || null;
+        }
+        if (ENV_ASSIGN.test(token)) continue;
+        if (!token.startsWith("-")) break;
+      }
+      return null;
+    }
+    if (!(name in WRAPPER_TABLE)) return null;
+    i = skipWrapperArgs(tokens, i + 1, name) - 1;
+  }
+  return null;
+}
 function shellPayload(segment) {
   const tokens = tokenize(segment);
   if (tokens.length < 2) return null;
+  const split2 = envSplitPayload(tokens);
+  if (split2) return split2;
   const i = skipPrefixes(tokens);
   if (i >= tokens.length) return null;
   if (tokens[i] === "eval") return tokens.slice(i + 1).join(" ") || null;
@@ -488,6 +611,57 @@ function opensPermissions(text) {
   return /^0*777$/.test(mode);
 }
 var ASK_GATED = [/^\s*git\s+push\b/];
+function downloadTarget(segment) {
+  const tokens = tokenize(segment);
+  const i = skipPrefixes(tokens);
+  if (i >= tokens.length) return null;
+  const name = baseName(tokens[i]).toLowerCase();
+  if (name !== "curl" && name !== "wget") return null;
+  for (let j = i + 1; j < tokens.length; j++) {
+    const token = tokens[j];
+    if (token === "--") break;
+    if (token === "-o" || token === "--output" || token === "-O" || token === "--output-document") {
+      const value = tokens[j + 1];
+      return value && !value.startsWith("-") ? value : null;
+    }
+    if (token.startsWith("--output=") || token.startsWith("--output-document=")) {
+      return token.slice(token.indexOf("=") + 1) || null;
+    }
+    if (name === "wget" && token.startsWith("-O") && token.length > 2) {
+      return token.slice(2) || null;
+    }
+  }
+  return null;
+}
+function sameFile(a, b) {
+  if (a === b) return true;
+  if (!a.includes("/") || !b.includes("/")) return baseName(a) === baseName(b);
+  return false;
+}
+function runsFile(segment, file) {
+  const tokens = tokenize(segment);
+  const i = skipPrefixes(tokens);
+  if (i >= tokens.length) return false;
+  if (sameFile(tokens[i], file)) return true;
+  const name = baseName(tokens[i]);
+  const runner = SHELL_NAMES.test(name) || SCRIPT_RUNNERS.test(name) || name === "source" || name === ".";
+  if (!runner) return false;
+  for (let j = i + 1; j < tokens.length; j++) {
+    if (sameFile(tokens[j], file)) return true;
+  }
+  return false;
+}
+function downloadsAndRuns(command) {
+  const parts = segments(command);
+  for (let i = 0; i < parts.length; i++) {
+    const file = downloadTarget(parts[i]);
+    if (!file) continue;
+    for (let j = i + 1; j < parts.length; j++) {
+      if (runsFile(parts[j], file)) return true;
+    }
+  }
+  return false;
+}
 var BASH_RULES = [
   {
     name: "secret exfiltration via shell",
@@ -518,6 +692,16 @@ var BASH_RULES = [
     scope: "command",
     check: (text) => pipesScriptIntoShell(text),
     why: "downloads and executes a script in one step"
+  },
+  {
+    name: "download and run",
+    scope: "command",
+    // The pipe rule above is the same download in ONE step. This is the
+    // same download in TWO: fetch it to a file, then run the file. The
+    // rules only ever looked at a pipe, so the two-step form was ordinary
+    // work - and it runs exactly the same downloaded script.
+    check: (text) => downloadsAndRuns(text),
+    why: "downloads a script to a file and then runs it"
   },
   // `git push` is ask-gated via permissions (`*` ask in the generated
   // config), not guard-blocked. Publishing needs human approval, but the
@@ -575,6 +759,11 @@ var WRITE_RULES = [
   {
     name: "write to a private key",
     test: /(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)\b/i,
+    // The PUBLIC half of a key pair is a file the user is meant to publish.
+    // The rule named the key FILES, and `id_rsa.pub` is one of them, so
+    // writing a public key - the ordinary thing to do with a key - was
+    // refused for a reason nobody could find.
+    unless: /(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)\.pub(\.[^/\\]*)?$/i,
     why: "private key material"
   }
 ];
@@ -642,10 +831,10 @@ function checkWrite(target, rules = WRITE_RULES, root = "") {
 
 // src/telemetry-store.ts
 import { appendFileSync, existsSync, mkdirSync, rmSync, statSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 var MAX_BYTES = 4 * 1024 * 1024;
 function logPath(dir) {
-  return join(dir, "telemetry.jsonl");
+  return join2(dir, "telemetry.jsonl");
 }
 function rotate(file, maxBytes = MAX_BYTES) {
   try {
@@ -670,13 +859,13 @@ function write(dir, record) {
 
 // src/project.js
 import { existsSync as existsSync2 } from "node:fs";
-import { dirname, join as join2, resolve } from "node:path";
+import { dirname as dirname2, join as join3, resolve } from "node:path";
 function projectRoot(directory, worktree) {
   const start = resolve(directory || worktree || ".");
   let dir = start;
   for (let i = 0; i < 64; i++) {
-    if (existsSync2(join2(dir, ".git"))) return dir;
-    const parent = dirname(dir);
+    if (existsSync2(join3(dir, ".git"))) return dir;
+    const parent = dirname2(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -759,7 +948,7 @@ function truncate(s, n = 200) {
 }
 var GuardPlugin = async ({ worktree, directory }) => {
   const project = projectRoot(directory, worktree);
-  const telemetryDir = join3(project, ".space");
+  const telemetryDir = join4(project, ".space");
   const refuse = (tool, rule, why, detail) => {
     write(telemetryDir, { kind: "guard", tool, rule });
     deny(why, detail);
@@ -770,7 +959,7 @@ var GuardPlugin = async ({ worktree, directory }) => {
         if (input.tool === "bash") {
           const raw = output.args?.workdir;
           if (typeof raw === "string" && raw.trim()) {
-            const target = raw.startsWith("~") ? join3(homedir2(), raw.slice(1)) : resolve2(project, raw);
+            const target = raw.startsWith("~") ? join4(homedir2(), raw.slice(1)) : resolve2(project, raw);
             if (!insideRoot(target, project) && !insideRoot(target, tmpdir2())) {
               refuse(
                 input.tool,
@@ -833,15 +1022,15 @@ var GuardPlugin = async ({ worktree, directory }) => {
 
 // src/profile.js
 import { readFileSync, existsSync as existsSync3, readdirSync } from "node:fs";
-import { dirname as dirname2, join as join4, resolve as resolve3 } from "node:path";
+import { dirname as dirname3, join as join5, resolve as resolve3 } from "node:path";
 import { homedir as homedir3 } from "node:os";
 import { fileURLToPath } from "node:url";
-var HERE = dirname2(fileURLToPath(import.meta.url));
+var HERE = dirname3(fileURLToPath(import.meta.url));
 function findRoot(start) {
   let dir = start;
   for (let i = 0; i < 12; i++) {
-    if (existsSync3(join4(dir, "profiles"))) return dir;
-    const parent = dirname2(dir);
+    if (existsSync3(join5(dir, "profiles"))) return dir;
+    const parent = dirname3(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -870,11 +1059,11 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [process.env.OPENCODE_HARNESS_PROFILES ?? join4(ROOT, "profiles")];
+  return [process.env.OPENCODE_HARNESS_PROFILES ?? join5(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
-    const full = join4(dir, `${id}.json`);
+    const full = join5(dir, `${id}.json`);
     if (existsSync3(full)) return full;
   }
   return null;
@@ -922,7 +1111,7 @@ function normalize(p) {
 var laneCache = null;
 function loadLanes() {
   if (laneCache) return laneCache;
-  const file = join4(ROOT, "lanes.json");
+  const file = join5(ROOT, "lanes.json");
   if (!existsSync3(file)) {
     throw new ProfileError(`lane table missing: ${file}`);
   }
@@ -945,7 +1134,7 @@ function laneMeta(name) {
 var retentionCache = null;
 function loadRetention() {
   if (retentionCache) return retentionCache;
-  const file = join4(ROOT, "retention.yml");
+  const file = join5(ROOT, "retention.yml");
   if (!existsSync3(file)) {
     retentionCache = { models: {}, defaults: {} };
     return retentionCache;
@@ -1358,10 +1547,10 @@ function worstRetention(ids) {
   return { retention, worst };
 }
 function configDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join4(homedir3(), ".config", "opencode");
+  return process.env.OPENCODE_CONFIG_DIR ?? join5(homedir3(), ".config", "opencode");
 }
 function configFilePath() {
-  return join4(configDir(), "opencode.jsonc");
+  return join5(configDir(), "opencode.jsonc");
 }
 function parseJsonc(text) {
   let out = "";
@@ -1452,11 +1641,11 @@ function profileIdFromConfig() {
 
 // src/prune.ts
 import { readFileSync as readFileSync2, existsSync as existsSync4 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 function activeProfileId(worktree) {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  const candidates = [join5(worktree, ".space", "active")];
+  const candidates = [join6(worktree, ".space", "active")];
   for (const f of candidates) {
     if (!f) continue;
     try {
@@ -1655,12 +1844,12 @@ var PrunePlugin = async ({ worktree, directory }) => {
   };
 };
 async function logPrune(worktree, profileId, stats) {
-  const dir = join5(worktree, ".space");
+  const dir = join6(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
     await appendFile(
-      join5(dir, "prune.jsonl"),
+      join6(dir, "prune.jsonl"),
       JSON.stringify({
         t: (/* @__PURE__ */ new Date()).toISOString(),
         profile: profileId,
@@ -1696,7 +1885,7 @@ function utilityModel(p) {
 
 // src/health.js
 import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync } from "node:fs";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
   const raw = process.env.HARNESS_SPENT_WINDOW_HOURS;
@@ -1726,7 +1915,7 @@ function liveUnhealthy(health, now = Date.now()) {
   return out;
 }
 function healthPath(dir) {
-  return join6(dir, ".space", "health.json");
+  return join7(dir, ".space", "health.json");
 }
 function readHealth(dir) {
   let parsed;
@@ -1746,7 +1935,7 @@ function readHealth(dir) {
 }
 function writeHealth(dir, health) {
   try {
-    if (!existsSync5(join6(dir, ".space"))) mkdirSync2(join6(dir, ".space"), { recursive: true });
+    if (!existsSync5(join7(dir, ".space"))) mkdirSync2(join7(dir, ".space"), { recursive: true });
     const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
     writeFileSync(healthPath(dir), JSON.stringify(pruned, null, 2));
   } catch {
@@ -1989,9 +2178,9 @@ function applySessionModel(cfg, profile, opts = {}) {
 }
 
 // src/telemetry.ts
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 var TelemetryPlugin = async ({ worktree, directory }) => {
-  const dir = join7(projectRoot(directory, worktree), ".space");
+  const dir = join8(projectRoot(directory, worktree), ".space");
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
@@ -2172,9 +2361,9 @@ var HarnessPlugin = async (ctx, options) => {
       applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(project) }), {
         sessionModel
       });
-      const dir = join8(project, ".space");
+      const dir = join9(project, ".space");
       mkdirSync3(dir, { recursive: true });
-      writeFileSync2(join8(dir, "active"), `${id}
+      writeFileSync2(join9(dir, "active"), `${id}
 `);
     } catch {
     }
