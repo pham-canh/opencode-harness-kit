@@ -280,6 +280,199 @@ test("the distinct outputs of a long session are bounded, newest first", async (
   assert.ok(line.savedChars > 0, "a real shrink must be reported as a saving")
 })
 
+/**
+ * A profiles directory of our own, so a test can set the knobs the kit's own
+ * profiles do not expose.
+ *
+ * @param {object} profile
+ * @returns {string}
+ */
+function ownProfiles(profile) {
+  const dir = mkdtemp("ock-prune-profiles-")
+  writeFileSync(join(dir, `${profile.id}.json`), JSON.stringify(profile, null, 2))
+  return dir
+}
+
+/**
+ * Run something with the kit looking at a profiles directory of our own.
+ *
+ * The override is process-wide, so it is put back exactly as it was - a test
+ * that leaves it behind would break every test that runs after it.
+ *
+ * @template T
+ * @param {string} dir
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function withProfiles(dir, fn) {
+  const previous = process.env.OPENCODE_HARNESS_PROFILES
+  process.env.OPENCODE_HARNESS_PROFILES = dir
+  try {
+    return await fn()
+  } finally {
+    if (previous === undefined) delete process.env.OPENCODE_HARNESS_PROFILES
+    else process.env.OPENCODE_HARNESS_PROFILES = previous
+  }
+}
+
+test("the ceiling on the distinct outputs bounds the reasoning that rides along with them", async () => {
+  // The rule keeps the newest copy of each DISTINCT output, and the ceiling
+  // is what keeps that from being a leak.
+  //
+  // The ceiling charged the budget for the TOOL parts only - but the rule
+  // keeps the WHOLE message, verbatim, every part in it. So every other part
+  // of a kept message rode along OUTSIDE the budget.
+  //
+  // A message with a 300 character tool output and a 4,000 character
+  // reasoning part cost the budget 300 and kept 4,300. With a 5,000
+  // character ceiling, twenty such messages kept 40,000 characters of
+  // reasoning the ceiling had already ruled out: the rule kept eight times
+  // its own budget, and the reasoning it carried along was exactly what the
+  // pruner exists to stub. There is no floor under which a reasoning part is
+  // left alone, and the ceiling is not one either.
+  const BUDGET = 5000
+  const profilesDir = ownProfiles({
+    id: "prune-ceiling",
+    provider: "opencode",
+    model: "minimax-m3.1-flash-free",
+    retention: "zero-retention",
+    limits: { context: 200000, output: 32000 },
+    prune: {
+      enabled: true,
+      keepRecentToolCalls: 1,
+      keepRecentTurns: 1,
+      keepUserMessages: true,
+      keepDistinctOutputs: true,
+      keepDistinctBudgetChars: BUDGET,
+    },
+  })
+
+  const dir = workspace("ock-prune-ceiling-")
+  writeFileSync(join(dir, ".space", "active"), "prune-ceiling\n")
+  const hooks = await pruneHooks(dir)
+
+  const messages = []
+  for (let i = 0; i < 20; i++) {
+    messages.push({
+      info: { id: `m${i}`, role: "assistant", time: { created: 1789000000000 + i } },
+      parts: [
+        {
+          id: `prt_reason_${i}`,
+          sessionID: "ses_test",
+          messageID: `m${i}`,
+          type: "reasoning",
+          text: "R".repeat(4000),
+          time: { start: 1789000000000, end: 1789000000100 },
+        },
+        {
+          id: `prt_tool_${i}`,
+          sessionID: "ses_test",
+          messageID: `m${i}`,
+          type: "tool",
+          callID: `call_${i}`,
+          tool: "bash",
+          state: {
+            status: "completed",
+            // A DIFFERENT input on every call, so every output is distinct.
+            input: { command: `pytest -q ${i}` },
+            output: "T".repeat(300),
+            title: "bash",
+            metadata: {},
+            time: { start: 1789000000000, end: 1789000000100 },
+          },
+        },
+      ],
+    })
+  }
+
+  const before = JSON.stringify(messages).length
+  await withProfiles(profilesDir, async () => {
+    await hooks["experimental.chat.messages.transform"]({}, { messages })
+  })
+  const after = JSON.stringify(messages).length
+
+  // The prunable span: the messages the pruner is allowed to touch. The last
+  // keepRecentTurns messages are off limits by the file's own invariant, so
+  // whatever reasoning survives in them is not the rule's doing.
+  const prunable = messages.slice(0, messages.length - 1 - 1)
+  const verbatimReasoning = prunable.reduce(
+    (n, m) =>
+      n +
+      m.parts
+        .filter((p) => p.type === "reasoning")
+        .reduce(
+          (k, p) =>
+            k + (String(p.text).startsWith("[reasoning] dropped") ? 0 : String(p.text).length),
+          0,
+        ),
+    0,
+  )
+
+  assert.ok(
+    verbatimReasoning <= BUDGET,
+    `the distinct rule kept ${verbatimReasoning} characters of reasoning outside its ${BUDGET} character ceiling`,
+  )
+  assert.ok(
+    after < before / 2,
+    `the request barely shrank: ${before} -> ${after} chars`,
+  )
+
+  const line = lastPruneLine(dir)
+  assert.equal(line.savedChars, before - after, "the reported saving is not the real delta")
+  assert.ok(line.savedChars > 0, "a real shrink must be reported as a saving")
+})
+
+test("a profile that cannot be loaded is reported, not swallowed", async () => {
+  // The pruner resolves its profile once per request, and a lookup that
+  // throws left the profile null - which disables the pruner. The catch was
+  // empty, so nothing said so: no line in the log, nothing on the console,
+  // and nothing to show the user why the context kept growing.
+  //
+  // A project whose marker names a renamed or missing profile was in exactly
+  // that state, and could not tell the difference between "the pruner has
+  // nothing to do" and "the pruner is broken".
+  //
+  // The catch around the transform below logs when a prune FAILS. This one
+  // did not, and that was the inconsistency.
+  const dir = workspace("ock-prune-broken-profile-")
+  writeFileSync(join(dir, ".space", "active"), "no-such-profile\n")
+  const hooks = await pruneHooks(dir)
+
+  const messages = []
+  for (let i = 0; i < 10; i++) {
+    messages.push(toolMessage(`m${i}`, "x".repeat(4000), { command: `pytest -q ${i}` }))
+  }
+
+  const before = JSON.stringify(messages).length
+  const said = []
+  const original = console.error
+  console.error = (...args) => {
+    said.push(args.map(String).join(" "))
+    original(...args)
+  }
+  try {
+    await hooks["experimental.chat.messages.transform"]({}, { messages })
+  } finally {
+    console.error = original
+  }
+  const after = JSON.stringify(messages).length
+
+  // Nothing was pruned - the profile could not be loaded, so the pruner
+  // stayed out of the way. That is the safe half.
+  assert.equal(after, before, "a broken profile must not make the pruner guess")
+  // And the other half: the user is told, once, and the message names the
+  // profile so the fix is obvious.
+  const line = said.find((s) => s.includes("prune disabled"))
+  assert.ok(
+    line,
+    `the pruner turned itself off without saying so (console said: ${JSON.stringify(said)})`,
+  )
+  assert.ok(
+    line.includes("no-such-profile"),
+    `the report does not name the profile that failed: ${line}`,
+  )
+})
+
 // --------------------------------------------------------------------------
 // The task file: every task survives a rewrite, and every status is kept
 // --------------------------------------------------------------------------

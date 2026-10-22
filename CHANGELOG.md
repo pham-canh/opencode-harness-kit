@@ -14,6 +14,71 @@ is not happening.
 
 ## [Unreleased]
 
+### Added
+
+- **`oc-harness research` — the half of the perishable-tier question nobody
+  was answering.** `doctor` says whether the model you depend on is still
+  there. It said nothing about what has come to replace it, so a withdrawal
+  left a hole only a person could fill, by hand, out of a catalogue dump.
+
+  The new command reads the live catalogue and reports the models in use that
+  have been withdrawn — split into the ones that are a profile's own base
+  model and the ones that are a rung in a lane chain — then the lanes of the
+  default profile with a count of the rungs still alive in each, then the
+  candidates: live, free models the kit does not use yet, each with its
+  context window, its output cap, the effort levels it publishes, and **which
+  lanes it could serve**.
+
+  "Which lanes it could serve" is the part that makes a candidate usable
+  rather than merely interesting. Every lane needs tool calls, the `vision`
+  lane needs a model that takes an image, and a lane whose role asks for
+  `max` needs a model that publishes `max`. A model that publishes no effort
+  levels at all counts as a match, because there is nothing to mismatch.
+
+  The logic lives in one file, [`src/research.js`](src/research.js), with no
+  I/O in it, and the command is a thin layer over it.
+
+  **It writes nothing** — not `retention.yml`, not a profile, not the config.
+  That is the line `refresh` draws, for the same reason: `retention.yml` is a
+  human judgement about a provider's terms, and no script can read a
+  provider's terms and come back with a privacy verdict. A candidate with no
+  verdict is reported as `retention: unknown` and carries an explicit blocker
+  rather than being quietly filed under whichever tier it is cheapest on. The
+  output is a shortlist to argue with, not a decision to accept.
+
+  `research --json` prints one parseable object and nothing else, so a
+  scheduler can read it.
+
+### Fixed
+
+- **`doctor` reported a withdrawn model as a healthy fallback.** The chain
+  check asked whether the model was still *in* the catalogue. models.dev does
+  not delete a model the provider pulls: it keeps the record and marks it
+  `status: "deprecated"`. So "is it still there" and "can it still run" are
+  two different questions, and the kit's own default fleet carried a dead
+  fallback rung in **all ten lanes** while `doctor` called it healthy. The
+  message it printed already said "withdrawn" — only the filter was wrong,
+  which is exactly why the dead rung stayed invisible.
+
+- **The pruner's ceiling on the distinct outputs did not bound what it kept.**
+  The rule keeps the newest copy of each distinct output, and the ceiling on
+  that is what stops it being a leak. But the ceiling charged the budget for
+  the *tool* parts only, while the rule keeps the *whole message*, verbatim,
+  every part in it. A message with a 300-character tool output and a
+  4,000-character reasoning part therefore cost the budget 300 and kept
+  4,300, and twenty such messages kept 40,000 characters of reasoning under a
+  5,000-character ceiling — eight times the budget, carrying exactly the
+  reasoning the pruner exists to stub. The ceiling now charges what the rule
+  actually keeps.
+
+- **A profile that could not be loaded turned the pruner off without a word.**
+  The lookup sat in an empty `catch`, so a marker naming a renamed or missing
+  profile left the pruner disabled with no line in the log, nothing on the
+  console, and nothing to show the user why their context kept growing. A
+  project in that state could not tell the difference between "the pruner has
+  nothing to do" and "the pruner is broken". The failure is now reported once
+  per session, by name.
+
 - **The demo video is not published with the repository.** The newer take —
   thirty seconds, made on a machine with no screen, the terminal in it the
   real output of the real commands — was under `docs/demo/` for the 0.5.8
