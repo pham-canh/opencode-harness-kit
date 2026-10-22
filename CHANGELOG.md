@@ -17,7 +17,7 @@ is not happening.
 Not yet published. The tag is what cuts it: `git tag v0.5.8 && git push origin
 main v0.5.8`, and the publish job watches for exactly that.
 
-A minor: one new command, and ten silent failures closed.
+A minor: one new command, and eleven silent failures closed.
 
 ### Added
 
@@ -40,6 +40,13 @@ A minor: one new command, and ten silent failures closed.
 
   `init` is unchanged. It is the front door for a person, and it still says
   so when there is no terminal to ask on.
+
+- **A demo whose numbers are current.** `docs/demo/audit.mp4` — thirty
+  seconds, made on a machine with no screen, no camera and no ffmpeg: the
+  scene is drawn by a browser, the terminal in it is the real output of the
+  real commands, and the narration is on the frame. It names the numbers of
+  this release. The older `pitch.mp4` stays where it was — a live recording
+  from a Mac, with a voice — and the README now says which is which.
 
 ### Fixed
 
@@ -144,6 +151,13 @@ A minor: one new command, and ten silent failures closed.
   instead. The report then described a database nobody asked about. Both
   spellings work now, and a `--db` with no value is refused instead of
   crashing.
+
+- **`doctor --check-models` reported a profile it never checked.** A profile
+  that could not be read was skipped without a word, and the run then said
+  every shipped model was still in the catalogue - so a profile that was NEVER
+  CHECKED was reported as one that was checked and found fine. It is the same
+  hole `refresh --all` had, in the one place that runs from a cron. The
+  skipped profiles are named now, and the run fails.
 
 ### Changed
 

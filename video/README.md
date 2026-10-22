@@ -22,9 +22,39 @@ deleted — is not something a demo of winning numbers would have shown.
 | | |
 |---|---|
 | `narration.txt` | the voiceover of the published video, in beats, with `[[slnc N]]` pauses that hold the voice against the screen |
-| `../docs/demo/pitch.mp4` | the published file |
+| `../docs/demo/pitch.mp4` | the published file — 4:47, a live recording from a Mac terminal, with a voice |
+| `../docs/demo/audit.mp4` | the newer file — 30s, made on a machine with no screen: the scene is drawn by a browser, the terminal in it is the real output of the real commands, and the narration is on the frame |
 | `../docs/demo-loop.gif` | the short loop on the README's front page |
 | `legacy/` | the first dubbing pipeline, kept because its notes explain the timing method |
+
+## The newer demo, and how it was made
+
+`docs/demo/audit.mp4` is the one whose numbers are current. It was made on a
+Linux box with no camera, no microphone and no ffmpeg, with the recorder that
+lives one directory up:
+
+```sh
+python3 ../tools/loom/rec/build.py  --spec video/takes/audit.json
+python3 ../tools/loom/rec/verify.py video/build/audit.mp4 --frames 2,10,20
+```
+
+The take names the commands; `build.py` runs them when the video is built and
+types what they printed onto the screen. Nothing in it is a transcript
+somebody wrote out. The gate is the second command: it decodes the take, pulls
+frames out of it, and looks at them — a frame with no spread in its pixels is
+a frame that shows nothing, and the take fails.
+
+**There is no voice on this one, and that is the rule of the machine, not a
+choice.** `say` is macOS, and a headless Linux box has no espeak, no festival
+and no cloud TTS — so the words go on the frame, one caption at a time, and
+the take still says what it is about. The published `pitch.mp4` above has a
+voice because it was made on a Mac, where there was one.
+
+The take is local and so is the video it makes. `video/takes/` and
+`video/build/` are gitignored: a take is about one machine and one moment.
+Publishing a video is a separate act — `docs/demo/audit.mp4` is the one that
+was published, deliberately, at 692 KB, well under the 12 MB that a
+repository accepts for a large file on its first push.
 
 ## Recording on a machine with no screen
 

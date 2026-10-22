@@ -2412,17 +2412,26 @@ function recordWithdrawal(model, profiles) {
  * chain has one fewer rung, and nobody is told.
  *
  * @param {any} catalog
- * @returns {Map<string, string[]>} the model ids that are gone, and the
- *   profiles that used each one
+ * @returns {{gone: Map<string, string[]>, skipped: {id: string, why: string}[]}}
+ *   the model ids that are gone and the profiles that used each one, and the
+ *   profiles that could not be checked at all
  */
 function withdrawnModels(catalog) {
   /** @type {Map<string, string[]>} the model, and the profiles that use it */
   const gone = new Map()
+  // The profiles that could not be read. They used to disappear without a
+  // word - the check was a `continue` with no output - and the summary then
+  // said every shipped model was still in the catalogue. So a profile that
+  // was NEVER CHECKED was reported as a profile that was checked and found
+  // fine. A skipped profile is a failure, not a footnote.
+  /** @type {{id: string, why: string}[]} */
+  const skipped = []
   for (const id of listProfileIds()) {
     let p
     try {
       p = loadProfile(id)
-    } catch {
+    } catch (err) {
+      skipped.push({ id, why: err instanceof Error ? err.message : String(err) })
       continue
     }
     for (const model of new Set([
@@ -2439,7 +2448,7 @@ function withdrawnModels(catalog) {
       gone.set(model, users)
     }
   }
-  return gone
+  return { gone, skipped }
 }
 
 /**
@@ -2460,13 +2469,20 @@ async function cmdDoctorWatch() {
   // times a second.
   const interval = Math.max(30, positiveNumber(opt("--interval"), 300))
   const seen = new Set()
+  // The profiles that could not be checked, so the watch says them once and
+  // not every poll.
+  const seenSkipped = new Set()
   let first = true
   for (;;) {
     /** @type {Map<string, string[]>} */
     let gone = new Map()
+    /** @type {{id: string, why: string}[]} */
+    let skipped = []
     try {
       const catalog = await fetchCatalog()
-      gone = withdrawnModels(catalog)
+      const found = withdrawnModels(catalog)
+      gone = found.gone
+      skipped = found.skipped
     } catch (err) {
       // A failed fetch is NOT an empty catalogue. Treating it as one
       // announced every missing model as "is back", emptied the seen-set,
@@ -2485,6 +2501,14 @@ async function cmdDoctorWatch() {
       console.log(stamp(`    fix: oc-harness doctor && oc-harness refresh <profile>`))
       recordWithdrawal(m, users.join(","))
     }
+    for (const s of skipped) {
+      if (seenSkipped.has(s.id)) continue
+      seenSkipped.add(s.id)
+      console.error(red(`  ${s.id} could not be checked against the catalogue: ${s.why}`))
+      console.error(
+        stamp("    a profile that was skipped was not checked. Its model may have been withdrawn without anyone noticing."),
+      )
+    }
     if (!first) {
       for (const m of seen) {
         if (!current.has(m)) {
@@ -2500,6 +2524,15 @@ async function cmdDoctorWatch() {
           red(`  ${gone.size} shipped model(s) are gone: ${[...gone.keys()].join(", ")}`),
         )
         console.error(stamp(`  recorded in ${join(CONFIG_DIR, WITHDRAWN_LOG)}`))
+        process.exit(1)
+      }
+      // A profile that could not be read is a profile that was not checked.
+      // The run above says "every shipped model is still in the catalogue",
+      // and that sentence is only true of the profiles it actually looked at.
+      if (skipped.length) {
+        console.error(
+          red(`  ${skipped.length} profile(s) could not be checked: ${skipped.map((s) => s.id).join(", ")}`),
+        )
         process.exit(1)
       }
       console.log(green("  every shipped model is still in the catalogue"))
