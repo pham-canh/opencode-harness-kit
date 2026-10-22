@@ -14,6 +14,27 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-22
+
+Published. The tag is what cut it: `git tag v0.6.0 && git push origin
+main v0.6.0`, and the publish job watches for exactly that.
+
+A minor: a command for the half of the perishable-tier question nobody was
+answering, and the fix that made it answerable.
+
+The free tier turns over in days. `doctor` said whether the model you depend
+on was still there; it said nothing about what had come to replace it, so a
+withdrawal left a hole only a person could fill by hand out of a catalogue
+dump. `research` fills the hole with a shortlist, and `refresh` takes the
+dead rung out of the chain it was in.
+
+Two of the bugs here were the same bug wearing different clothes: a check
+that asked "is this model still IN the catalogue" and called the answer
+"yes, it can run". models.dev does not delete a model the provider pulls - it
+keeps the record and marks it `status: "deprecated"`. So this kit's own
+default fleet was carrying a dead fallback rung in **all ten lanes** while
+`doctor` called it healthy.
+
 ### Added
 
 - **`refresh` now takes the dead rung out.** `research` tells you a rung is
