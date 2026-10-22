@@ -1719,14 +1719,21 @@ var PrunePlugin = async ({ worktree, directory }) => {
     threshold: 0
   };
   let cached = null;
+  let reportedFailure = false;
   const resolve4 = () => {
     if (cached) return cached;
     let profile = null;
     try {
       const id = activeProfileId(project);
       if (id) profile = loadProfile(id);
-    } catch {
+    } catch (err) {
       profile = null;
+      if (!reportedFailure) {
+        reportedFailure = true;
+        console.error(
+          `[opencode-harness-kit] prune disabled: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
     }
     if (!profile?.prune?.enabled) return DISABLED;
     const threshold = pruneThreshold(profile);
@@ -1795,6 +1802,10 @@ var PrunePlugin = async ({ worktree, directory }) => {
               added += partSize(part);
             }
             if (added === 0) continue;
+            added = (msg.parts ?? []).reduce(
+              (n, p) => n + partSize(p),
+              0
+            );
             if (kept + added > distinctBudget) break;
             kept += added;
             keepToolMessageIds.add(msg.info?.id ?? String(i));

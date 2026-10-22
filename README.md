@@ -281,7 +281,7 @@ withdrawn, and one of them was the **default** at the time:
 The full list, with a reason for each, is in
 [`profiles/index.json`](profiles/index.json).
 
-### The four commands, and when each one runs
+### The five commands, and when each one runs
 
 | command | what it checks | when |
 |---|---|---|
@@ -289,6 +289,7 @@ The full list, with a reason for each, is in
 | `oc-harness doctor` | every profile against the live model catalogue, and the installed config against the active profile | **before every release**, and whenever a lane starts failing with a 429 or a "model not found" |
 | `oc-harness doctor --check-models` | one run, non-zero when a shipped model is no longer in the catalogue | from cron: the shape a scheduler wants |
 | `oc-harness doctor --watch` | keeps watching, and reports only what **changed** | leave it in a terminal for a week |
+| `oc-harness research` | what could **replace** a withdrawn model, and which lanes each candidate could serve | when `doctor` reports a withdrawal, and from cron before it happens |
 | `oc-harness refresh <id>` | re-derives a profile's machine-derived fields from live metadata | when `doctor` reports drift |
 | `oc-harness verify` | the installed config still matches the profile, and the kit's own files are still installed | after every `use` / `install` |
 
@@ -351,6 +352,138 @@ out to be. A lane is never left without one.
 See [docs/KNOWN-LIMITS.md](docs/KNOWN-LIMITS.md) for the rest of what this
 tier cannot do.
 
+### Research: what can replace the model that just died
+
+`doctor` answers one half of the question a perishable tier forces on you:
+**is the model I depend on still there?** The other half is **what is there
+instead** — and nobody was answering that half, so a withdrawal left a hole
+only a person could fill, by hand, out of a catalogue dump.
+
+`oc-harness research` is that half, and it is a file:
+[`src/research.js`](src/research.js).
+
+```
+$ oc-harness research
+
+research  tier opencode, 10 live of 46 free
+
+  gone  1 model(s) in use have been withdrawn
+
+      ✗ longcat-2.5-preview-free
+        withdrawn from the provider - the catalogue keeps the record and marks it deprecated
+        base model of longcat-2.5-preview-free
+        fallback rung in fleet-all: build, plan, locate, vision, doc, sweep, longform
+        fallback rung in fleet-safe: build, plan, reviewer, locate, verify, vision, doc, schema, sweep, longform
+
+  lanes
+      build         2 live 1 dead (longcat-2.5-preview-free)
+      plan          2 live 1 dead (longcat-2.5-preview-free)
+      reviewer      2 live 1 dead (longcat-2.5-preview-free)
+      ...
+
+  candidates  live, free, and not in use yet
+
+      flint-40b-free  ctx 262,144  out 65,536  effort low,medium,high,xhigh,max
+        fits: plan, build, reviewer, locate, verify, doc, schema, sweep, longform
+        retention: unknown
+        no retention verdict in retention.yml - a person has to read the provider's terms
+
+  nothing here is written anywhere. A retention verdict is a person reading a provider's terms.
+```
+
+It reports four things:
+
+1. **The models in use that have been withdrawn**, split into the ones that are
+   a profile's own base model and the ones that are a rung in a lane chain. A
+   dead base model means that profile does nothing; a dead chain rung is a
+   fallback that fails on the day it is needed.
+2. **The lanes of the default profile**, each with how many rungs of its chain
+   are still alive. A lane with zero live rungs is a lane with no model.
+3. **The candidates** — live, free models the kit does not use yet, each with
+   its context window, its output cap, the effort levels it publishes, and
+   **which lanes it could serve**.
+4. **What is still undecided** about each candidate.
+
+#### Why the candidate list knows about lanes
+
+A model is not "better" or "worse" in the abstract. It is better or worse
+**for a lane**, and the lanes are not asking for the same thing:
+
+| what the lane needs | why |
+|---|---|
+| tool calls | every lane calls tools, so every lane needs a model that can |
+| an image in | the `vision` lane reads an image, so it needs a model that takes one |
+| a published effort level | a lane whose role asks for `max` needs a model that publishes `max` |
+
+So `research` matches each candidate against each lane, and a model that
+publishes **no** effort levels counts as a match rather than a failure: there
+is nothing to mismatch, and the kit already puts such models in the chains of
+lanes that ask for one.
+
+#### The line the script does not cross
+
+`research` **writes nothing**. Not `retention.yml`, not a profile, not the
+config.
+
+That is the same line `refresh` draws, and it is drawn for the same reason:
+`retention.yml` is a human judgement about a provider's terms — whether your
+prompts are kept, and whether they train on them. A machine cannot read a
+provider's terms of service and come back with a privacy verdict. So a
+candidate with no verdict is reported as `retention: unknown` and carries an
+explicit blocker, rather than being quietly filed under the tier it happens to
+be cheapest on.
+
+The output is a shortlist to argue with, not a decision to accept. When you
+have read the terms and made the call, `retention.yml` is where the call
+lives, and `doctor` checks the rest.
+
+#### Run it on a schedule
+
+```cron
+0 9 * * * cd ~/.config/opencode && oc-harness doctor --check-models
+30 9 * * * cd ~/.config/opencode && oc-harness research
+```
+
+The first line says a route died. The second says what to do about it, and it
+runs half an hour later because by then you have had a cup of coffee and the
+answer is a decision, not an alarm.
+
+`research --json` prints one parseable object and nothing else, so a script
+can read it:
+
+```json
+{
+  "ok": true,
+  "tier": { "provider": "opencode", "total": 46, "live": 10, "withdrawn": 36 },
+  "shipped": { "count": 9, "gone": [ { "id": "longcat-2.5-preview-free", "present": true } ] },
+  "lanes": [ { "lane": "build", "dead": ["longcat-2.5-preview-free"], "live": ["minimax-m3.1-flash-free"] } ],
+  "candidates": [ { "id": "flint-40b-free", "fits": ["build"], "retention": "unknown", "blockers": ["..."] } ]
+}
+```
+
+#### One thing the catalogue does that a naive check misses
+
+**A withdrawn model stays in the catalogue.** models.dev does not delete a
+model the provider pulls — it keeps the record and marks it
+`status: "deprecated"`. So "is it still in the catalogue" and "can it still
+run" are two different questions, and a check that asks the first one reports
+a dead model as a healthy fallback.
+
+That is not hypothetical. This kit's own default fleet carried a dead fallback
+rung in **all ten lanes**, and `doctor` called it healthy, because the chain
+check asked whether the model was still present. It now asks whether it is
+still alive, and it says so:
+
+```
+! fleet-safe                       drift
+    lane build: longcat-2.5-preview-free withdrawn, falls back to minimax-m3.1-flash-free
+```
+
+**Free is a price, not a name.** The tier is the set of models the provider
+charges nothing for. `big-pickle` is on it and does not end in `-free`, so
+the suffix is a naming convention and not the test — `research` reads the
+price.
+
 ## Requirements
 
 | | |
@@ -358,9 +491,9 @@ tier cannot do.
 | Node | **22 or newer** — `engines` in package.json, and the CLI uses `node:` prefixed builtins. Node 20 fails at import time, not with a friendly message. |
 | npm | 10 or newer, for `npm ci` when installing from a checkout |
 | OS | macOS, Linux and Windows. The tests run on `ubuntu-latest`. |
-| Shell | none needed to *use* the kit — no `bash`, `zsh` or `fish` setup. `doctor` and `refresh` call `curl` to read models.dev. `baseline` and the measurement scripts read the install database with `sqlite3`, and fall back to python3's own `sqlite3` module when that binary is not installed — so python3 is the one thing to have. Everything else, including `install`, `use` and `verify`, works offline. |
-| Network | only `doctor` and `refresh` need it, and only to read the live model catalogue. `list` is offline: it reads the shipped profiles. Everything else works offline. |
-| Disk | `use` and `install` write into `~/.config/opencode/` and nothing else. `doctor` writes nothing. `refresh` rewrites a profile in the kit's own
+| Shell | none needed to *use* the kit — no `bash`, `zsh` or `fish` setup. `doctor`, `refresh` and `research` call `curl` to read models.dev. `baseline` and the measurement scripts read the install database with `sqlite3`, and fall back to python3's own `sqlite3` module when that binary is not installed — so python3 is the one thing to have. Everything else, including `install`, `use` and `verify`, works offline. |
+| Network | only `doctor`, `refresh` and `research` need it, and only to read the live model catalogue. `list` is offline: it reads the shipped profiles. Everything else works offline. |
+| Disk | `use` and `install` write into `~/.config/opencode/` and nothing else. `doctor` writes nothing. `research` writes nothing — it is a report, not a migration. `refresh` rewrites a profile in the kit's own
 directory - `node_modules` for an npm install - and keeps a backup of the
 one it replaced. |
 

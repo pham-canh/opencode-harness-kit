@@ -191,6 +191,10 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
   // retried on the next request, so a project whose marker appears later
   // still gets pruning.
   let cached: Resolved | null = null
+  // A broken profile is reported once per session, not once per request:
+  // only a SUCCESSFUL lookup is cached, so a failing one is retried on every
+  // request and would otherwise fill the console with the same line.
+  let reportedFailure = false
 
   const resolve = (): Resolved => {
     if (cached) return cached
@@ -198,8 +202,24 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
     try {
       const id = activeProfileId(project)
       if (id) profile = loadProfile(id)
-    } catch {
+    } catch (err) {
       profile = null
+      if (!reportedFailure) {
+        reportedFailure = true
+        // A profile that cannot be loaded is not a reason to prune silently.
+        //
+        // The catch around the transform below logs when a prune FAILS, and
+        // this one did not: a marker pointing at a renamed or missing
+        // profile turned the pruner off with no line in the log, nothing on
+        // the console, and nothing to show the user why the context kept
+        // growing. A project in that state cannot tell the difference
+        // between "the pruner has nothing to do" and "the pruner is broken".
+        console.error(
+          `[opencode-harness-kit] prune disabled: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      }
     }
     if (!profile?.prune?.enabled) return DISABLED
     const threshold = pruneThreshold(profile)
@@ -303,6 +323,23 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
               added += partSize(part)
             }
             if (added === 0) continue
+            // The ceiling has to charge what the rule actually KEEPS, and the
+            // rule keeps the WHOLE message - every part in it, verbatim
+            // (see the keepToolMessageIds branch in the main loop).
+            //
+            // Charging only the tool parts left the rest of the message free:
+            // a message with a 300 character tool output and a 4,000
+            // character reasoning part cost the budget 300 and kept 4,300.
+            // With a 5,000 character ceiling, twenty such messages kept
+            // 40,000 characters of reasoning the ceiling had already ruled
+            // out - the rule kept eight times its own budget, and the
+            // reasoning it carried along was exactly what the pruner exists
+            // to stub. There is no floor under which a reasoning part is
+            // left alone, and the ceiling is not one either.
+            added = (msg.parts ?? []).reduce(
+              (n: number, p: any) => n + partSize(p),
+              0,
+            )
             // The ceiling. The walk is newest-first, so what the agent is
             // working with survives and what the session touched at the start
             // is stubbed like everything else.

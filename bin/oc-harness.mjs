@@ -47,6 +47,7 @@ import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin,
 import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
 import { planEffort } from "../src/effort.js"
 import { findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
+import { researchModels, isWithdrawn } from "../src/research.js"
 import { main as trustMain } from "../src/trust.js"
 
 const CONFIG_DIR =
@@ -2594,6 +2595,111 @@ async function cmdDoctor() {
 // second doctor in the same process does not inherit the first one's findings.
 const doctorReport = { ok: true, problems: 0, drift: 0, strict: false, findings: [], json: false }
 
+/**
+ * Research the live tier for models the kit could use.
+ *
+ * `doctor` says when a model has gone. This says what has come to replace
+ * it, and what is still a person's decision.
+ *
+ * It writes nothing. The shortlist it prints is a list to argue with, not a
+ * list to accept: `retention` is a judgement about a provider's terms, and
+ * that is the one field a script must not fill in.
+ */
+async function cmdResearch() {
+  const wantJson = flag("--json")
+  let catalog
+  try {
+    catalog = await fetchCatalog()
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err), wantJson)
+  }
+
+  // A profile that cannot be read is `doctor`'s finding, not this command's.
+  // Research is about the tier, so a broken profile is left out of the
+  // comparison rather than failing the whole report.
+  const profiles = []
+  for (const id of listProfileIds()) {
+    try {
+      profiles.push(loadProfile(id))
+    } catch {
+      // doctor reports this, with the profile's own name on it.
+    }
+  }
+
+  const report = researchModels({
+    catalog,
+    profiles,
+    retentionOf: (model) => modelRetention(model),
+    defaultProfileId: index().default ?? null,
+  })
+
+  if (wantJson) {
+    console.log(JSON.stringify({ ok: true, ...report }, null, 2))
+    return
+  }
+
+  console.log(
+    `\n${bold("research")}  ${stamp(`tier ${report.tier.provider}, ${report.tier.live} live of ${report.tier.total} free`)}\n`,
+  )
+
+  // The models the kit uses that the provider has pulled. This is the part
+  // that has to be acted on, so it comes first.
+  if (report.shipped.gone.length) {
+    console.log(`  ${red("gone")} ${report.shipped.gone.length} model(s) in use have been withdrawn\n`)
+    for (const g of report.shipped.gone) {
+      console.log(`      ${red("✗")} ${g.id}`)
+      console.log(`        ${g.reason}`)
+      if (g.asBase.length) {
+        console.log(`        ${stamp("base model of")} ${g.asBase.join(", ")}`)
+      }
+      for (const [profile, laneList] of Object.entries(g.inChains ?? {})) {
+        console.log(`        ${stamp("fallback rung in")} ${profile}: ${laneList.join(", ")}`)
+      }
+    }
+    console.log("")
+  } else {
+    console.log(`  ${green("✓")} every model in use is still live\n`)
+  }
+
+  // Per lane: which rungs of its chain are alive. A lane whose whole chain
+  // has gone is a lane with no fallback at all.
+  if (report.lanes.length) {
+    console.log(`  ${bold("lanes")}`)
+    for (const l of report.lanes) {
+      const dead = l.dead.length
+        ? yellow(` ${l.dead.length} dead (${l.dead.join(", ")})`)
+        : green(" 0 dead")
+      console.log(`      ${l.lane.padEnd(12)} ${String(l.live.length).padStart(2)} live${dead}`)
+    }
+    console.log("")
+  }
+
+  // The shortlist. What each candidate can do, which lanes it could serve,
+  // and what is still undecided about it.
+  if (!report.candidates.length) {
+    console.log(`  ${stamp("no live free model outside the ones the kit already uses")}\n`)
+    return
+  }
+  console.log(`  ${bold("candidates")} ${stamp("live, free, and not in use yet")}\n`)
+  for (const c of report.candidates) {
+    const effort = c.effort.length ? c.effort.join(",") : "none published"
+    console.log(
+      `      ${bold(c.id)}  ${stamp(
+        `ctx ${Number(c.context).toLocaleString("en-US")}  out ${Number(c.output).toLocaleString("en-US")}  effort ${effort}`,
+      )}`,
+    )
+    console.log(`        fits: ${c.fits.length ? c.fits.join(", ") : "no lane on its own terms"}`)
+    console.log(
+      `        ${c.retention === "unknown" ? yellow("retention: unknown") : stamp(`retention: ${c.retention}`)}`,
+    )
+    for (const b of c.blockers) console.log(`        ${yellow(b)}`)
+    console.log("")
+  }
+  console.log(
+    `  ${stamp("nothing here is written anywhere. A retention verdict is a person reading a provider's terms.")}\n`,
+  )
+}
+
 async function runDoctor(catalog) {
   const retention = loadRetention().models
   const ids = listProfileIds()
@@ -2641,7 +2747,16 @@ async function runDoctor(catalog) {
     // with no model at all, which no amount of `refresh` on the base profile
     // would reveal.
     for (const [lane, chain] of Object.entries(chainOf(p))) {
-      const alive = chain.filter((rung) => catalog?.[p.provider]?.models?.[rung])
+      // A withdrawn model is still IN the catalog: models.dev keeps the
+      // record and marks it deprecated rather than deleting it. So "is it
+      // still there" is not the same question as "can it still run", and
+      // asking the first one reported a dead model as a healthy fallback.
+      // The message below always said "withdrawn" - only the filter was
+      // wrong, which is why the fleet's dead rung stayed invisible.
+      const alive = chain.filter((rung) => {
+        const record = catalog?.[p.provider]?.models?.[rung]
+        return record && !isWithdrawn(record)
+      })
       if (!alive.length) {
         issues.push(red(`lane ${lane}: every model in its chain has left the catalog`))
       } else if (alive.length < chain.length) {
@@ -3142,6 +3257,9 @@ try {
       if (flag("--watch") || flag("--check-models")) await cmdDoctorWatch()
       else await cmdDoctor()
       break
+    case "research":
+      await cmdResearch()
+      break
     case "baseline":
       await import("./baseline.mjs")
       break
@@ -3174,6 +3292,8 @@ try {
     lanes         report which lanes the fleet actually used
     trust         set up npm trusted publishing for this package
     doctor    re-check profiles against models.dev and the installed config
+    research  find the live free models the kit could use, and the ones in
+              use that have been withdrawn
     upgrade   check for a newer kit, refresh the profiles, rewrite the config
     backups   the configs that were replaced, newest first
     uninstall remove the plugin, prompts, skills and GLOBAL.md again
@@ -3191,8 +3311,8 @@ try {
     --strict       doctor: fail on perishable catalogue drift too
     --watch        doctor: keep watching the catalogue, report what disappeared
     --check-models doctor: one run, non-zero when a shipped model is gone
-    --json        doctor, show, lanes, auto: print the machine-readable form,
-                  and nothing else
+    --json        doctor, show, lanes, auto, research: print the
+                  machine-readable form, and nothing else
     --offline     auto: skip the refresh, for a machine that cannot reach
                   models.dev
     --hook        install: also install the pre-commit hook into this
