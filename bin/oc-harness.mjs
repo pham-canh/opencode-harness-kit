@@ -64,10 +64,22 @@ const has = (f) => args.includes(f)
  * the second one is the conventional one. Reading only the first form made
  * `--profile=fleet-safe` look like a flag with a missing value, which is a
  * confusing way to be told you got the syntax wrong.
+ *
+ * A value that is itself a flag is NOT a value. `oc-harness run --role
+ * --max-rounds 5` used to set the role to the literal string "--max-rounds",
+ * and the loop then ran `opencode run --agent --max-rounds ...`, which failed
+ * on every round and marked every task blocked. The typo was silent because
+ * the value was plausible. There is no way to spell a value that starts with
+ * `--`, and there never needs to be: no flag of this CLI takes one.
  */
 const opt = (f) => {
   const i = args.indexOf(f)
-  if (i >= 0) return args[i + 1]
+  if (i >= 0) {
+    const next = args[i + 1]
+    // A missing value, or the next flag. Both mean the flag was not given
+    // what it needs - which is a typo, not an empty value.
+    return next === undefined || next.startsWith("--") ? undefined : next
+  }
   const inline = args.find((a) => a.startsWith(`${f}=`))
   return inline === undefined ? undefined : inline.slice(f.length + 1)
 }
@@ -109,7 +121,11 @@ const red = (s) => `\x1b[31m${s}\x1b[0m`
 // The colour out. The human report wants it; a JSON field does not, and a
 // script that greps the message gets escape bytes it has to know to strip.
 const plain = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "")
-const interactive = () => process.stdin.isTTY && !flag("--yes")
+// A command that must not ask. `auto` sets it: it reconciles, so a question
+// has no good answer - the one thing it can do about the user's own file is
+// leave it alone and say so.
+let nonInteractive = false
+const interactive = () => process.stdin.isTTY && !flag("--yes") && !nonInteractive
 
 /**
  * A yes question with a yes default. Only asked on a terminal; scripts and
@@ -499,13 +515,7 @@ function removeLegacyAgentFiles() {
     for (const name of readdirSync(dir)) {
       if (!name.endsWith(".md")) continue
       const full = join(dir, name)
-      let ours = false
-      try {
-        ours = readlinkSync(full).includes(join("space-harness", "agents"))
-      } catch {
-        ours = false
-      }
-      if (!ours) continue
+      if (!isLegacyAgentLink(full)) continue
       try {
         rmSync(full, { force: true })
         removed.push(name)
@@ -513,6 +523,39 @@ function removeLegacyAgentFiles() {
     }
   }
   return removed
+}
+
+/**
+ * The agent directory an earlier version of this kit installed from.
+ *
+ * The kit was named `space-harness` then, and it put its agent files in
+ * `<kit>/agents/`.
+ */
+const LEGACY_AGENT_DIR = ["space-harness", "agents"]
+
+/**
+ * Whether a path is a symlink into an earlier version's agent directory.
+ *
+ * The match is on the parent DIRECTORY, compared segment by segment. A plain
+ * substring test - `target.includes("space-harness/agents")` - also matched
+ * `space-harness/agents-backup/`, and this function DELETES what it matches.
+ * A user who symlinked their own agent file out of a directory with a similar
+ * name lost it, because the kit thought it had installed it.
+ *
+ * @param {string} full
+ * @returns {boolean}
+ */
+function isLegacyAgentLink(full) {
+  let target
+  try {
+    target = readlinkSync(full)
+  } catch {
+    return false
+  }
+  const parts = dirname(target).split(/[\\/]/)
+  const n = LEGACY_AGENT_DIR.length
+  if (parts.length < n) return false
+  return LEGACY_AGENT_DIR.every((seg, i) => parts[parts.length - n + i] === seg)
 }
 
 /**
@@ -726,6 +769,9 @@ async function cmdInit() {
   let id = opt("--profile")
   if (!id) {
     if (!process.stdin.isTTY) {
+      // No question can be asked without a terminal, and picking for the user
+      // is not this command's job: `init` is the front door for a person, and
+      // `auto` is the one that runs without asking. Say what to type.
       fail("usage: oc-harness init --profile <id> [--yes] (no terminal to ask)")
     }
     const def = Math.max(free.findIndex((e) => e.id === index().default), 0)
@@ -742,7 +788,7 @@ async function cmdInit() {
   console.log(`\n  ${stamp(`profile: ${id}`)}`)
   await cmdInstall()
   await cmdUse(id)
-  cmdVerify()
+  if (cmdVerify().length) process.exitCode = 1
   if (memorySpec()) {
     console.log(
       `\n  ${stamp(
@@ -756,6 +802,124 @@ async function cmdInit() {
     )
   }
   console.log(`\n  ${green("✓")} done. ${stamp("restart opencode, then ask it something")}\n`)
+}
+
+/**
+ * Bring the install back to the profile, without asking anything.
+ *
+ * The four commands that keep an install alive - refresh, install, use,
+ * verify - are each a step somebody has to remember, in the right order, with
+ * the right flags. An agent that has to keep an install working has to know
+ * all of that, and it has to know which of them are allowed to destroy
+ * something. This is one command that does the whole chain.
+ *
+ *   oc-harness auto [--profile <id>] [--offline] [--json]
+ *
+ * The profile is the one the installed config names, or the default. Nothing
+ * is asked: a file of the user's that the installer would have overwritten is
+ * left alone and reported, rather than being a question with no good answer.
+ *
+ * `--yes` still means consent. A profile that may train on prompts is
+ * refused without it, exactly as `use` refuses it - the automation is about
+ * the mechanics, not about the consent.
+ *
+ * `--offline` skips the refresh, for a machine that cannot reach models.dev.
+ * `--json` prints a report a script can read, and nothing else on stdout.
+ */
+async function cmdAuto() {
+  const wantJson = flag("--json")
+  const idx = index()
+  const steps = []
+  const notes = []
+
+  // The profile. What was asked for, else what is installed, else the default.
+  // A profile that was ASKED FOR and cannot be loaded is an error - falling
+  // back to another one would run the install against a profile the caller
+  // did not name.
+  const requested = opt("--profile")
+  let id = null
+  if (requested) {
+    try {
+      loadProfile(requested)
+      id = requested
+    } catch (err) {
+      fail(`profile "${requested}" cannot be loaded: ${err instanceof Error ? err.message : String(err)}`, wantJson)
+    }
+  } else {
+    const active = profileIdFromConfig()
+    if (active) {
+      try {
+        loadProfile(active)
+        id = active
+      } catch (err) {
+        notes.push(
+          `the installed profile ${active} cannot be loaded (${err instanceof Error ? err.message : String(err)}); using ${idx.default}`,
+        )
+      }
+    }
+    if (!id) {
+      id = idx.default
+      try {
+        loadProfile(id)
+      } catch (err) {
+        fail(`no usable profile: ${err instanceof Error ? err.message : String(err)}`, wantJson)
+      }
+    }
+  }
+
+  // The steps. Their human output is silenced in JSON mode, so stdout carries
+  // the report and nothing else.
+  const realLog = console.log
+  if (wantJson) console.log = () => {}
+  const problems = []
+  try {
+    // 1. The catalogue. A model that was withdrawn has to be caught before
+    //    it is used, and the profile files are the only place that lives.
+    if (flag("--offline")) {
+      steps.push({ step: "refresh", status: "skipped", detail: "--offline" })
+    } else {
+      await cmdRefreshAll()
+      steps.push({ step: "refresh", status: "ok" })
+    }
+
+    // 2. The behavioural layer: the plugin link, the prompts, the skills, the
+    //    global rules. Without them the config means nothing.
+    await cmdInstall()
+    steps.push({ step: "install", status: "ok" })
+
+    // 3. The config, recompiled from the profile.
+    await cmdUse(id)
+    steps.push({ step: "use", status: "ok", detail: id })
+
+    // 4. The check that says whether all of that worked.
+    problems.push(...cmdVerify())
+    steps.push({
+      step: "verify",
+      status: problems.length ? "failed" : "ok",
+      detail: problems.length ? `${problems.length} problem(s)` : "the install is consistent",
+    })
+  } finally {
+    console.log = realLog
+  }
+
+  const report = {
+    ok: problems.length === 0,
+    profile: id,
+    steps,
+    problems,
+    ...(notes.length ? { notes } : {}),
+  }
+
+  if (wantJson) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+  } else {
+    console.log(`\n${bold("auto")}  ${stamp(report.ok ? "the install is in step with the profile" : `${problems.length} problem(s)`)}\n`)
+    for (const s of steps) console.log(`  ${green("✓")} ${s.step}${s.detail ? ` - ${s.detail}` : ""}`)
+    for (const n of notes) console.log(`  ${yellow("!")} ${n}`)
+    for (const pr of problems) console.log(`  ${red("✗")} ${pr}`)
+    console.log("")
+  }
+  if (problems.length) process.exitCode = 1
 }
 
 async function askChoice(question) {
@@ -852,13 +1016,16 @@ function linkOne(src, dest, opts = {}) {
  * the profile, an instruction path that resolves to nothing, and a set of role
  * agents that were never installed while the config still declared them.
  *
- * Exits non-zero when anything fails, so it can gate a commit or a CI job.
+ * Returns the problems it found rather than exiting on them, so a caller that
+ * has more to do - `oc-harness auto` - can carry on and report the whole
+ * picture. The exit code is the caller's to set.
+ *
+ * @returns {string[]} the problems, empty when the install is consistent
  */
 function cmdVerify() {
   const problems = []
   const notes = []
   const ok = []
-
   const activeId = profileIdFromConfig() ?? index().default
   let p = null
   try {
@@ -1001,7 +1168,11 @@ function cmdVerify() {
     for (const name of readdirSync(dir).filter((f) => f.endsWith(".md"))) {
       const where = `${scope}:${dir.replace(`${homedir()}/`, "~/")}`
       const lane = name.replace(/\.md$/, "")
-      if (lane in (/** @type {any} */ (actual?.agent) ?? {})) {
+      // `Object.hasOwn`, not `in`. The object is the user's parsed config, and
+      // `in` walks the prototype chain - so an agent file named `toString.md`
+      // or `constructor.md` matched a property every object has, and `verify`
+      // reported a clean install as shadowing a lane that does not exist.
+      if (Object.hasOwn(/** @type {any} */ (actual?.agent) ?? {}, lane)) {
         problems.push(
           `agent file ${where}/${name} shadows the ${lane} lane: an agent file replaces the config entry, so the lane would not run on its own model. Run: oc-harness install`,
         )
@@ -1152,9 +1323,10 @@ function cmdVerify() {
 
   if (problems.length) {
     console.log(`\n  ${red(`${problems.length} problem(s)`)}\n`)
-    process.exit(1)
+    return problems
   }
   console.log(`\n  ${green("install is consistent with the profile")}\n`)
+  return problems
 }
 
 /**
@@ -1525,15 +1697,27 @@ async function cmdRefreshAll() {
   const changed = []
   const gone = []
   const same = []
+  // The profiles that could not be read, and the profiles whose backup could
+  // not be written. Both used to disappear without a word: the first was a
+  // `continue` with no output, the second was a swallowed error - and the
+  // summary line counted every id it was given, so a broken profile was
+  // reported as a refreshed one.
+  const skipped = []
+  let checked = 0
   for (const id of ids) {
     const path = profilePath(id)
-    if (!path) continue
+    if (!path) {
+      skipped.push(`${id} (no file)`)
+      continue
+    }
     let p
     try {
       p = JSON.parse(readFileSync(path, "utf8"))
-    } catch {
+    } catch (err) {
+      skipped.push(`${id} (${err instanceof Error ? err.message : String(err)})`)
       continue
     }
+    checked++
     const live = catalog?.[p.provider]?.models?.[p.model]
     if (!live) {
       gone.push(`${id} (${p.provider}/${p.model})`)
@@ -1554,15 +1738,31 @@ async function cmdRefreshAll() {
     }
     // A refresh overwrites a file the user may have edited by hand, and for
     // an npm install that file is inside node_modules, where the next
-    // `npm install` destroys it anyway. The backup is the only copy.
-    keepProfileBackup(path, readFileSync(path, "utf8"))
+    // `npm install` destroys it anyway. The backup is the only copy - so a
+    // backup that could not be written means the refresh must not happen.
+    const kept = keepProfileBackup(path, readFileSync(path, "utf8"))
+    if (!kept) {
+      skipped.push(`${id} (the backup could not be written, so the profile was left alone)`)
+      continue
+    }
     writeFileSync(path, `${JSON.stringify(p, null, 2)}\n`)
     changed.push(`${id}: ${before.join(", ")}`)
   }
-  console.log(`\n${bold("refreshed")}  ${stamp(`${ids.length} profile(s) against the live catalogue`)}\n`)
+  console.log(
+    `\n${bold("refreshed")}  ${stamp(`${checked} of ${ids.length} profile(s) against the live catalogue`)}\n`,
+  )
   for (const c of changed) console.log(`  ${green("~")} ${c}`)
   for (const g of gone) console.log(`  ${red("!")} ${g} is no longer in the catalogue`)
   for (const id of same) console.log(`  ${green("✓")} ${id} already matches`)
+  for (const s of skipped) console.log(`  ${red("!")} ${s} - skipped`)
+  if (skipped.length) {
+    console.log("")
+    console.log(
+      stamp(
+        "A profile that was skipped was not checked against the live catalogue. Its model may have been withdrawn without anyone noticing.",
+      ),
+    )
+  }
   if (gone.length) {
     console.log("")
     console.log(
@@ -1572,6 +1772,10 @@ async function cmdRefreshAll() {
     )
   }
   console.log("")
+  // A skipped profile is a failure, not a footnote. `refresh --all` is run by
+  // a job that assumes every profile was checked, and a non-zero exit is the
+  // only way that job finds out.
+  if (skipped.length) process.exitCode = 1
 }
 
 /**
@@ -1688,6 +1892,10 @@ const BACKUP_DIR = "backups"
  *
  * @param {string} path the profile file
  * @param {string} text its current contents
+ * @returns {string | null} the backup's name, or null when it could not be
+ *   written. The caller has to treat null as a refusal to go on: a profile
+ *   the user edited by hand has no other copy, and for an npm install that
+ *   file is inside node_modules, where the next `npm install` destroys it.
  */
 function keepProfileBackup(path, text) {
   try {
@@ -1698,9 +1906,20 @@ function keepProfileBackup(path, text) {
     const dir = join(CONFIG_DIR, "profile-backups")
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, "-")
-    writeFileSync(join(dir, `${basename(path, ".json")}-${stamp}.json`), text)
+    const name = `${basename(path, ".json")}-${stamp}.json`
+    writeFileSync(join(dir, name), text)
+    return name
   } catch {
-    // A backup that cannot be written is not worth failing over.
+    // A backup that cannot be written is not worth failing over - unless the
+    // caller was about to destroy the only copy of the file it holds.
+    //
+    // This used to swallow the error and return nothing, and both callers
+    // then overwrote the profile anyway. A user who had edited
+    // `profiles/<id>.json` by hand - the retention, the roles, the fallback,
+    // the parts the code itself calls "human judgement" - lost those edits
+    // with no backup and no message. `keepBackup` below already had the right
+    // shape: return null, and let the caller refuse to go on.
+    return null
   }
 }
 
@@ -2099,8 +2318,14 @@ async function cmdRefresh(id) {
   }
   // A refresh overwrites a file the user may have edited by hand, and for
   // an npm install that file is inside node_modules, where the next
-  // `npm install` destroys it anyway. The backup is the only copy.
-  keepProfileBackup(path, readFileSync(path, "utf8"))
+  // `npm install` destroys it anyway. The backup is the only copy - so a
+  // backup that could not be written means the refresh must not happen.
+  const kept = keepProfileBackup(path, readFileSync(path, "utf8"))
+  if (!kept) {
+    fail(
+      `could not write a backup of ${path}, so the profile was left alone. Fix the permissions on ${join(CONFIG_DIR, "profile-backups")} and run it again`,
+    )
+  }
   writeFileSync(path, `${JSON.stringify(p, null, 2)}\n`)
   console.log(`\n  ${green("✓")} refreshed ${path}`)
   for (const line of before) console.log(`      ${line}`)
@@ -2733,7 +2958,10 @@ function cmdAgents() {
  */
 function fail(msg, wantJson = false) {
   if (wantJson) {
-    console.log(JSON.stringify({ ok: false, error: plain(msg) }, null, 2))
+    // `process.stdout.write`, not `console.log`: a JSON command silences
+    // `console.log` so the report is the only thing on stdout, and the error
+    // has to survive that.
+    process.stdout.write(`${JSON.stringify({ ok: false, error: plain(msg) }, null, 2)}\n`)
     console.error(`\n  ${red("error")} ${msg}\n`)
     process.exit(1)
   }
@@ -2758,9 +2986,29 @@ async function cmdRun() {
 
   const { runLoop } = await import("../src/driver/run.mjs")
 
+  // A role that is not a lane is a typo, and the loop would fail every round
+  // on it. It is refused here, while the answer is still "that is not a lane".
+  //
+  // A `--role` with no value is refused too, rather than falling back to the
+  // default. `oc-harness run --role --max-rounds 5` used to set the role to
+  // the literal string "--max-rounds" - and the loop then ran
+  // `opencode run --agent --max-rounds ...`, which failed on every round and
+  // marked every task blocked. A typo that quietly becomes the default is
+  // still a typo that quietly becomes the wrong agent.
+  const lanes = laneNames()
+  const roleGiven = args.includes("--role") || args.some((a) => a.startsWith("--role="))
+  const roleValue = opt("--role")
+  if (roleGiven && roleValue === undefined) {
+    fail(`--role needs a lane: ${lanes.join(", ")}`)
+  }
+  const role = roleValue ?? "build"
+  if (!lanes.includes(role)) {
+    fail(`--role ${role} is not one of ${lanes.join(", ")}`)
+  }
+
   const result = runLoop({
     cwd: process.cwd(),
-    role: opt("--role") ?? "build",
+    role,
     maxRounds,
     budgetMinutes,
   })
@@ -2811,8 +3059,13 @@ try {
     case "init":
       await cmdInit()
       break
+    case "auto":
+      await cmdAuto()
+      break
     case "verify":
-      cmdVerify()
+      // The exit code is the gate. `verify` runs as the last step of the
+      // install job in CI, and a verify that cannot fail is not a gate.
+      if (cmdVerify().length) process.exitCode = 1
       break
     case "agents":
       cmdAgents()
@@ -2847,6 +3100,8 @@ try {
 
     list      show profiles with retention and caveats
     init      pick a free profile, then install + use + verify in one go
+    auto      refresh + install + use + verify, asking nothing - the
+              unattended reconcile, for an agent or a job
     use <id>  compile a profile into ${CONFIG_FILE}
     show <id> print the resolved lane plan and derived numbers
     refresh <id>  update capability fields from models.dev
@@ -2874,8 +3129,10 @@ try {
     --strict       doctor: fail on perishable catalogue drift too
     --watch        doctor: keep watching the catalogue, report what disappeared
     --check-models doctor: one run, non-zero when a shipped model is gone
-    --json        doctor, show, lanes: print the machine-readable form, and
-                  nothing else
+    --json        doctor, show, lanes, auto: print the machine-readable form,
+                  and nothing else
+    --offline     auto: skip the refresh, for a machine that cannot reach
+                  models.dev
     --hook        install: also install the pre-commit hook into this
                   project. It is the project's call, so it has to be asked
                   for.

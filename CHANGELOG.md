@@ -12,6 +12,75 @@ is not happening.
 
 ---
 
+## [0.5.8] — 2026-10-22
+
+Not yet published. The tag is what cuts it: `git tag v0.5.8 && git push origin
+main v0.5.8`, and the publish job watches for exactly that.
+
+A minor: one new command, and seven silent failures closed.
+
+### Added
+
+- **`oc-harness auto` — the whole reconcile in one command, asking nothing.**
+  `refresh`, `install`, `use` and `verify` are each a step somebody has to
+  remember, in the right order, with the right flags; an agent that has to
+  keep an install working has to know all of that, and has to know which of
+  them are allowed to destroy something.
+
+  The profile is the one the installed config names, or the default. A file
+  of yours that the installer would overwrite is **left alone and
+  reported**, not overwritten and not asked about — the answer a person
+  would give. `--offline` skips the refresh, for a machine that cannot
+  reach models.dev. `--json` prints a report a script can read, and nothing
+  else on stdout.
+
+  `--yes` still means consent: a profile whose models may train on your
+  prompts is refused without it, exactly as `use` refuses it. The automation
+  is about the mechanics, not about the consent.
+
+  `init` is unchanged. It is the front door for a person, and it still says
+  so when there is no terminal to ask on.
+
+### Fixed
+
+- **A refresh overwrote a profile whose backup could not be written.** The
+  backup is the only copy of a file the user may have edited by hand — and
+  for an npm install that file is inside node_modules, where the next
+  `npm install` destroys it anyway. The error was swallowed and the
+  profile was overwritten regardless: the user's edits were gone, with no
+  backup and no message. A backup that cannot be written now stops the
+  refresh.
+
+- **`refresh --all` reported profiles it never checked.** A profile that
+  could not be parsed was skipped without a word, and the summary counted
+  every id it had been given — so a broken profile was reported as a
+  refreshed one, and the withdrawn-model check never ran for it. The count
+  is of the profiles actually checked, the skipped ones are named, and the
+  command exits non-zero: a skipped profile is a failure, not a footnote.
+
+- **`generateConfig(profile, { comments: false })` produced a file nothing
+  could read.** The whole header is comments, so turning comments off
+  emitted it without the `// ` prefix, in front of the JSON body. The
+  result was neither JSON nor JSONC, and the kit's own `parseJsonc`
+  returned null for it. It is pure JSON now.
+
+- **A file named `toString.md` was reported as shadowing a lane.** The
+  check was `lane in (actual.agent ?? {})`, and `in` walks the prototype
+  chain — so a file named after a property every object has matched a lane
+  that does not exist, and `verify` reported a clean install as broken.
+
+- **`--role` took the next flag as its value.** `oc-harness run --role
+  --max-rounds 5` set the role to the literal string `--max-rounds`, and
+  the loop then failed every round and marked every task blocked. A flag
+  with no value is refused now, and so is a role that is not a lane —
+  while the answer is still "that is not a lane".
+
+- **The install deleted a file of yours that only looked like the kit's.**
+  The old agent directory was recognised by a substring, and a directory
+  called `space-harness/agents-backup` contains that substring. The file
+  was deleted. The match is on the parent directory now, segment by
+  segment.
+
 ## [0.5.7] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.5.7 && git push origin main
