@@ -25,6 +25,7 @@ import {
   tierModels,
   fitsLane,
   laneNeeds,
+  pruneWithdrawnChains,
 } from "../src/research.js"
 import { mkdtemp } from "./helpers.mjs"
 
@@ -389,4 +390,75 @@ test("doctor reports a withdrawn rung as withdrawn", () => {
   // The shipped chains point at models the fixture does not have, so the
   // report is full of them; what matters is that the word appears.
   assert.match(out, /withdrawn|left the catalog/, out)
+})
+
+// --- pruning the rungs a lane can no longer use ---
+
+test("pruning removes a withdrawn rung from the chain", () => {
+  const p = profileFixture("fleet")
+  const report = pruneWithdrawnChains(p, catalogFixture())
+  assert.equal(report.dead, false)
+  assert.deepEqual(report.pruned, ["gone-free"])
+  const build = p.roleModels.build
+  assert.deepEqual(build.chain, ["alive-free"])
+  assert.equal(build.model, "alive-free", "a chain has to start with its model")
+})
+
+test("pruning moves a lane to its next live rung when the primary is gone", () => {
+  const p = profileFixture("fleet")
+  p.roleModels.build = { model: "gone-free", chain: ["gone-free", "alive-free"] }
+  pruneWithdrawnChains(p, catalogFixture())
+  assert.equal(p.roleModels.build.model, "alive-free")
+  assert.deepEqual(p.roleModels.build.chain, ["alive-free"])
+})
+
+test("pruning takes the dead entry out of the fallback queue", () => {
+  const p = profileFixture("fleet")
+  p.fallback = ["alive-free", "gone-free", "text-only-free"]
+  const report = pruneWithdrawnChains(p, catalogFixture())
+  assert.deepEqual(report.fallback.from, ["alive-free", "gone-free", "text-only-free"])
+  assert.deepEqual(report.fallback.to, ["alive-free", "text-only-free"])
+  assert.deepEqual(p.fallback, ["alive-free", "text-only-free"])
+})
+
+test("pruning leaves a profile with no dead rungs exactly as it was", () => {
+  const p = profileFixture("fleet")
+  for (const rm of Object.values(p.roleModels)) rm.chain = [rm.model]
+  p.fallback = ["alive-free"]
+  const before = JSON.stringify(p)
+  const report = pruneWithdrawnChains(p, catalogFixture())
+  assert.deepEqual(report.pruned, [])
+  assert.equal(JSON.stringify(p), before, "a profile with nothing dead must not be rewritten")
+})
+
+test("a profile whose own model was withdrawn cannot be repaired", () => {
+  const p = profileFixture("fleet")
+  p.model = "gone-free"
+  const report = pruneWithdrawnChains(p, catalogFixture())
+  assert.equal(report.dead, true)
+  assert.deepEqual(report.pruned, ["gone-free"])
+})
+
+test("pruning moves a utility route that pointed at a withdrawn model", () => {
+  const p = profileFixture("fleet")
+  p.utility = { model: "gone-free", why: "measured" }
+  const report = pruneWithdrawnChains(p, catalogFixture())
+  assert.equal(report.utilityMoved, "gone-free")
+  assert.notEqual(p.utility.model, "gone-free")
+  assert.ok(
+    Object.values(p.roleModels).some((rm) => rm.chain.includes(p.utility.model)),
+    "the utility route has to be a model the profile still reaches",
+  )
+})
+
+test("pruning never puts a model into a lane", () => {
+  // A script may only REMOVE. Adding a model changes what the lane does,
+  // and that is a person's call.
+  const p = profileFixture("fleet")
+  const before = JSON.stringify(p.roleModels)
+  pruneWithdrawnChains(p, catalogFixture())
+  const after = JSON.stringify(p.roleModels)
+  const beforeCount = JSON.parse(before).build.chain.length
+  const afterCount = JSON.parse(after).build.chain.length
+  assert.ok(afterCount <= beforeCount, "a chain must not grow")
 })

@@ -69,17 +69,6 @@
       "note": "Structured output on a zero-retention provider. Careful rather than fast: 4.4-5.8s on the work a lane does."
     },
     {
-      "id": "longcat-2.5-preview-free",
-      "file": "profiles/longcat-2.5-preview-free.json",
-      "title": "LongCat 2.5 Preview Free",
-      "retention": "zero-retention",
-      "free": true,
-      "topEffort": null,
-      "context": 1000000,
-      "default": false,
-      "note": "1M context with image input and a zero-retention provider. A preview endpoint: it can be withdrawn without a rename."
-    },
-    {
       "id": "nemotron-3.5-super-vl-free",
       "file": "profiles/nemotron-3.5-super-vl-free.json",
       "title": "Nemotron 3.5 Super VL Free",
@@ -156,6 +145,10 @@
     {
       "id": "mimo-v2.5-free",
       "reason": "Withdrawn from the provider. Observed alive for one day. Its replacement on the tier is mimo-v2.6-flash-free."
+    },
+    {
+      "id": "longcat-2.5-preview-free",
+      "reason": "Withdrawn from the provider. A preview endpoint, so it could be pulled without a rename - and it was: models.dev still carries the record and marks it deprecated. It was the longform lane's primary in both fleets, so every lane fell back to its second rung, and the profile named only this model had nothing left to fall back to and was retired."
     }
   ]
 }

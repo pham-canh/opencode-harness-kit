@@ -599,7 +599,7 @@ test("a spent session model does not collapse the fleet onto one model", async (
     agent: {
       build: { model: "opencode/minimax-m3.1-flash-free", variant: "max" },
       doc: { model: "opencode/glm-5.3-flash-free" },
-      longform: { model: "opencode/longcat-2.5-preview-free" },
+      reviewer: { model: "opencode/glm-5.3-flash-free" },
     },
   }
   await hooks.config(config)
@@ -609,8 +609,17 @@ test("a spent session model does not collapse the fleet onto one model", async (
   // ...the lane that used it moved down its own chain...
   assert.equal(config.agent.build.model, "opencode/deepseek-v4.1-flash-free")
   // ...and the other lanes kept the models they had.
+  //
+  // `longform` cannot be one of them any more. It used to run on
+  // `longcat-2.5-preview-free`, and when the provider withdrew that model
+  // the lane fell to the next rung of its own chain - which is minimax. So
+  // `longform` moves with `build` now, and a lane on a route that is still
+  // healthy does not.
   assert.equal(config.agent.doc.model, "opencode/glm-5.3-flash-free")
-  assert.equal(config.agent.longform.model, "opencode/longcat-2.5-preview-free")
+  assert.equal(config.agent.reviewer.model, "opencode/glm-5.3-flash-free")
+  // And the fleet did not collapse onto one model.
+  const lanes = new Set(Object.values(config.agent).map((a) => a.model))
+  assert.ok(lanes.size > 1, "the fleet collapsed onto a single model")
   rmSync(dir, { recursive: true, force: true })
 })
 

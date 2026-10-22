@@ -16,7 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { parseJsonc } from "../src/profile.js"
+import { parseJsonc, listProfileIds, loadProfile } from "../src/profile.js"
 import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -152,7 +152,29 @@ test("a lane's model is written into the config, not into a prompt file", () => 
     run(box, ["use", "fleet-all", "--yes"])
     const cfg = parseJsonc(readFileSync(box.config, "utf8"))
     const models = Object.values(cfg.agent).map((a) => a.model)
-    assert.equal(new Set(models).size, 10, "the fleet must put ten models behind ten lanes")
+    // How many models the fleet puts behind its lanes is the TIER's business,
+    // not the fleet's. It was ten once, because the tier had ten live free
+    // models; then `longcat-2.5-preview-free` was withdrawn, and the lane it
+    // served fell to the next rung of its own chain - MiniMax - which
+    // `build` already used.
+    //
+    // So the number that must hold is not "ten": it is that the fleet puts
+    // EVERY free model on the tier behind a lane of its own, and shares one
+    // only when the tier has no other model to give.
+    const tier = new Set()
+    for (const id of listProfileIds()) {
+      const p = loadProfile(id)
+      if (p.model) tier.add(p.model)
+      for (const rm of Object.values(p.roleModels ?? {})) {
+        if (rm?.model) tier.add(rm.model)
+        for (const rung of rm?.chain ?? []) tier.add(rung)
+      }
+    }
+    assert.equal(
+      new Set(models).size,
+      tier.size,
+      `the fleet must run every free model on the tier (${tier.size}), not ${new Set(models).size}`,
+    )
     for (const agent of Object.values(cfg.agent)) {
       assert.ok(agent.prompt, "every lane points at a prompt file")
     }

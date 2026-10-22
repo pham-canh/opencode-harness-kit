@@ -5,7 +5,7 @@
   "provider": "opencode",
   "model": "minimax-m3.1-flash-free",
   "family": null,
-  "verified": "2026-10-21",
+  "verified": "2026-10-22",
   "retention": "zero-retention",
   "maxRetention": "zero-retention",
   "notes": "The default. Every lane resolves to a model whose provider states a zero-retention policy: no training, nothing kept. The cost is that six of the ten jobs run on a second-choice model - the planner loses beam (30-day retention) and the reviewer loses Nemotron 3 Ultra - so this is the floor, not the ceiling. The chains are ordered within the ceiling rather than copied from `fleet-all`: `locate` takes deepseek because it publishes a `low` effort level that longcat does not, and `vision` takes minimax because it reads an image in 7 seconds. `fleet-all` gives every lane the model built for it.",
@@ -52,31 +52,27 @@
       "model": "minimax-m3.1-flash-free",
       "chain": [
         "minimax-m3.1-flash-free",
-        "deepseek-v4.1-flash-free",
-        "longcat-2.5-preview-free"
+        "deepseek-v4.1-flash-free"
       ]
     },
     "plan": {
       "model": "deepseek-v4.1-flash-free",
       "chain": [
         "deepseek-v4.1-flash-free",
-        "glm-5.3-flash-free",
-        "longcat-2.5-preview-free"
+        "glm-5.3-flash-free"
       ]
     },
     "reviewer": {
       "model": "glm-5.3-flash-free",
       "chain": [
         "glm-5.3-flash-free",
-        "deepseek-v4.1-flash-free",
-        "longcat-2.5-preview-free"
+        "deepseek-v4.1-flash-free"
       ]
     },
     "locate": {
       "model": "deepseek-v4.1-flash-free",
       "chain": [
         "deepseek-v4.1-flash-free",
-        "longcat-2.5-preview-free",
         "minimax-m3.1-flash-free"
       ]
     },
@@ -84,15 +80,13 @@
       "model": "deepseek-v4.1-flash-free",
       "chain": [
         "deepseek-v4.1-flash-free",
-        "glm-5.3-flash-free",
-        "longcat-2.5-preview-free"
+        "glm-5.3-flash-free"
       ]
     },
     "vision": {
       "model": "minimax-m3.1-flash-free",
       "chain": [
         "minimax-m3.1-flash-free",
-        "longcat-2.5-preview-free",
         "deepseek-v4.1-flash-free"
       ]
     },
@@ -100,30 +94,26 @@
       "model": "glm-5.3-flash-free",
       "chain": [
         "glm-5.3-flash-free",
-        "deepseek-v4.1-flash-free",
-        "longcat-2.5-preview-free"
+        "deepseek-v4.1-flash-free"
       ]
     },
     "schema": {
       "model": "deepseek-v4.1-flash-free",
       "chain": [
         "deepseek-v4.1-flash-free",
-        "glm-5.3-flash-free",
-        "longcat-2.5-preview-free"
+        "glm-5.3-flash-free"
       ]
     },
     "sweep": {
       "model": "deepseek-v4.1-flash-free",
       "chain": [
         "deepseek-v4.1-flash-free",
-        "longcat-2.5-preview-free",
         "minimax-m3.1-flash-free"
       ]
     },
     "longform": {
-      "model": "longcat-2.5-preview-free",
+      "model": "minimax-m3.1-flash-free",
       "chain": [
-        "longcat-2.5-preview-free",
         "minimax-m3.1-flash-free",
         "deepseek-v4.1-flash-free"
       ]
@@ -137,7 +127,6 @@
   },
   "fallback": [
     "deepseek-v4.1-flash-free",
-    "longcat-2.5-preview-free",
     "glm-5.3-flash-free"
   ]
 }

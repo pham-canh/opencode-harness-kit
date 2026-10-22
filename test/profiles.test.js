@@ -67,15 +67,19 @@ function parseGenerated(text) {
 }
 
 /**
- * The ten free models the tier is serving, checked against the live catalog on
- * 2026-10-19. A profile missing one of them is a job with nobody to do it.
+ * The free models the tier is serving, checked against the live catalog on
+ * 2026-10-22. A profile missing one of them is a job with nobody to do it.
+ *
+ * `longcat-2.5-preview-free` was on this list until the provider withdrew
+ * it. It is not here any more: a model that cannot run is not a job, and
+ * leaving it in the list would make this test pass on a tier that no longer
+ * has it.
  */
 const FREE_MODELS = [
   "beam-free",
   "big-pickle",
   "deepseek-v4.1-flash-free",
   "glm-5.3-flash-free",
-  "longcat-2.5-preview-free",
   "mimo-v2.6-flash-free",
   "minimax-m3.1-flash-free",
   "nemotron-3-ultra-free",
@@ -85,7 +89,7 @@ const FREE_MODELS = [
 
 test("every shipped profile loads and validates", () => {
   const ids = listProfileIds()
-  assert.ok(ids.length >= 12, `expected the model profiles and the fleets, found ${ids.length}`)
+  assert.ok(ids.length >= 11, `expected the model profiles and the fleets, found ${ids.length}`)
   for (const id of ids) {
     const p = loadProfile(id)
     assert.equal(p.id, id)
@@ -102,8 +106,16 @@ test("every free model on the tier has a profile", () => {
 })
 
 test("the fleet has one lane per free model, and no lane is left out", () => {
-  // Ten jobs, ten models. A model with no lane is a free model doing nothing;
-  // a lane with no model is a job nobody can do.
+  // Ten jobs, ten models - and when the tier cannot supply ten, the fleet
+  // has to say so rather than pretend.
+  //
+  // `longcat-2.5-preview-free` was the tenth. The provider withdrew it, and
+  // a withdrawn model is not a job anybody can do: it cannot run. So the
+  // fleet runs ten lanes on the nine free models still live, and `longform`
+  // shares a model with `build`.
+  //
+  // What has to keep holding is that every LIVE free model backs a lane of
+  // its own. A free model doing nothing is a route paid for and not used.
   const p = loadProfile("fleet-all")
   const lanes = Object.keys(p.roles)
   assert.equal(lanes.length, 10)
@@ -113,10 +125,15 @@ test("the fleet has one lane per free model, and no lane is left out", () => {
     assert.ok(FREE_MODELS.includes(m), `lane ${lane} runs on ${m}, which is not a free model`)
     served.add(m)
   }
-  assert.equal(served.size, 10, `only ${served.size} distinct models serve the fleet`)
   for (const model of FREE_MODELS) {
     assert.ok(served.has(model), `${model} has no lane of its own`)
   }
+  // And the fleet does not run a model the tier does not need.
+  assert.equal(
+    served.size,
+    FREE_MODELS.length,
+    `the fleet runs on ${served.size} models and the tier has ${FREE_MODELS.length} free ones`,
+  )
 })
 
 test("a fleet lane that loses its model walks the chain", () => {
@@ -177,19 +194,20 @@ test("the safe fleet's second choice is still the best one inside the ceiling", 
   // ceiling. That is the price of the ceiling, and it is only worth paying
   // when the model that takes over is the best one available for THAT job.
   const safe = loadProfile("fleet-safe")
-  // `locate` wants the lowest effort and the fastest answer. longcat
-  // publishes no effort levels at all, so a locate lane on it cannot honour
-  // a `low` request; deepseek can, and is faster.
+  // `locate` wants the lowest effort and the fastest answer. deepseek can
+  // honour a `low` request and measures 3.4s, which is the cheapest answer
+  // on the tier for a lane whose whole job is to be quick.
   assert.equal(resolveLaneModel(safe, "locate").model, "deepseek-v4.1-flash-free")
   assert.equal(resolveRoles(safe).locate, "low")
   // `vision` wants a fast image reader. minimax reads one in 7 seconds.
   assert.equal(resolveLaneModel(safe, "vision").model, "minimax-m3.1-flash-free")
   // `sweep` is a bulk mechanical search, so reasoning is pure waste on it.
-  // It used to run on longcat, which measures 420 reasoning tokens a message
-  // at 16.6s - the most expensive way to ask a model to grep - and no
-  // zero-retention model publishes a `none` level, so the lane could not turn
-  // reasoning off even when it asked to. deepseek is zero-retention, publishes
-  // a `low` level, and measures 19 reasoning tokens at 3.4s.
+  // It used to run on `longcat-2.5-preview-free`, which measured 420
+  // reasoning tokens a message at 16.6s - the most expensive way to ask a
+  // model to grep - and published no effort levels, so the lane could not
+  // turn reasoning off even when it asked to. The provider has withdrawn
+  // that model, and deepseek is zero-retention, publishes a `low` level, and
+  // measures 19 reasoning tokens at 3.4s.
   assert.equal(resolveLaneModel(safe, "sweep").model, "deepseek-v4.1-flash-free")
   assert.equal(resolveRoles(safe).sweep, "low")
   // Six lanes differ from the unrestricted fleet. The number is a fact about
@@ -460,7 +478,28 @@ test("every lane declares its own model, because variant needs it", () => {
 test("a fleet puts a different model behind each lane", () => {
   const c = cfg("fleet-all")
   const models = Object.values(c.agent).map((a) => a.model)
-  assert.equal(new Set(models).size, 10, "a fleet that shares a model is not a fleet")
+  // A fleet exists so each job gets the model built for it. How many there
+  // are is the tier's business, not the fleet's: with ten live free models
+  // every lane had one of its own, and when one was withdrawn the fleet had
+  // to share.
+  //
+  // What must never happen is a model serving two lanes while a free model
+  // sits idle. So the fleet has to use every free model the tier has.
+  assert.equal(
+    new Set(models).size,
+    FREE_MODELS.length,
+    "a fleet must run every free model on the tier",
+  )
+  // And the sharing has to be the least the tier allows: with N lanes and M
+  // free models, at most N - M lanes may be a second lane for a model.
+  const counts = new Map()
+  for (const m of models) counts.set(m, (counts.get(m) ?? 0) + 1)
+  const shared = [...counts.values()].filter((n) => n > 1).length
+  assert.equal(
+    shared,
+    Math.max(0, models.length - FREE_MODELS.length),
+    "a model may serve two lanes only when the tier has no other free model",
+  )
 })
 
 test("a single-model profile runs every lane on the base model", () => {
@@ -720,7 +759,7 @@ test("every profile has a retention.yml entry, and the two agree", () => {
     }
     checked++
   }
-  assert.ok(checked >= 12, "the loop must actually run, not skip everything")
+  assert.ok(checked >= 11, "the loop must actually run, not skip everything")
 })
 
 test("the plan explains every downgrade instead of hiding it", () => {
