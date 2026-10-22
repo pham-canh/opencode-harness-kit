@@ -17,7 +17,7 @@ is not happening.
 Not yet published. The tag is what cuts it: `git tag v0.5.8 && git push origin
 main v0.5.8`, and the publish job watches for exactly that.
 
-A minor: one new command, and seven silent failures closed.
+A minor: one new command, and ten silent failures closed.
 
 ### Added
 
@@ -121,6 +121,29 @@ A minor: one new command, and seven silent failures closed.
   pointed at `/etc` was a path inside the project - and the write landed
   outside it. The comparison is made on the real path now, and the part of
   the path that does not exist yet is put back on the end.
+
+- **`oc-harness agents` called a prototype property a lane.** The check was
+  `name in (config.agent)`, and `in` walks the prototype chain - so a project
+  agent file named `toString.md` or `constructor.md` matched a property every
+  object has: the file was reported as shadowing a lane that does not exist,
+  and the missing `model:` that was the point of the report was never
+  reported either. `verify` had the same check and the same fix; this one
+  was left behind.
+
+- **`auto --json` dropped everything the refresh had found.** The refresh
+  prints what it found - a withdrawn model, a profile it could not read - and
+  `auto --json` silences the human output, so those findings went nowhere:
+  the report said `"ok": true` while a profile had never been checked
+  against the live catalogue, and the exit code said something else
+  entirely. The refresh hands its findings back now, and they are in the
+  report, in the step's status, and in the exit code.
+
+- **`baseline --db=/path` measured the wrong database.** Only the spaced
+  form `--db /path` was read, so the `=` spelling - the one every other flag
+  in this kit accepts - was ignored, and the default database was measured
+  instead. The report then described a database nobody asked about. Both
+  spellings work now, and a `--db` with no value is refused instead of
+  crashing.
 
 ### Changed
 
