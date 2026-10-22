@@ -22,8 +22,6 @@ deleted — is not something a demo of winning numbers would have shown.
 | | |
 |---|---|
 | `narration.txt` | the voiceover of the published video, in beats, with `[[slnc N]]` pauses that hold the voice against the screen |
-| `build.py` | the recorder for a machine with no screen: Chromium, a canvas, and the browser as the encoder |
-| `verify.py` | the gate a take has to pass: it decodes, it looks at frames, it refuses a take that shows nothing |
 | `../docs/demo/pitch.mp4` | the published file |
 | `../docs/demo-loop.gif` | the short loop on the README's front page |
 | `legacy/` | the first dubbing pipeline, kept because its notes explain the timing method |
@@ -35,11 +33,13 @@ the Screen Recording and Accessibility permissions, and there is nobody to
 grant them on a headless box. There is also no `ffmpeg` there, so the
 usual encode step has nothing to encode with.
 
-`build.py` is the other road, and it is not a smaller `vrec`:
+**The recorder lives in the tools repository, not here** — one directory
+up, next to `vrec` and `btake`, and there is exactly one of each. A copy
+inside this repository is how two copies drift.
 
 ```sh
-python3 video/build.py --spec video/takes/<take>.json
-python3 video/verify.py video/build/<take>.mp4 --frames 2,10,20
+python3 ../tools/loom/rec/build.py  --spec video/takes/audit.json
+python3 ../tools/loom/rec/verify.py video/build/audit.mp4 --frames 2,10,20
 ```
 
 Playwright's Chromium draws the scene on a canvas, and the canvas is the
@@ -58,6 +58,11 @@ seconds of black. So the gate decodes the take, pulls frames out of it,
 and looks at them: a frame with no spread in its pixels is a frame that
 shows nothing, and the take fails. The frames are written out as PNGs,
 because a check you cannot look at is a check you cannot argue with.
+
+**The narration is on the screen.** A voice is the best way to carry it
+and it is not always there: `say` is macOS, and a headless Linux box has
+no espeak, no festival and no cloud TTS. So the words go on the frame,
+one caption at a time, and the take still says what it is about.
 
 ### The take is local, and so is the video
 
@@ -100,12 +105,12 @@ git clone https://github.com/pham-canh/btake.git  ../tools/btake
 ```
 
 On a machine with no screen and no ffmpeg, there is nothing to clone: the
-recorder is in this directory, and Playwright's Chromium is the only
-dependency.
+recorder is in the tools repository, and Playwright's Chromium is the
+only dependency.
 
 ```sh
-python3 video/build.py --spec video/takes/<take>.json
-python3 video/verify.py video/build/<take>.mp4 --frames 2,10,20
+python3 ../tools/loom/rec/build.py  --spec video/takes/<take>.json
+python3 ../tools/loom/rec/verify.py video/build/<take>.mp4 --frames 2,10,20
 ```
 
 `vrec` is macOS-only: it posts real keyboard and mouse events, so the

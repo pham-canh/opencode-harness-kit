@@ -25,7 +25,7 @@ baseline-*.txt
 # but the handler does not run if the process is killed, so ignore it regardless.
 .test-build-*/
 
-# video build artifacts (regenerate with video/build.py)
+# video build artifacts (the recorder is in the loom tools repo: rec/build.py)
 video/scenes/
 video/audio/
 video/space-harness-demo.mp4
