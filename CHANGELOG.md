@@ -132,31 +132,39 @@ A minor: one new command, and seven silent failures closed.
 
 ### Added
 
-- **`video/build.py` and `video/verify.py` — a recorder for a machine with
-  no screen.** `vrec` drives the real keyboard and the real screen, so it
-  needs macOS, the Screen Recording permission, and somebody to grant it.
-  A headless box has none of those, and it has no `ffmpeg` either, so the
-  usual encode step has nothing to encode with.
+- **A recorder for a machine with no screen.** `vrec` drives the real
+  keyboard and the real screen, so it needs macOS, the Screen Recording
+  permission, and somebody to grant it. A headless box has none of those,
+  and it has no `ffmpeg` either, so the usual encode step has nothing to
+  encode with. The published demo was made with `vrec`; on such a machine
+  it cannot be made at all.
 
-  `build.py` draws the scene on a canvas and lets the browser be the
-  encoder: Chromium's `captureStream` into `MediaRecorder` at a fixed
-  clock, which comes out as an `.mp4` with an H.264 track and no ffmpeg on
-  the machine at all. The text on screen is the real output of the real
-  commands — the take spec names the commands, and they are run when the
-  video is built.
+  The recorder is in the tools repository, next to `vrec` and `btake` — one
+  directory up, and there is exactly one of each, because a copy inside
+  this repository is how two copies drift. It draws the scene on a canvas
+  and lets the browser be the encoder: Chromium's `captureStream` into
+  `MediaRecorder` at a fixed clock, which comes out as an `.mp4` with an
+  H.264 track and no ffmpeg on the machine at all. The text on screen is
+  the real output of the real commands — the take spec names the commands,
+  and they are run when the video is built.
 
-  `verify.py` is the gate. A file that exists, has the right duration and
-  the right size can still be thirty seconds of black, so the gate decodes
-  the take, pulls frames out of it, and looks at them: a frame with no
-  spread in its pixels shows nothing, and the take fails. The frames are
-  written out as PNGs, because a check you cannot look at is a check you
-  cannot argue with.
+  The gate is the part that matters. A file that exists, has the right
+  duration and has the right size can still be thirty seconds of black, so
+  the gate decodes the take, pulls frames out of it, and looks at them: a
+  frame with no spread in its pixels shows nothing, and the take fails.
+  The frames are written out as PNGs, because a check you cannot look at
+  is a check you cannot argue with.
 
   **The take is local and the video is local.** The take spec lives in
   `video/takes/` and the recording lands in `video/build/`; both are
   gitignored. The repository ships the recorder and not the take, and a
   recording stays on the machine that made it until somebody decides,
   deliberately, to publish it.
+
+  And the narration is on the screen. A voice is the best way to carry it
+  and it is not always there — `say` is macOS, and a headless Linux box
+  has no espeak, no festival and no cloud TTS — so the words go on the
+  frame, one caption at a time, and the take still says what it is about.
 
 ## [0.5.7] — 2026-10-21
 
