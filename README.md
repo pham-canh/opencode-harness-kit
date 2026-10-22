@@ -573,10 +573,23 @@ recent calls was a window on *recency*, and a long session walks out of it:
 after six more calls, the only copy of a file the agent had read was gone,
 and the agent read it again. On the long-task A/B that was seventeen
 re-reads and five times the input tokens. The newest copy of each distinct
-output now survives however old it is, and only the repeats are stubbed -
-**-69% input tokens and -60% wall time** on that task, at the cost of a
-bigger context. It is a setting: `prune.keepDistinctOutputs` in the profile,
-`false` to get the old behaviour back.
+output now survives, and only the repeats are stubbed - **-69% input tokens
+and -60% wall time** on that task, at the cost of a bigger context. It is a
+setting: `prune.keepDistinctOutputs` in the profile, `false` to get the old
+behaviour back.
+
+**The distinct outputs have a ceiling.** The rule without one is not a
+trade-off but a leak: it keeps every output the session has ever produced,
+and a long session grows without limit. Measured on a real 137-message
+session on 2026-10-22: the request was 5.26 MB, the pruner removed 0.04 MB of
+it (0.8%), and 4.74 MB of it - 92% - was the distinct outputs of the whole
+session. The profile's own budget for that request was 176,000 characters,
+so the request was twenty-nine times over. The ceiling keeps the newest
+distinct outputs and stubs the ones past it, so the property the rule was
+added for - the copy the agent is working with survives, so it does not read
+it again - still holds. It is `prune.keepDistinctBudgetChars` in the profile;
+unset means the profile's own context budget, and `0` keeps no distinct
+output at all.
 
 ## Memory
 

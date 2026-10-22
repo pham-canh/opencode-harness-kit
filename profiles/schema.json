@@ -267,6 +267,14 @@
           "type": "boolean",
           "default": true,
           "description": "Keep the newest copy of each DISTINCT tool output, however old it is. The recent-calls window is a window on recency, and a long session walks out of it: after six more tool calls the only copy of a file the agent read is gone, and the agent reads it again. The long-task A/B measured seventeen re-reads and five times the input tokens for the same answer."
+        },
+        "keepDistinctBudgetChars": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "The character budget the distinct outputs have to fit in, newest first. The ones past the budget are stubbed like everything else. Null or unset means the profile's own context budget (pruneThreshold), which is what the pruner is measured against: without a ceiling the rule keeps every output the session has ever produced, and on a real 137-message session that was 4.74 MB of a 5.26 MB request against a 176,000 character budget. 0 keeps no distinct output at all."
         }
       }
     },

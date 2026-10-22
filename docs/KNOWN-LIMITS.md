@@ -373,11 +373,31 @@ RECENT calls was a window on recency, and a long session walks out of it: after
 six more tool calls, the only copy of a file the agent had read was gone, and
 the agent read it again. The long-task A/B measured seventeen re-reads, five
 times the input tokens and the same final context. The rule now keeps the
-newest copy of each distinct output however old it is, and stubs only the
-REPEATS of it. The context grows by the size of the distinct outputs, and the
+newest copy of each distinct output, and stubs only the REPEATS of it. The
 re-reads stop: **-69% input tokens and -60% wall time** on that task, at the
 cost of a bigger context. It is a setting - `prune.keepDistinctOutputs` - and
 turning it off brings the old behaviour back.
+
+**And the distinct outputs have a ceiling.** The rule as it first shipped had
+no upper bound, which made it a leak rather than a trade-off: it kept every
+output the session had ever produced, and a long session grew without limit.
+Measured on a real 137-message session on 2026-10-22: the request was 5.26 MB,
+the pruner removed 0.04 MB of it - 0.8% - and 4.74 MB of it, 92%, was the
+distinct outputs of the whole session. The profile's own budget for that
+request was 176,000 characters, so the request was twenty-nine times over it.
+
+A request that size is not only expensive, it is what makes the server
+slow: opencode persists a full copy of every updated part into its event
+store, so every turn writes megabytes into a database that on that machine had
+reached 4.2 GB, and the TUI - which is a client of that server - started
+dropping keystrokes mid-word.
+
+So the distinct outputs are now kept newest-first and only while they fit in
+a budget: `prune.keepDistinctBudgetChars`, unset meaning the profile's own
+context budget, `0` meaning none. The property the rule was added for still
+holds - the copy of a recent output the agent is working with survives, so it
+does not read the file again - and the part that was never wanted, the copy of
+everything the session has ever touched for ever, is gone.
 
 `savedChars` in `prune.jsonl` is the size of the request before the pass minus
 the size after it, measured on the parts as they are serialised - not on the

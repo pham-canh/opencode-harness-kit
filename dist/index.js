@@ -1103,7 +1103,10 @@ function normalize(p) {
       keepRecentToolCalls: p.prune?.keepRecentToolCalls ?? 6,
       keepRecentTurns: p.prune?.keepRecentTurns ?? 3,
       keepUserMessages: p.prune?.keepUserMessages ?? true,
-      keepDistinctOutputs: p.prune?.keepDistinctOutputs ?? true
+      keepDistinctOutputs: p.prune?.keepDistinctOutputs ?? true,
+      // null means "the pruner's own budget decides" - the profile's context
+      // budget. A number is a ceiling in characters.
+      keepDistinctBudgetChars: p.prune?.keepDistinctBudgetChars ?? null
     },
     fallback: p.fallback ?? []
   };
@@ -1398,6 +1401,13 @@ function validate(p, path = "<memory>") {
     }
     if (prune.keepDistinctOutputs !== void 0 && typeof prune.keepDistinctOutputs !== "boolean") {
       throw new ProfileError(`${where}: prune.keepDistinctOutputs must be a boolean`);
+    }
+    if (prune.keepDistinctBudgetChars !== void 0 && prune.keepDistinctBudgetChars !== null) {
+      if (!Number.isInteger(prune.keepDistinctBudgetChars) || prune.keepDistinctBudgetChars < 0) {
+        throw new ProfileError(
+          `${where}: prune.keepDistinctBudgetChars must be an integer of at least 0`
+        );
+      }
     }
     if (prune.enabled !== void 0 && typeof prune.enabled !== "boolean") {
       throw new ProfileError(`${where}: prune.enabled must be a boolean`);
@@ -1705,6 +1715,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
     keepTurns: 0,
     keepUsers: true,
     keepDistinct: false,
+    distinctBudget: 0,
     threshold: 0
   };
   let cached = null;
@@ -1718,20 +1729,37 @@ var PrunePlugin = async ({ worktree, directory }) => {
       profile = null;
     }
     if (!profile?.prune?.enabled) return DISABLED;
+    const threshold = pruneThreshold(profile);
     cached = {
       profile,
       keepCalls: profile.prune.keepRecentToolCalls ?? 6,
       keepTurns: profile.prune.keepRecentTurns ?? 3,
       keepUsers: profile.prune.keepUserMessages ?? true,
       keepDistinct: profile.prune.keepDistinctOutputs ?? true,
-      threshold: pruneThreshold(profile)
+      // The budget the distinct outputs have to fit in.
+      //
+      // It defaults to the profile's own context budget - the number the
+      // pruner is measured against - because a rule with no ceiling is not a
+      // trade-off, it is a leak. Measured on a real 137-message session: the
+      // request was 5.26 MB and the pruner removed 0.04 MB of it (0.8%),
+      // because EVERY distinct output the session had ever produced was kept
+      // (4.74 MB, 92% of the request) "however old it is". The threshold
+      // that session was supposed to live under was 176,000 characters and
+      // the request was 5,140,000 - twenty-nine times over.
+      //
+      // The ceiling keeps the property the rule was added for (the newest
+      // copy of a file the agent read survives, so it does not read it
+      // again) and drops the part that was never wanted (the copy of every
+      // file the session has EVER touched, for ever).
+      distinctBudget: profile.prune.keepDistinctBudgetChars ?? threshold,
+      threshold
     };
     return cached;
   };
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
-        const { profile, keepCalls, keepTurns, keepUsers, keepDistinct, threshold } = resolve4();
+        const { profile, keepCalls, keepTurns, keepUsers, keepDistinct, distinctBudget, threshold } = resolve4();
         if (!profile) return;
         const messages = output.messages;
         if (!Array.isArray(messages) || messages.length === 0) return;
@@ -1750,17 +1778,26 @@ var PrunePlugin = async ({ worktree, directory }) => {
         }
         if (keepDistinct) {
           const seenSignatures = /* @__PURE__ */ new Set();
+          let kept = 0;
           for (let i = messages.length - 1; i >= 0; i--) {
             const msg = messages[i];
             if (!msg?.parts) continue;
+            let added = 0;
             for (const part of msg.parts) {
               if (part?.type !== "tool") continue;
               if (part.state?.status !== "completed") continue;
               const sig = toolSignature(part);
-              if (!sig || seenSignatures.has(sig)) continue;
+              if (!sig) continue;
+              const seen2 = seenSignatures.has(sig);
               seenSignatures.add(sig);
-              keepToolMessageIds.add(msg.info?.id ?? String(i));
+              if (seen2) continue;
+              if (i >= floor) continue;
+              added += partSize(part);
             }
+            if (added === 0) continue;
+            if (kept + added > distinctBudget) break;
+            kept += added;
+            keepToolMessageIds.add(msg.info?.id ?? String(i));
           }
         }
         const stats = {
