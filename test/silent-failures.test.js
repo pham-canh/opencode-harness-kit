@@ -43,7 +43,7 @@ function run(box, args, opts = {}) {
     encoding: "utf8",
     cwd: opts.cwd ?? box.dir,
   })
-  return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` }
+  return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}`, stdout: r.stdout ?? "" }
 }
 
 /**
@@ -210,4 +210,95 @@ test("install does not delete an agent file that only looks like the kit's", () 
   } finally {
     box.cleanup()
   }
+})
+
+test("agents does not call a prototype property a lane", () => {
+  // `oc-harness agents` checks whether an agent FILE shadows a lane with
+  // `name in (config.agent)`. `in` walks the prototype chain, so a file named
+  // `toString.md` matched a property every object has - and the file was
+  // reported as shadowing a lane that does not exist, and its missing model
+  // was never reported either. `verify` had the same check and the same fix;
+  // this one was left behind.
+  const box = sandbox()
+  try {
+    writeFileSync(
+      join(box.dir, "opencode.jsonc"),
+      JSON.stringify({
+        harness: { profile: "fleet-safe" },
+        agent: {
+          build: { model: "opencode/minimax-m3.1-flash-free", prompt: "{file:prompts/build.md}" },
+        },
+      }),
+    )
+    const agents = join(box.dir, "agents")
+    mkdirSync(agents, { recursive: true })
+    writeFileSync(join(agents, "toString.md"), "---\ndescription: mine\n---\n")
+
+    const r = run(box, ["agents"])
+    assert.doesNotMatch(
+      r.out,
+      /shadows a lane in the config/,
+      `a prototype property is not a lane:\n${r.out}`,
+    )
+    assert.match(
+      r.out,
+      /toString/,
+      `the agent file is still reported:\n${r.out}`,
+    )
+    assert.match(
+      r.out,
+      /not tiered/,
+      `and its missing model is named:\n${r.out}`,
+    )
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("auto --json reports a model that is no longer in the catalogue", () => {
+  // The refresh prints what it found - a withdrawn model, a profile it could
+  // not read - and `auto --json` silences the human output, so those findings
+  // used to vanish: the report said "ok": true while a profile was never
+  // checked against the live catalogue. The report is what a script reads,
+  // so a finding that is not in it is a finding nobody has.
+  const box = sandbox()
+  const { profiles, env } = driftingProfiles(box)
+  // A catalogue that knows about no model at all: every profile's model is
+  // withdrawn.
+  const cat = join(box.dir, "cat.json")
+  writeFileSync(
+    cat,
+    JSON.stringify({ opencode: { models: { "no-such-model": { limit: { context: 1 } } } } }),
+  )
+
+  const r = run(box, ["auto", "--json"], { env })
+  let report = null
+  try {
+    report = JSON.parse(r.stdout)
+  } catch {
+    assert.fail(`the report is not JSON:\n${r.out}`)
+  }
+  assert.equal(report.ok, false, `a withdrawn model is a problem:\n${r.out}`)
+  assert.match(
+    JSON.stringify(report.problems),
+    /no longer in the live catalogue/,
+    `the withdrawal is in the report:\n${r.out}`,
+  )
+  assert.notEqual(r.code, 0, `and the command says so:\n${r.out}`)
+  assert.ok(profiles, "the profiles were copied out of the repository")
+})
+
+test("baseline --db= measures the database it was given", () => {
+  // Only `--db /path` was read. `--db=/path` - the spelling every other flag
+  // in this kit accepts - was ignored, and the DEFAULT database was measured
+  // instead. The report then described a database nobody asked about.
+  const r = spawnSync("node", [join(REPO, "bin", "baseline.mjs"), "--db=/nonexistent/nope.db"], {
+    encoding: "utf8",
+  })
+  assert.notEqual(r.status, 0, "a database that is not there is a failure")
+  assert.match(
+    `${r.stdout ?? ""}${r.stderr ?? ""}`,
+    /nonexistent\/nope\.db/,
+    "the path that was given is the path that is named",
+  )
 })

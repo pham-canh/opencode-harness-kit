@@ -16,8 +16,23 @@ import { join } from "node:path"
 
 const args = process.argv.slice(2)
 const wantJson = args.includes("--json")
+// Both spellings: `--db /path` and `--db=/path`. Only the first was read, so
+// `--db=/path` was ignored and the DEFAULT database was measured instead -
+// and the report said nothing about it. A flag that does not do what it was
+// given is worse than a flag that is missing.
+const dbEq = args.find((a) => a.startsWith("--db="))
 const dbArg = args.indexOf("--db")
-const DB = dbArg >= 0 ? args[dbArg + 1] : join(homedir(), ".local/share/opencode/opencode.db")
+const dbValue =
+  dbEq !== undefined
+    ? dbEq.slice("--db=".length)
+    : dbArg >= 0
+      ? args[dbArg + 1]
+      : undefined
+if (dbValue !== undefined && (!dbValue || dbValue.startsWith("--"))) {
+  console.error("pass --db <path> or --db=<path>")
+  process.exit(1)
+}
+const DB = dbValue ?? join(homedir(), ".local/share/opencode/opencode.db")
 
 const { canQuerySqlite, sqliteMissingMessage, query: queryDb } = await import("../src/sqlite.js")
 

@@ -878,8 +878,26 @@ async function cmdAuto() {
     if (flag("--offline")) {
       steps.push({ step: "refresh", status: "skipped", detail: "--offline" })
     } else {
-      await cmdRefreshAll()
-      steps.push({ step: "refresh", status: "ok" })
+      // The refresh's findings are part of the report, not decoration. In JSON
+      // mode the refresh's own output is silenced, so a withdrawn model or a
+      // profile that could not be read used to vanish from the report - and
+      // the report said "ok": true while a profile was never checked against
+      // the live catalogue.
+      const refreshed = await cmdRefreshAll()
+      for (const g of refreshed.gone) {
+        problems.push(`profile ${g} is no longer in the live catalogue`)
+      }
+      for (const s of refreshed.skipped) {
+        problems.push(
+          `profile ${s} was skipped by the refresh, so it was not checked against the live catalogue`,
+        )
+      }
+      const findings = refreshed.gone.length + refreshed.skipped.length
+      steps.push({
+        step: "refresh",
+        status: findings ? "failed" : "ok",
+        ...(findings ? { detail: `${findings} finding(s)` } : {}),
+      })
     }
 
     // 2. The behavioural layer: the plugin link, the prompts, the skills, the
@@ -892,11 +910,12 @@ async function cmdAuto() {
     steps.push({ step: "use", status: "ok", detail: id })
 
     // 4. The check that says whether all of that worked.
-    problems.push(...cmdVerify())
+    const verifyProblems = cmdVerify()
+    problems.push(...verifyProblems)
     steps.push({
       step: "verify",
-      status: problems.length ? "failed" : "ok",
-      detail: problems.length ? `${problems.length} problem(s)` : "the install is consistent",
+      status: verifyProblems.length ? "failed" : "ok",
+      detail: verifyProblems.length ? `${verifyProblems.length} problem(s)` : "the install is consistent",
     })
   } finally {
     console.log = realLog
@@ -1776,6 +1795,11 @@ async function cmdRefreshAll() {
   // a job that assumes every profile was checked, and a non-zero exit is the
   // only way that job finds out.
   if (skipped.length) process.exitCode = 1
+  // The findings come back with the command. They used to be printed and
+  // dropped, so a caller that silences the human output - `auto --json` -
+  // never saw them: a withdrawn model or a profile that was never checked
+  // against the catalogue went into a report that said everything was fine.
+  return { changed, gone, same, skipped }
 }
 
 /**
@@ -2926,7 +2950,12 @@ function cmdAgents() {
     }
     const name = file.split("/").pop().replace(/\.md$/, "")
     const front = stripFrontmatter(text)
-    if (name in /** @type {any} */ (config.agent)) {
+    // `Object.hasOwn`, not `in`. `in` walks the prototype chain, so an agent
+    // file named `toString.md` or `constructor.md` matched a property every
+    // object has - and the file was reported as shadowing a lane that does not
+    // exist, and its missing model was never reported either. `verify` had the
+    // same check and the same fix; this one was left behind.
+    if (Object.hasOwn(/** @type {any} */ (config.agent) ?? {}, name)) {
       console.log(
         `  ${yellow("!")} ${name.padEnd(14)} ${yellow("shadows a lane in the config")}`,
       )
