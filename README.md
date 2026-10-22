@@ -15,16 +15,6 @@ record it and the two mistakes that cost the most time.*
 *It was recorded against an earlier version of the kit: the numbers it names
 are the ones from then, and the ones below are the ones now.*
 
-<p align="center">
-  <video src="docs/demo/audit.mp4" width="720" controls></video>
-</p>
-
-*Thirty seconds, made on a machine with no screen and no camera: the scene is
-drawn by a browser, the terminal in it is the **real** output of the **real**
-commands — `oc-harness verify` above — and the narration is on the frame. It
-names the numbers of this release (475 tests), so nothing in it is out of date.
-How it is made is in [`video/`](video/).*
-
 A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
 

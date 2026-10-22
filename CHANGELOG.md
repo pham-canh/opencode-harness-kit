@@ -12,6 +12,24 @@ is not happening.
 
 ---
 
+## [Unreleased]
+
+- **The demo video is not published with the repository.** The newer take —
+  thirty seconds, made on a machine with no screen, the terminal in it the
+  real output of the real commands — was under `docs/demo/` for the 0.5.8
+  release, and it is out of the repository now.
+
+  A take is about one machine and one moment, and so is the recording of it.
+  The `.gitignore` already said as much: "a recording stays on the machine
+  that made it until somebody decides, deliberately, to publish it". The
+  decision went the other way, so the file went back where that rule keeps
+  it — `video/build/`, which is ignored — and the README no longer links a
+  video the repository does not carry.
+
+  What is published is still the old `docs/demo/pitch.mp4`: four minutes
+  forty-seven seconds, recorded live from a Mac terminal, with a voice. The
+  npm package never carried a video at all.
+
 ## [0.5.8] — 2026-10-22
 
 Published. The tag is what cut it: `git tag v0.5.8 && git push origin
