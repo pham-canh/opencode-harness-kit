@@ -81,6 +81,55 @@ A minor: one new command, and seven silent failures closed.
   was deleted. The match is on the parent directory now, segment by
   segment.
 
+- **A wrapper the list did not name was a way around the rules.** The
+  wrapper list held `env`, `sudo` and a handful of others, so the programs
+  that run a command as their argument - `timeout`, `nice`, `ionice`,
+  `stdbuf`, `setsid`, `chroot`, `taskset`, `busybox` - were commands the
+  rules had never seen. `timeout 5 rm -rf /tmp/x` deleted a tree, and
+  `timeout 5 npm publish` published a package, and neither was blocked.
+
+  The list is a table now, and the flags that take a value are the
+  WRAPPER'S OWN: `sudo -n` is a flag and the word after it is the command,
+  while `stdbuf -o 0` takes a mode and the word after it is the mode. One
+  list for all of them made `sudo -n rm -rf /tmp/x` read `rm` as the value
+  of `-n`, so the delete was invisible - which is the same hole in the other
+  direction.
+
+- **`env -S "rm -rf /tmp/x"` was allowed.** `-S` takes a string and splits
+  it into words, so the string is a command line - the same thing `sh -c`
+  carries. It used to arrive as ONE token, and the command word was read
+  out of it as the text after the last slash, so the guard looked at `x`.
+  The payload is read now, and it is read the way `sh -c` is read.
+
+- **`git -C/tmp reset --hard` was allowed.** `-C` and `-c` take a value, and
+  the value can be written against the flag. The resolver only knew the
+  spaced form, so the subcommand it found was the flag itself - and the
+  rule that watches for a history rewrite never saw the subcommand at all.
+
+- **A public key was refused as a private key.** The rule named the key
+  FILES, and `id_rsa.pub` is the public half of `id_rsa` - a file the user
+  is meant to publish. Writing one was refused for a reason nobody could
+  find.
+
+- **A file that was downloaded and then run was ordinary work.** The rule
+  caught `curl x | sh` and nothing else, so the same download in two steps
+  - fetch it to a file, then run the file - was allowed. It runs exactly the
+  same downloaded script.
+
+- **A symlink out of the project was a write out of the project.** The
+  scope check compared paths as TEXT, so a link inside the project that
+  pointed at `/etc` was a path inside the project - and the write landed
+  outside it. The comparison is made on the real path now, and the part of
+  the path that does not exist yet is put back on the end.
+
+### Changed
+
+- **The `verify` and `doc` lanes ask nothing.** Both ran the project's own
+  commands, and both asked before every one of them that the lane's
+  allowlist did not name. A run that stops to be asked is a run that does
+  not finish. The mechanical safety is unchanged: the guard plugin still
+  refuses the denied commands in code, and the lanes still cannot edit.
+
 ## [0.5.7] — 2026-10-21
 
 Published. The tag is what cut it: `git tag v0.5.7 && git push origin main

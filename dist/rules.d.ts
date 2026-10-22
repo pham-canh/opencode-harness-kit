@@ -1,6 +1,12 @@
 /**
  * Whether a write target stays inside the project. A relative path is resolved
  * against the project root, which is where the agent's working directory is.
+ *
+ * The comparison is made on the REAL path, not on the text of the path. A
+ * symlink inside the project that points at /etc is a path inside the
+ * project, and it is a write outside it - and the text of the path is the
+ * only thing the lexical comparison ever saw.
+ *
  * @param {string} target
  * @param {string} root
  * @returns {boolean}
