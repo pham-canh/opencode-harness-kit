@@ -14,7 +14,7 @@ is not happening.
 
 ## [0.5.8] — 2026-10-22
 
-Not yet published. The tag is what cuts it: `git tag v0.5.8 && git push origin
+Published. The tag is what cut it: `git tag v0.5.8 && git push origin
 main v0.5.8`, and the publish job watches for exactly that.
 
 A minor: one new command, and eleven silent failures closed.
