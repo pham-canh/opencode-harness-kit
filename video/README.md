@@ -22,9 +22,54 @@ deleted — is not something a demo of winning numbers would have shown.
 | | |
 |---|---|
 | `narration.txt` | the voiceover of the published video, in beats, with `[[slnc N]]` pauses that hold the voice against the screen |
+| `build.py` | the recorder for a machine with no screen: Chromium, a canvas, and the browser as the encoder |
+| `verify.py` | the gate a take has to pass: it decodes, it looks at frames, it refuses a take that shows nothing |
 | `../docs/demo/pitch.mp4` | the published file |
 | `../docs/demo-loop.gif` | the short loop on the README's front page |
 | `legacy/` | the first dubbing pipeline, kept because its notes explain the timing method |
+
+## Recording on a machine with no screen
+
+`vrec` needs macOS: it posts real keyboard and mouse events, so it needs
+the Screen Recording and Accessibility permissions, and there is nobody to
+grant them on a headless box. There is also no `ffmpeg` there, so the
+usual encode step has nothing to encode with.
+
+`build.py` is the other road, and it is not a smaller `vrec`:
+
+```sh
+python3 video/build.py --spec video/takes/<take>.json
+python3 video/verify.py video/build/<take>.mp4 --frames 2,10,20
+```
+
+Playwright's Chromium draws the scene on a canvas, and the canvas is the
+video: `captureStream` into `MediaRecorder`, at a fixed clock, with the
+browser as the encoder. The file that comes out is an `.mp4` with an
+H.264 track, and **no ffmpeg is installed on the machine that made it**.
+
+The text on screen is the real output of the real commands. The take spec
+names the commands; `build.py` runs them when the video is built and
+types what they printed onto the screen. Nothing in the video is a
+transcript somebody wrote out.
+
+`verify.py` is the gate, and it is the part that matters. A file that
+exists, has the right duration and the right size can still be thirty
+seconds of black. So the gate decodes the take, pulls frames out of it,
+and looks at them: a frame with no spread in its pixels is a frame that
+shows nothing, and the take fails. The frames are written out as PNGs,
+because a check you cannot look at is a check you cannot argue with.
+
+### The take is local, and so is the video
+
+The take spec is in `video/takes/` and the video lands in `video/build/`.
+**Both are gitignored.** A take is about one machine and one moment — which
+commands ran, and which words were on the cards — and the repository ships
+the recorder and not the take. The video is a local artefact until
+somebody decides, deliberately, to publish it; publishing one is a
+separate act with its own rules (the file size is a one-way door, below).
+
+So a recording made here serves this machine. It is not on GitHub, it is
+not in the package, and `npm publish` does not carry it.
 
 ## What is not here, and why
 
@@ -45,11 +90,22 @@ one directory up, and there is exactly one of each.
 
 ## Rebuilding it, if you are reproducing it
 
+On a Mac, with the two tools the published video was made with:
+
 ```sh
 git clone https://github.com/pham-canh/opencode-harness-kit.git
 cd opencode-harness-kit
 git clone https://github.com/pham-canh/vrec.git   ../tools/vrec
 git clone https://github.com/pham-canh/btake.git  ../tools/btake
+```
+
+On a machine with no screen and no ffmpeg, there is nothing to clone: the
+recorder is in this directory, and Playwright's Chromium is the only
+dependency.
+
+```sh
+python3 video/build.py --spec video/takes/<take>.json
+python3 video/verify.py video/build/<take>.mp4 --frames 2,10,20
 ```
 
 `vrec` is macOS-only: it posts real keyboard and mouse events, so the
