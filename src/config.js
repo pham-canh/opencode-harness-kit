@@ -543,7 +543,15 @@ export function generateConfig(p, opts = {}) {
  * @returns {string}
  */
 function render(cfg, p, opts) {
-  const c = opts.comments ? "// " : ""
+  // `comments: false` means "no comments", and the whole header IS comments.
+  // Emitting it without the `// ` prefix - which is what this used to do -
+  // produced a file that was neither JSON nor JSONC: the header sat there as
+  // bare text in front of the JSON body, and the kit's own `parseJsonc`
+  // returned null for it. A caller that asked for pure JSON got a file
+  // nothing could read.
+  if (!opts.comments) return `${JSON.stringify(cfg, null, 2)}\n`
+
+  const c = "// "
   const instructionsPath = opts.instructionsPath ?? globalInstructionsPath()
   const unhealthy = opts.unhealthy
   const lanes = loadLanes()

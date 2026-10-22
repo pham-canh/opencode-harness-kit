@@ -375,6 +375,8 @@ keeps a dated copy in `~/.config/opencode/backups/`, including under
 oc-harness list       profiles with retention and caveats
 oc-harness show <id>  resolved lanes, derived numbers, fallback chains, guard rules
 oc-harness init       pick a free profile, then install + use + verify
+oc-harness auto       refresh + install + use + verify, asking nothing
+oc-harness auto --json   the same reconcile, as a report a script can read
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness use <id> --dryrun   print a summary of what would be written, write nothing
 oc-harness refresh <id> re-derive a profile against the live model list
@@ -676,6 +678,28 @@ oc-harness install                # writes everything that file points at
 `install` symlinks (not copies) the plugin, `prompts/`, `skills/` and
 `GLOBAL.md` into `~/.config/opencode/`, so this repo stays the single source
 of truth and an edit here takes effect on the next opencode start.
+
+### The one command that asks nothing
+
+`init` is the front door for a person: it asks which free profile to run on.
+`auto` is the one for a job, an agent, or a script — it reconciles the whole
+install and never waits for an answer:
+
+```bash
+oc-harness auto              # refresh + install + use + verify
+oc-harness auto --json       # the same, as a report a script can read
+oc-harness auto --offline    # skip the refresh, for a machine that cannot reach models.dev
+```
+
+The profile is the one the installed config names, or the default. A file of
+yours that the installer would overwrite is **left alone and reported**, not
+overwritten and not asked about — the answer a person would give.
+
+`--yes` still means consent. A profile whose models may train on your prompts
+is refused without it, exactly as `use` refuses it: the automation is about
+the mechanics, not about the consent. `auto` exits non-zero when `verify`
+finds a problem it is not allowed to repair, and `--json` puts the problems in
+the report.
 
 Then restart opencode. Check it took:
 
