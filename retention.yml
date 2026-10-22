@@ -51,15 +51,6 @@ models:
     verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
-  opencode/longcat-2.5-preview-free:
-    retention: zero-retention
-    note: >-
-      "Its provider follows a zero-retention policy and does not use your data
-      for model training." Free for a limited time. A preview model: the
-      endpoint can be withdrawn without a rename.
-    verified: 2026-10-19
-    source: https://opencode.ai/docs/zen
-
   # --- Retained: no training, but the provider keeps the data for a stated
   # window. Not the same promise as zero-retention, so it gets its own value. ---
 

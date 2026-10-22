@@ -101,7 +101,7 @@ The default profile is a **fleet**: ten jobs, ten free models, one session.
 The table below is the **unrestricted** fleet (`fleet-all`), where every lane
 gets the model built for it. The default is the **safe** fleet
 (`fleet-safe`), where every lane resolves to a provider with a zero-retention
-policy and six of the ten run on a second-choice model to stay there. Both
+policy and seven of the ten run on a second-choice model to stay there. Both
 cover the same ten jobs; they differ in what they are willing to promise
 about your prompts.
 
@@ -116,7 +116,13 @@ about your prompts.
 | `doc` | read a long document or a spec | GLM 5.3 Flash | 7.4 s |
 | `schema` | produce JSON or a JSON schema | DeepSeek V4.1 Flash | 10.7 s |
 | `sweep` | sweep a lot of code mechanically | Nemotron 3.5 Super VL | 8.4 s |
-| `longform` | read a megabyte, or write alternatives | LongCat 2.5 Preview | 12.0 s |
+| `longform` | read a megabyte, or write alternatives | MiniMax M3.1 Flash | 6.9 s |
+
+`longform` used to run on `longcat-2.5-preview-free`, and the provider
+withdrew it. A withdrawn model is not a lane, it is a hole in a lane: the
+route falls to the next rung of the same chain, which is MiniMax - the only
+model left on the tier with a million-token context. The `measured` column
+for that lane is therefore MiniMax's, not the withdrawn model's.
 
 The `measured` column is the median of five one-line requests to that model
 on 2026-10-21 - the same prompt for every model, from the process start, so
@@ -241,7 +247,6 @@ it. One file covers ten jobs either way.
 | `beam-free` | 5 | 1,048,576 | `max` | retained |
 | `deepseek-v4.1-flash-free` | 5 | 200,000 | `max` | zero-retention |
 | `glm-5.3-flash-free` | 5 | 200,000 | `max` | zero-retention |
-| `longcat-2.5-preview-free` | 5 | 1,000,000 | — | zero-retention |
 | `nemotron-3.5-super-vl-free` | 5 | 1,048,576 | `xhigh` | **may train** |
 | `nemotron-3-ultra-free` | 5 | 1,000,000 | — | **may train** |
 | `nemotron-3.5-lightning-free` | 5 | 262,144 | — | **may train** |
@@ -367,6 +372,28 @@ $ oc-harness research
 
 research  tier opencode, 10 live of 46 free
 
+  ✓ every model in use is still live
+
+  lanes
+      build         2 live 0 dead
+      plan          2 live 0 dead
+      reviewer      2 live 0 dead
+      ...
+
+  candidates  live, free, and not in use yet
+
+      flint-40b-free  ctx 262,144  out 65,536  effort low,medium,high,xhigh,max
+        fits: plan, build, reviewer, locate, verify, doc, schema, sweep, longform
+        retention: unknown
+        no retention verdict in retention.yml - a person has to read the provider's terms
+
+  nothing here is written anywhere. A retention verdict is a person reading a provider's terms.
+```
+
+That is the healthy state. When something has been withdrawn, the same command
+says which, and says where it was used:
+
+```
   gone  1 model(s) in use have been withdrawn
 
       ✗ longcat-2.5-preview-free
@@ -378,17 +405,7 @@ research  tier opencode, 10 live of 46 free
   lanes
       build         2 live 1 dead (longcat-2.5-preview-free)
       plan          2 live 1 dead (longcat-2.5-preview-free)
-      reviewer      2 live 1 dead (longcat-2.5-preview-free)
       ...
-
-  candidates  live, free, and not in use yet
-
-      flint-40b-free  ctx 262,144  out 65,536  effort low,medium,high,xhigh,max
-        fits: plan, build, reviewer, locate, verify, doc, schema, sweep, longform
-        retention: unknown
-        no retention verdict in retention.yml - a person has to read the provider's terms
-
-  nothing here is written anywhere. A retention verdict is a person reading a provider's terms.
 ```
 
 It reports four things:
@@ -433,9 +450,15 @@ candidate with no verdict is reported as `retention: unknown` and carries an
 explicit blocker, rather than being quietly filed under the tier it happens to
 be cheapest on.
 
-The output is a shortlist to argue with, not a decision to accept. When you
-have read the terms and made the call, `retention.yml` is where the call
-lives, and `doctor` checks the rest.
+`refresh` draws the line in the other direction, and it is the one that
+matters: it **only ever removes**. A model that has been withdrawn is removed
+from the chains. A model that might do the job better is never added, because
+putting a model into a lane changes what that lane does, and that is a
+person's decision.
+
+The output of `research` is a shortlist to argue with, not a decision to
+accept. When you have read the terms and made the call, `retention.yml` is
+where the call lives, and `doctor` checks the rest.
 
 #### Run it on a schedule
 
@@ -455,8 +478,8 @@ can read it:
 {
   "ok": true,
   "tier": { "provider": "opencode", "total": 46, "live": 10, "withdrawn": 36 },
-  "shipped": { "count": 9, "gone": [ { "id": "longcat-2.5-preview-free", "present": true } ] },
-  "lanes": [ { "lane": "build", "dead": ["longcat-2.5-preview-free"], "live": ["minimax-m3.1-flash-free"] } ],
+  "shipped": { "count": 9, "gone": [] },
+  "lanes": [ { "lane": "build", "dead": [], "live": ["minimax-m3.1-flash-free", "deepseek-v4.1-flash-free"] } ],
   "candidates": [ { "id": "flint-40b-free", "fits": ["build"], "retention": "unknown", "blockers": ["..."] } ]
 }
 ```
@@ -483,6 +506,43 @@ still alive, and it says so:
 charges nothing for. `big-pickle` is on it and does not end in `-free`, so
 the suffix is a naming convention and not the test — `research` reads the
 price.
+
+### Refresh: taking the dead rung out
+
+`research` tells you a rung is dead. `refresh` takes it out.
+
+```
+$ oc-harness refresh --all
+
+refreshed 11 of 11 profile(s) against the live catalogue
+  ~ fleet-safe: withdrawn rungs removed: longcat-2.5-preview-free
+      lane build: minimax, deepseek, longcat -> minimax, deepseek
+      lane longform: longcat, minimax, deepseek -> minimax, deepseek
+      ...
+```
+
+A chain names the models that could serve a lane, best first. A model the
+provider has withdrawn is not one of them any more: it cannot run, so it is
+dead weight in a chain whose entire job is to survive a withdrawal. The
+refresh removes it, and if the lane's own primary was the dead one, the lane
+takes the next live rung as its primary — a chain has to start with its
+model. The fallback queue loses its dead entries, and the utility route moves
+to a model the profile still reaches.
+
+**The refresh only ever REMOVES.** Putting a model into a lane changes what
+that lane does, and that is a person's decision — it is what `research` is
+for. A script that quietly added a candidate would be putting a model whose
+terms nobody has read into the path of every prompt.
+
+Two cases a script cannot repair, and says so instead of pretending:
+
+- **A profile whose own model was withdrawn.** There is no chain behind it to
+  fall back to, so there is nothing to repair. `refresh` reports it and leaves
+  the file alone; the honest fix is to retire the profile, and retiring one is
+  a decision a person makes. (That is exactly what happened to
+  `longcat-2.5-preview-free`.)
+- **A lane left with no model at all.** Every rung of its chain was dead. It
+  is reported, not filled.
 
 ## Requirements
 

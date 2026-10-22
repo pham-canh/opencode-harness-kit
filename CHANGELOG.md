@@ -16,6 +16,26 @@ is not happening.
 
 ### Added
 
+- **`refresh` now takes the dead rung out.** `research` tells you a rung is
+  dead; `refresh` removes it. A chain names the models that could serve a
+  lane, best first, and a model the provider has withdrawn cannot run - so it
+  is dead weight in a chain whose entire job is to survive a withdrawal.
+
+  A lane whose own primary was withdrawn takes the next live rung of its own
+  chain, because a chain has to start with its model. The fallback queue
+  loses its dead entries, and the utility route moves to a model the profile
+  still reaches.
+
+  **The refresh only ever REMOVES.** Putting a model into a lane changes what
+  that lane does, and that is a person's decision - it is what `research` is
+  for. A script that quietly added a candidate would be putting a model whose
+  terms nobody has read into the path of every prompt.
+
+  Two cases a script cannot repair are reported rather than papered over: a
+  profile whose own model was withdrawn (there is no chain behind it to fall
+  back to, so the honest fix is to retire the profile, and that is a person's
+  call), and a lane left with no model at all.
+
 - **`oc-harness research` — the half of the perishable-tier question nobody
   was answering.** `doctor` says whether the model you depend on is still
   there. It said nothing about what has come to replace it, so a withdrawal
@@ -78,6 +98,21 @@ is not happening.
   project in that state could not tell the difference between "the pruner has
   nothing to do" and "the pruner is broken". The failure is now reported once
   per session, by name.
+
+### Removed
+
+- **The `longcat-2.5-preview-free` profile.** The provider withdrew the
+  model. A withdrawn model is not a profile that still works - it is a route
+  that fails on contact - and this one was the *only* model its profile named,
+  so there was no chain behind it to fall back to. The profile is retired and
+  recorded in `profiles/index.json` under `withdrawn`, with its retention
+  verdict removed from `retention.yml` along with it: a verdict about a model
+  that cannot run is not a verdict about anything.
+
+  The two fleets are unaffected in kind: `longcat` was a fallback rung in
+  every lane, and each of those lanes now runs on the rung above it. The
+  default fleet loses its third rung, so it now runs its ten lanes on the
+  three zero-retention models still live on the tier.
 
 - **The demo video is not published with the repository.** The newer take —
   thirty seconds, made on a machine with no screen, the terminal in it the

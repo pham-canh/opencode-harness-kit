@@ -40,17 +40,21 @@ jobs:
           node bin/oc-harness.mjs list
           node bin/oc-harness.mjs show fleet-safe
           node bin/oc-harness.mjs use fleet-safe --print | tail -20
-          # longcat publishes no effort levels: the loader omits `variant` for
-          # every lane it serves. Assert the count is zero, not merely that the
-          # word appears somewhere — an unmanaged key inherited from a dirty
+          # `big-pickle` publishes no effort levels: the loader omits `variant`
+          # for every lane it serves. Assert the count is zero, not merely that
+          # the word appears somewhere — an unmanaged key inherited from a dirty
           # local config once faked this check green.
+          #
+          # It used to be `longcat-2.5-preview-free`, which the provider
+          # withdrew. A model that cannot run is not a profile, and a check
+          # that names one fails on a kit that is otherwise healthy.
           #
           # The check runs against an empty config dir, or a config left over
           # from a previous step would carry its own `variant` keys into the
           # merge and the count would not be zero.
           export OPENCODE_CONFIG_DIR="$RUNNER_TEMP/opencode-smoke"
           mkdir -p "$OPENCODE_CONFIG_DIR"
-          test "$(node bin/oc-harness.mjs use longcat-2.5-preview-free --print | grep -c '"variant"')" = "0"
+          test "$(node bin/oc-harness.mjs use big-pickle --print | grep -c '"variant"')" = "0"
           # A fleet puts ten different models behind ten lanes.
           test "$(node bin/oc-harness.mjs use fleet-all --print | grep -c '"model": "opencode/')" -ge "10"
       - name: install and verify into a scratch config dir

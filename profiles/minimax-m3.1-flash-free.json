@@ -5,7 +5,7 @@
   "provider": "opencode",
   "model": "minimax-m3.1-flash-free",
   "family": "minimax",
-  "verified": "2026-10-21",
+  "verified": "2026-10-22",
   "retention": "zero-retention",
   "notes": "Flagship coding and agent model on the free tier: 512k output tokens, the widest of any free route, and the fastest measured image reader at 7.7s. Tool calls are stable. It does not support temperature, and models.dev publishes no structured_output flag for it, so JSON output is requested in the prompt rather than negotiated with the API. Measured at 3.1s for a one-word reply.",
   "limits": {
@@ -45,7 +45,6 @@
   },
   "fallback": [
     "deepseek-v4.1-flash-free",
-    "longcat-2.5-preview-free",
     "glm-5.3-flash-free"
   ]
 }

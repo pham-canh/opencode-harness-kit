@@ -5,7 +5,7 @@
   "provider": "opencode",
   "model": "minimax-m3.1-flash-free",
   "family": null,
-  "verified": "2026-10-21",
+  "verified": "2026-10-22",
   "retention": "may-train",
   "maxRetention": "may-train",
   "notes": "Every lane gets the model built for it: beam plans, Nemotron 3 Ultra reviews, Lightning sweeps, MiMo sees, GLM audits, Super VL reasons with the effort turned off. Five of the ten providers state that collected data may be used to improve the model, or log the session, so the profile as a whole is may-train and the generated config says so in its header. Install it for public or throwaway repositories.",
@@ -52,16 +52,14 @@
       "model": "minimax-m3.1-flash-free",
       "chain": [
         "minimax-m3.1-flash-free",
-        "deepseek-v4.1-flash-free",
-        "longcat-2.5-preview-free"
+        "deepseek-v4.1-flash-free"
       ]
     },
     "plan": {
       "model": "beam-free",
       "chain": [
         "beam-free",
-        "deepseek-v4.1-flash-free",
-        "longcat-2.5-preview-free"
+        "deepseek-v4.1-flash-free"
       ]
     },
     "reviewer": {
@@ -77,7 +75,6 @@
       "chain": [
         "nemotron-3.5-lightning-free",
         "big-pickle",
-        "longcat-2.5-preview-free",
         "deepseek-v4.1-flash-free"
       ]
     },
@@ -93,7 +90,6 @@
       "model": "mimo-v2.6-flash-free",
       "chain": [
         "mimo-v2.6-flash-free",
-        "longcat-2.5-preview-free",
         "minimax-m3.1-flash-free"
       ]
     },
@@ -101,8 +97,7 @@
       "model": "glm-5.3-flash-free",
       "chain": [
         "glm-5.3-flash-free",
-        "deepseek-v4.1-flash-free",
-        "longcat-2.5-preview-free"
+        "deepseek-v4.1-flash-free"
       ]
     },
     "schema": {
@@ -117,14 +112,12 @@
       "model": "nemotron-3.5-super-vl-free",
       "chain": [
         "nemotron-3.5-super-vl-free",
-        "longcat-2.5-preview-free",
         "beam-free"
       ]
     },
     "longform": {
-      "model": "longcat-2.5-preview-free",
+      "model": "minimax-m3.1-flash-free",
       "chain": [
-        "longcat-2.5-preview-free",
         "minimax-m3.1-flash-free",
         "beam-free"
       ]
@@ -138,7 +131,6 @@
   },
   "fallback": [
     "minimax-m3.1-flash-free",
-    "deepseek-v4.1-flash-free",
-    "longcat-2.5-preview-free"
+    "deepseek-v4.1-flash-free"
   ]
 }

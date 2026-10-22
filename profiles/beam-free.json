@@ -5,7 +5,7 @@
   "provider": "opencode",
   "model": "beam-free",
   "family": "beam",
-  "verified": "2026-10-19",
+  "verified": "2026-10-22",
   "retention": "retained",
   "notes": "Reflection 501B-A23B, text only, and the freshest knowledge of the free set at 2026-06-30. Measured as the fastest route on the tier: 2.6s average over seven requests. Its provider does not train on prompts but retains them for 30 days, which is why it is `retained` rather than `zero-retention`.",
   "limits": {
@@ -45,7 +45,6 @@
   },
   "fallback": [
     "deepseek-v4.1-flash-free",
-    "glm-5.3-flash-free",
-    "longcat-2.5-preview-free"
+    "glm-5.3-flash-free"
   ]
 }

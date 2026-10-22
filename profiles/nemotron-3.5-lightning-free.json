@@ -5,7 +5,7 @@
   "provider": "opencode",
   "model": "nemotron-3.5-lightning-free",
   "family": "nemotron-free",
-  "verified": "2026-10-19",
+  "verified": "2026-10-22",
   "retention": "may-train",
   "notes": "Its output cap equals its whole context window, so it is the lane for emitting a file larger than 128k tokens. It publishes no effort level, so it spends nothing on reasoning. It is usually the quickest lane on the tier - 3.7s average over four requests - but one measured call took 114s, so it is not on a latency-sensitive path.",
   "limits": {
@@ -38,7 +38,6 @@
     "keepUserMessages": true
   },
   "fallback": [
-    "big-pickle",
-    "longcat-2.5-preview-free"
+    "big-pickle"
   ]
 }

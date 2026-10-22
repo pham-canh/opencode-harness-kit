@@ -30,6 +30,12 @@
  * judgement about a provider's terms, and `refresh` already draws the line: a
  * script rewrites what a machine can derive and never touches what a person
  * decided. What comes out of here is a shortlist, not a decision.
+ *
+ * The one exception is `pruneWithdrawnChains`, which DOES rewrite a profile.
+ * It is the narrow exception the line allows: removing a model the provider
+ * has withdrawn is a derivation from live metadata, and it only ever REMOVES.
+ * A script never puts a model into a lane - that changes what the lane does,
+ * and that is a person's call.
  */
 
 /** The provider the kit's free tier lives on. */
@@ -315,4 +321,142 @@ export function researchModels({
     lanes,
     candidates,
   }
+}
+
+/**
+ * @typedef {object} PruneReport
+ * @property {boolean} dead the profile's own model is gone, so there is nothing left to repair
+ * @property {string[]} pruned the models that were removed, deduplicated
+ * @property {{ lane: string, from: string[], to: string[], removed: string[] }[]} lanes
+ * @property {{ from: string[], to: string[], removed: string[] } | null} fallback
+ * @property {string | null} utilityMoved the utility route, when it pointed at a withdrawn model
+ * @property {string[]} emptied lanes left with no model at all
+ */
+
+/**
+ * Remove the rungs a lane can no longer use.
+ *
+ * A chain names the models that could serve a lane, best first. A model the
+ * provider has withdrawn is not one of them any more: it cannot run, so it is
+ * dead weight in a chain whose entire job is to survive a withdrawal.
+ *
+ * Pruning is a derivation from live metadata, so a script may do it. The
+ * human chose WHICH models a lane lists and in what order; a script can only
+ * remove the ones that are gone. A script never ADDS a rung, because putting
+ * a model into a lane it was not designed for changes what the lane does -
+ * that is a person's call, and `research` is where it gets made.
+ *
+ * The profile is repaired in place and the report says what changed:
+ *
+ *   - a lane whose primary model was withdrawn takes the next live rung as
+ *     its primary, because a chain has to start with its model
+ *   - the fallback queue loses its dead entries
+ *   - the utility route moves to a live model the profile still reaches
+ *
+ * A profile whose OWN model has been withdrawn cannot be repaired this way:
+ * there is no chain behind it to fall back to. That is reported as `dead`,
+ * because the honest repair is to retire the profile, and retiring it is a
+ * person's decision.
+ *
+ * @param {any} p a profile object, repaired in place
+ * @param {any} catalog the models.dev catalogue
+ * @param {string} [provider]
+ * @returns {PruneReport}
+ */
+export function pruneWithdrawnChains(p, catalog, provider = TIER_PROVIDER) {
+  const models = catalog?.[provider]?.models ?? {}
+  /** @param {string} id */
+  const alive = (id) => {
+    const record = models[id]
+    return Boolean(record) && !isWithdrawn(record)
+  }
+
+  /** @type {PruneReport} */
+  const report = {
+    dead: false,
+    pruned: [],
+    lanes: [],
+    fallback: null,
+    utilityMoved: null,
+    emptied: [],
+  }
+
+  // The profile's own model has no chain behind it. If it is gone, the
+  // profile is gone, and pretending otherwise would write a profile that
+  // points every lane at a model that cannot run.
+  if (p?.model && !alive(p.model)) {
+    report.dead = true
+    report.pruned.push(p.model)
+    return report
+  }
+
+  const removed = new Set()
+
+  for (const [lane, rm] of Object.entries(p?.roleModels ?? {})) {
+    if (!rm) continue
+    const chain = /** @type {string[]} */ (
+      Array.isArray(rm.chain) && rm.chain.length ? rm.chain : rm.model ? [rm.model] : []
+    )
+    const kept = chain.filter((rung) => {
+      if (alive(rung)) return true
+      removed.add(rung)
+      return false
+    })
+    if (kept.length === chain.length) continue
+
+    report.lanes.push({
+      lane,
+      from: [...chain],
+      to: kept,
+      removed: chain.filter((rung) => !kept.includes(rung)),
+    })
+
+    if (!kept.length) {
+      // Nothing left to run this lane on. Recorded rather than papered over.
+      report.emptied.push(lane)
+      continue
+    }
+    rm.chain = kept
+    // A chain has to start with its model, so a lane whose primary was
+    // withdrawn takes the next live rung as its primary.
+    if (rm.model !== kept[0]) rm.model = kept[0]
+  }
+
+  if (Array.isArray(p?.fallback)) {
+    const before = [...p.fallback]
+    const kept = before.filter((model) => {
+      if (alive(model)) return true
+      removed.add(model)
+      return false
+    })
+    if (kept.length !== before.length) {
+      report.fallback = {
+        from: before,
+        to: kept,
+        removed: before.filter((m) => !kept.includes(m)),
+      }
+      p.fallback = kept
+    }
+  }
+
+  // The utility route has to be a model the profile still reaches, or a
+  // failover leaves opencode's short auxiliary calls pointing outside the
+  // fleet. If it pointed at a withdrawn model, it moves to one that is still
+  // in a chain.
+  if (p?.utility?.model && !alive(p.utility.model)) {
+    removed.add(p.utility.model)
+    const reachable = new Set()
+    for (const rm of Object.values(p?.roleModels ?? {})) {
+      if (rm?.model) reachable.add(rm.model)
+      for (const rung of rm?.chain ?? []) reachable.add(rung)
+    }
+    const next = [...reachable].find((model) => alive(model))
+    if (next) {
+      report.utilityMoved = p.utility.model
+      p.utility.model = next
+    }
+  }
+
+  report.pruned = [...removed]
+  return report
 }

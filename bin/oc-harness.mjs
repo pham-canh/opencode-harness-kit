@@ -47,7 +47,7 @@ import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin,
 import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
 import { planEffort } from "../src/effort.js"
 import { findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
-import { researchModels, isWithdrawn } from "../src/research.js"
+import { researchModels, isWithdrawn, pruneWithdrawnChains } from "../src/research.js"
 import { main as trustMain } from "../src/trust.js"
 
 const CONFIG_DIR =
@@ -1703,6 +1703,11 @@ function diffProfile(p, live) {
  * Only machine-derived fields are rewritten. `retention`, `notes`, `roles` and
  * the fallback queue are human judgements and are never touched by a script:
  * losing a privacy verdict to an automated rewrite would be worse than drift.
+ *
+ * The ONE exception is a chain rung the provider has withdrawn. A chain names
+ * the models that could serve a lane, and a withdrawn model is not one of them
+ * any more - it cannot run. Removing it is a derivation from live metadata
+ * and it only ever removes; nothing is ever put INTO a lane.
  */
 /**
  * Refresh every shipped profile against the live catalogue.
@@ -1743,8 +1748,18 @@ async function cmdRefreshAll() {
       gone.push(`${id} (${p.provider}/${p.model})`)
       continue
     }
+    // A model the provider has withdrawn is still IN the catalogue, so the
+    // check above passes it. A profile whose own model was withdrawn has no
+    // chain behind it to fall back to, so there is nothing a refresh can
+    // repair - it has to be retired, and that is a person's call.
+    const prune = pruneWithdrawnChains(p, catalog, p.provider)
+    if (prune.dead) {
+      gone.push(`${id} (${p.provider}/${p.model} was withdrawn from the provider)`)
+      continue
+    }
     const before = diffProfile(p, live)
-    if (!before.length) {
+    const pruned = prune.pruned.length > 0
+    if (!before.length && !pruned) {
       same.push(id)
       continue
     }
@@ -1752,8 +1767,18 @@ async function cmdRefreshAll() {
     // `verified` is the field that says when a profile was last checked
     // against live metadata. Leaving it stale after a refresh makes it a lie.
     p.verified = new Date().toISOString().slice(0, 10)
+    const notes = [...before]
+    if (pruned) {
+      notes.push(`withdrawn rungs removed: ${prune.pruned.join(", ")}`)
+      for (const lane of prune.lanes) {
+        notes.push(`lane ${lane.lane}: ${lane.from.join(", ")} -> ${lane.to.join(", ")}`)
+      }
+      if (prune.utilityMoved) {
+        notes.push(`utility route: ${prune.utilityMoved} -> ${p.utility.model}`)
+      }
+    }
     if (flag("--dryrun")) {
-      changed.push(`${id}: ${before.join(", ")} (dry run, nothing written)`)
+      changed.push(`${id}: ${notes.join("; ")} (dry run, nothing written)`)
       continue
     }
     // A refresh overwrites a file the user may have edited by hand, and for
@@ -1766,7 +1791,7 @@ async function cmdRefreshAll() {
       continue
     }
     writeFileSync(path, `${JSON.stringify(p, null, 2)}\n`)
-    changed.push(`${id}: ${before.join(", ")}`)
+    changed.push(`${id}: ${notes.join("; ")}`)
   }
   console.log(
     `\n${bold("refreshed")}  ${stamp(`${checked} of ${ids.length} profile(s) against the live catalogue`)}\n`,
@@ -2304,8 +2329,30 @@ async function cmdRefresh(id) {
     )
   }
 
+  // A withdrawn model is still in the catalogue, so the check above passes
+  // it. A profile whose own model was withdrawn has no chain behind it, so
+  // there is nothing to fall back to and nothing a refresh can repair.
+  const prune = pruneWithdrawnChains(p, catalog, p.provider)
+  if (prune.dead) {
+    fail(
+      `${p.provider}/${p.model} was withdrawn from the provider.\n` +
+        `  This profile has no chain to fall back to, so it cannot be repaired.\n` +
+        `  Remove it, or point it at a model that is still live.`,
+    )
+  }
+
   const before = diffProfile(p, live)
-  if (before.length === 0) {
+  const notes = [...before]
+  if (prune.pruned.length > 0) {
+    notes.push(`withdrawn rungs removed: ${prune.pruned.join(", ")}`)
+    for (const lane of prune.lanes) {
+      notes.push(`lane ${lane.lane}: ${lane.from.join(", ")} -> ${lane.to.join(", ")}`)
+    }
+    if (prune.utilityMoved) {
+      notes.push(`utility route: ${prune.utilityMoved} -> ${p.utility.model}`)
+    }
+  }
+  if (notes.length === 0) {
     console.log(`\n  ${green("✓")} ${id} already matches live metadata\n`)
     return
   }
@@ -2338,7 +2385,7 @@ async function cmdRefresh(id) {
 
   if (flag("--dryrun")) {
     console.log(`\n  ${stamp("dry run, nothing written")}`)
-    for (const line of before) console.log(`      ${line}`)
+    for (const line of notes) console.log(`      ${line}`)
     return
   }
   // A refresh overwrites a file the user may have edited by hand, and for
@@ -2353,9 +2400,9 @@ async function cmdRefresh(id) {
   }
   writeFileSync(path, `${JSON.stringify(p, null, 2)}\n`)
   console.log(`\n  ${green("✓")} refreshed ${path}`)
-  for (const line of before) console.log(`      ${line}`)
+  for (const line of notes) console.log(`      ${line}`)
   console.log(
-    `\n  ${stamp("kept as-is: retention, roles, notes, fallback (human judgement)")}\n`,
+    `\n  ${stamp("kept as-is: retention, roles, notes (human judgement)")}\n`,
   )
 }
 

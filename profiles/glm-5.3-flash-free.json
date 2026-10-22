@@ -5,7 +5,7 @@
   "provider": "opencode",
   "model": "glm-5.3-flash-free",
   "family": "glm-flash",
-  "verified": "2026-10-19",
+  "verified": "2026-10-22",
   "retention": "zero-retention",
   "notes": "Zhipu. The only free model that publishes pdf input, and the only one with structured output and a zero-retention policy at the same time. The pdf does not work: the provider's endpoint rejects a `file` content part, and OpenCode will not read a binary file, so documents are extracted locally first. It measured 4.4-5.8s on the work a lane actually does, and it sits on the thorough lane because it is the careful one rather than the quick one.",
   "limits": {
@@ -43,7 +43,6 @@
   },
   "fallback": [
     "deepseek-v4.1-flash-free",
-    "longcat-2.5-preview-free",
     "beam-free"
   ]
 }

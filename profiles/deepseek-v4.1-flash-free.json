@@ -5,7 +5,7 @@
   "provider": "opencode",
   "model": "deepseek-v4.1-flash-free",
   "family": "deepseek-flash",
-  "verified": "2026-10-19",
+  "verified": "2026-10-22",
   "retention": "zero-retention",
   "notes": "Reasoning plus agentic coding plus structured output on a zero-retention provider. The natural schema lane. Its knowledge cutoff is 2025-05, the oldest of the tier, so it is not the lane for anything that depends on recent facts.",
   "limits": {
@@ -43,7 +43,6 @@
   },
   "fallback": [
     "glm-5.3-flash-free",
-    "longcat-2.5-preview-free",
     "beam-free"
   ]
 }
