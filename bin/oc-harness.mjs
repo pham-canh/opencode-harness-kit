@@ -3085,8 +3085,8 @@ async function runDoctor(catalog) {
     }
     const live = catalog?.[p.provider]?.models?.[p.model]
     if (!live) {
-      console.log(`  ${red("✗")} ${id.padEnd(32)} ${red("not in models.dev - may be withdrawn")}`)
-      note("drift", id, "not in models.dev - may be withdrawn")
+      console.log(`  ${red("✗")} ${id.padEnd(32)} ${red("not in models.dev - drifted from live metadata")}`)
+      note("drift", id, "not in models.dev - drifted from live metadata")
       drift++
       continue
     }
