@@ -1,3 +1,4 @@
+export type Profile = import("./profile.js").Profile;
 /** @typedef {import("./profile.js").Profile} Profile */
 /**
  * Where the global rule set lives, as opencode should be told to look for it.
@@ -8,13 +9,33 @@
  * compiler would name another. Written with a leading `~` when it is the
  * default, which is both correct and readable in the generated file.
  */
-export function globalInstructionsPath(): string;
+export declare function globalInstructionsPath(): string;
+/**
+ * The default location, for documentation and tests. Prefer
+ * `globalInstructionsPath()` when generating a config.
+ *
+ * It is written by `oc-harness install`, which symlinks this file rather than
+ * copying it, so the repo stays the source of truth. `oc-harness verify` fails if
+ * the path it names does not resolve - the failure mode where a config points at
+ * an instruction file that was never installed is silent and makes the whole
+ * harness a no-op.
+ */
+export declare const GLOBAL_INSTRUCTIONS = "~/.config/opencode/GLOBAL.md";
 /**
  * The kit's own version, read from its package.json.
  *
  * @returns {string}
  */
-export function kitVersion(): string;
+export declare function kitVersion(): string;
+/**
+ * The memory plugin this kit can turn on.
+ *
+ * The kit does not implement memory. A local vector store with embeddings, a
+ * web UI and auto-capture is a large thing to build badly, and there is one
+ * that is already good: `opencode-mem` (MIT). What the kit can do is make it
+ * one flag away, and keep the config honest about it.
+ */
+export declare const MEMORY_PLUGIN = "opencode-mem@latest";
 /**
  * The config with the memory plugin turned on.
  *
@@ -29,7 +50,7 @@ export function kitVersion(): string;
  * @param {string} [spec] the plugin id, so a pinned version or a mirror works
  * @returns {any}
  */
-export function withMemoryPlugin(base: any, spec?: string): any;
+export declare function withMemoryPlugin(base: any, spec?: string): any;
 /**
  * Whether the memory plugin can be added to this config.
  *
@@ -40,7 +61,7 @@ export function withMemoryPlugin(base: any, spec?: string): any;
  * @param {any} base
  * @returns {boolean}
  */
-export function canAddMemoryPlugin(base: any): boolean;
+export declare function canAddMemoryPlugin(base: any): boolean;
 /**
  * The utility route a profile names, as a full model id.
  *
@@ -52,7 +73,7 @@ export function canAddMemoryPlugin(base: any): boolean;
  * @param {any} p the profile
  * @returns {string | null}
  */
-export function utilityModel(p: any): string | null;
+export declare function utilityModel(p: any): string | null;
 /**
  * The instruction list a generated config carries.
  *
@@ -73,37 +94,7 @@ export function utilityModel(p: any): string | null;
  * @param {string} kitPath
  * @returns {string[]}
  */
-export function mergeInstructions(base: string[] | string | undefined, kitPath: string): string[];
-/**
- * @param {Profile} p
- * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string> }} [opts]
- * @returns {string}
- */
-export function generateConfig(p: Profile, opts?: {
-    base?: Record<string, any>;
-    comments?: boolean;
-    unhealthy?: Set<string>;
-}): string;
-/**
- * The default location, for documentation and tests. Prefer
- * `globalInstructionsPath()` when generating a config.
- *
- * It is written by `oc-harness install`, which symlinks this file rather than
- * copying it, so the repo stays the source of truth. `oc-harness verify` fails if
- * the path it names does not resolve - the failure mode where a config points at
- * an instruction file that was never installed is silent and makes the whole
- * harness a no-op.
- */
-export const GLOBAL_INSTRUCTIONS: "~/.config/opencode/GLOBAL.md";
-/**
- * The memory plugin this kit can turn on.
- *
- * The kit does not implement memory. A local vector store with embeddings, a
- * web UI and auto-capture is a large thing to build badly, and there is one
- * that is already good: `opencode-mem` (MIT). What the kit can do is make it
- * one flag away, and keep the config honest about it.
- */
-export const MEMORY_PLUGIN: "opencode-mem@latest";
+export declare function mergeInstructions(base: string[] | string | undefined, kitPath: string): string[];
 /**
  * Read-only and verification commands.
  *
@@ -120,6 +111,22 @@ export const MEMORY_PLUGIN: "opencode-mem@latest";
  * surface was 146 prompts; gating only the mutating verbs keeps those 146
  * prompt-free without opening a publish path the guard plugin cannot police.
  */
-export const BASH_ALLOWLIST: string[];
+export declare const BASH_ALLOWLIST: string[];
+/**
+ * Hard blocks.
+ *
+ * The list lives in ./denylist.js because it is enforced in TWO places: by
+ * opencode's permission map, and by the guard plugin. The two used to be
+ * different lists, and the comment here claimed they were the same.
+ */
 export { BASH_DENYLIST } from "./denylist.js";
-export type Profile = import("./profile.js").Profile;
+/**
+ * @param {Profile} p
+ * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string> }} [opts]
+ * @returns {string}
+ */
+export declare function generateConfig(p: Profile, opts?: {
+    base?: Record<string, any>;
+    comments?: boolean;
+    unhealthy?: Set<string>;
+}): string;

@@ -12,7 +12,7 @@
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
 
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync } from "node:fs"
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync, renameSync, unlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { execFileSync } from "node:child_process"

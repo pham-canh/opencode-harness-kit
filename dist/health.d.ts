@@ -1,3 +1,17 @@
+export type SpentEntry = {
+    /**
+     * when the route was recorded as spent
+     */
+    at: string;
+    /**
+     * the pattern that matched
+     */
+    reason: string;
+};
+export type Health = {
+    unhealthy: Record<string, SpentEntry>;
+    active?: string;
+};
 /**
  * The window, in milliseconds, a recorded spent route is honoured for.
  *
@@ -6,7 +20,7 @@
  *
  * @returns {number}
  */
-export function spentWindowMs(): number;
+export declare function spentWindowMs(): number;
 /**
  * Whether a recorded route is still spent.
  *
@@ -19,7 +33,7 @@ export function spentWindowMs(): number;
  * @param {number} [now]
  * @returns {boolean}
  */
-export function isSpent(entry: unknown, now?: number): boolean;
+export declare function isSpent(entry: unknown, now?: number): boolean;
 /**
  * The spent routes that are still spent.
  *
@@ -32,12 +46,12 @@ export function isSpent(entry: unknown, now?: number): boolean;
  * @param {number} [now]
  * @returns {Record<string, SpentEntry>}
  */
-export function liveUnhealthy(health: Health, now?: number): Record<string, SpentEntry>;
+export declare function liveUnhealthy(health: Health, now?: number): Record<string, SpentEntry>;
 /**
  * @param {string} dir the project root
  * @returns {string}
  */
-export function healthPath(dir: string): string;
+export declare function healthPath(dir: string): string;
 /**
  * The health file, or an empty one.
  *
@@ -50,7 +64,7 @@ export function healthPath(dir: string): string;
  * @param {string} dir the project root
  * @returns {Health}
  */
-export function readHealth(dir: string): Health;
+export declare function readHealth(dir: string): Health;
 /**
  * Write the health file, without the routes whose window has passed.
  *
@@ -61,14 +75,14 @@ export function readHealth(dir: string): Health;
  * @param {string} dir the project root
  * @param {Health} health
  */
-export function writeHealth(dir: string, health: Health): void;
+export declare function writeHealth(dir: string, health: Health): void;
 /**
  * The routes on disk that are still spent.
  *
  * @param {string} dir the project root
  * @returns {Record<string, SpentEntry>}
  */
-export function unhealthyRoutes(dir: string): Record<string, SpentEntry>;
+export declare function unhealthyRoutes(dir: string): Record<string, SpentEntry>;
 /**
  * The models a previous session found spent.
  *
@@ -88,18 +102,4 @@ export function unhealthyRoutes(dir: string): Record<string, SpentEntry>;
  * @param {string} dir the project root
  * @returns {Set<string>}
  */
-export function unhealthyModels(dir: string): Set<string>;
-export type SpentEntry = {
-    /**
-     * when the route was recorded as spent
-     */
-    at: string;
-    /**
-     * the pattern that matched
-     */
-    reason: string;
-};
-export type Health = {
-    unhealthy: Record<string, SpentEntry>;
-    active?: string | undefined;
-};
+export declare function unhealthyModels(dir: string): Set<string>;
