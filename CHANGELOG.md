@@ -12,8 +12,6 @@ is not happening.
 
 ---
 
-## [Unreleased]
-
 ## [0.6.0] — 2026-10-22
 
 Published. The tag is what cut it: `git tag v0.6.0 && git push origin
