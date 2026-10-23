@@ -29,8 +29,8 @@ import {
   loadLanes,
 } from "./profile.js"
 
-import { join } from "node:path"
-import { readFileSync } from "node:fs"
+import { join, resolve } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { BASH_DENYLIST } from "./denylist.js"
 
@@ -77,6 +77,61 @@ export function kitVersion() {
   } catch {
     return "unknown"
   }
+}
+
+/** Where opencode's user config lives when nothing overrides it. */
+export const DEFAULT_CONFIG_DIR = join(homedir(), ".config/opencode")
+
+/** Where this kit itself lives - the parent of the bundle (or src) directory. */
+export function kitRoot() {
+  // `../package.json` from the module's own location is exactly where
+  // kitVersion() reads the version from: in dev, `../` of src/; in a bundle,
+  // `../` of dist/. Either way it is the kit's root, which is the right
+  // second base for a relative skills path that points INTO the kit.
+  return new URL("..", import.meta.url).pathname
+}
+
+/**
+ * The skills.paths entries of a base config, with the dead ones dropped.
+ *
+ * A `paths` entry that never resolves is not a configuration - it is noise
+ * the file carries for every reader to puzzle over, and a reader who DOES
+ * puzzle over it gets a wrong model of the world: this kit's config shipped
+ * `["../skills"]` which had dl resolved to `~/.config/skills` - a directory
+ * that has never existed on this machine - for release after release.
+ *
+ * A relative entry resolves against the opencode config directory; an
+ * absolute one stands as written; a relative one is also checked against the
+ * kit root, because an entry pointing INTO the kit was always a plausible
+ * intent and the kit knows where its own skills are. Nothing that resolves
+ * is kept; word everything else is dropped and named in the header, the same
+ * way dropped bash rules and removed lanes are.
+ *
+ * @param {any} skills
+ * @param {string} configDir
+ * @param {string} [kitRoot] where the kit itself lives, when overridable
+ * @returns {{ skills: any, dropped: string[] }}
+ */
+export function cleanSkillPaths(skills, configDir, kitRoot) {
+  const paths = skills?.paths
+  if (!Array.isArray(paths) || !paths.length) return { skills, dropped: [] }
+  const kept = []
+  const dropped = []
+  for (const p of paths) {
+    if (typeof p !== "string" || !p.trim()) {
+      dropped.push(String(p))
+      continue
+    }
+    const candidates =
+      p.startsWith("/") || p.startsWith("~") ? [p] : [resolve(configDir, p), ...(kitRoot ? [resolve(kitRoot, p)] : [])]
+    const live = candidates.some((c) => {
+      const real = c.startsWith("~") ? join(homedir(), c.slice(1)) : c
+      return existsSync(real)
+    })
+    if (live) kept.push(p)
+    else dropped.push(p)
+  }
+  return { skills: { ...skills, paths: kept }, dropped }
 }
 
 /**
@@ -316,7 +371,8 @@ function userBashRules(base) {
 
 /**
  * @param {Profile} p
- * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string> }} [opts]
+ * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string>,
+ *          configDir?: string, kitRoot?: string }} [opts]
  * @returns {string}
  */
 export function generateConfig(p, opts = {}) {
@@ -446,6 +502,15 @@ export function generateConfig(p, opts = {}) {
   delete base_.variant
   delete base_.tool_output
 
+  // The skills paths are cleaned before the config is built, so the header
+  // can name what was dropped: a dead entry is dropped from the file and
+  // announced, the same way dropped bash rules and removed lanes are. The
+  // kit root comes from the bundle's own location - the same place
+  // kitVersion() reads its package.json from - so a relative entry pointing
+  // INTO the kit ("skills", "./skills") also stays alive.
+  const configDir = opts.configDir ?? DEFAULT_CONFIG_DIR
+  const skillPaths = cleanSkillPaths(base.skills ?? {}, configDir, opts.kitRoot ?? kitRoot())
+
   const out = {
     $schema: "https://opencode.ai/config.json",
     ...base_,
@@ -503,7 +568,10 @@ export function generateConfig(p, opts = {}) {
     // numbers if this ever needs arguing again.
     tool_output: { max_lines: 2000, max_bytes: 51200 },
 
-    skills: base.skills ?? {},
+    // The skills paths: only the entries that resolve where they would be
+    // read from. A dead one is dropped from the file and named in the
+    // header - a path to nothing is noise every reader pays for.
+    skills: skillPaths.skills ?? {},
 
     experimental: {
       batch_tool: true,
@@ -556,6 +624,7 @@ export function generateConfig(p, opts = {}) {
     unhealthy,
     dropped: own.dropped,
     removedLanes,
+    skillsDropped: skillPaths.dropped,
   })
 }
 
@@ -563,7 +632,7 @@ export function generateConfig(p, opts = {}) {
  * @param {Record<string, any>} cfg
  * @param {Profile} p
  * @param {{ comments: boolean, instructionsPath?: string, unhealthy?: Set<string>,
- *          dropped?: string[], removedLanes?: string[] }} opts
+ *          dropped?: string[], removedLanes?: string[], skillsDropped?: string[] }} opts
  * @returns {string}
  */
 function render(cfg, p, opts) {
@@ -643,6 +712,15 @@ function render(cfg, p, opts) {
           ...opts.removedLanes.map((r) => `${c}  ${r}`),
           `${c}A lane whose prompt you had rewritten is left alone instead - pin the`,
           `${c}lane back with a prompt of your own if it was yours.`,
+        ]
+      : []),
+    ...(opts.skillsDropped?.length
+      ? [
+          `${c}`,
+          `${c}Skills paths that do not resolve, dropped from skills.paths:`,
+          ...opts.skillsDropped.map((s) => `${c}  ${s}`),
+          `${c}A path to nothing is noise every reader pays for; the kit's own`,
+          `${c}skills arrive as per-file links in the default skills directory.`,
         ]
       : []),
     `${c}`,

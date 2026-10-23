@@ -75,8 +75,12 @@ export declare function shellPayload(segment: string): string | null;
 export declare const ASK_GATED: RegExp[];
 /** @type {Rule[]} */
 export declare const BASH_RULES: Rule[];
-/** @type {Rule[]} */
-export declare const WRITE_RULES: Rule[];
+export declare const WRITE_RULES: {
+    name: string;
+    test: RegExp;
+    unless: RegExp;
+    why: string;
+}[];
 /**
  * The shared denylist, checked the way the rules are checked.
  *

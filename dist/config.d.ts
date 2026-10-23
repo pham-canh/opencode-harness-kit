@@ -27,6 +27,35 @@ export declare const GLOBAL_INSTRUCTIONS = "~/.config/opencode/GLOBAL.md";
  * @returns {string}
  */
 export declare function kitVersion(): string;
+/** Where opencode's user config lives when nothing overrides it. */
+export declare const DEFAULT_CONFIG_DIR: string;
+/** Where this kit itself lives - the parent of the bundle (or src) directory. */
+export declare function kitRoot(): string;
+/**
+ * The skills.paths entries of a base config, with the dead ones dropped.
+ *
+ * A `paths` entry that never resolves is not a configuration - it is noise
+ * the file carries for every reader to puzzle over, and a reader who DOES
+ * puzzle over it gets a wrong model of the world: this kit's config shipped
+ * `["../skills"]` which had dl resolved to `~/.config/skills` - a directory
+ * that has never existed on this machine - for release after release.
+ *
+ * A relative entry resolves against the opencode config directory; an
+ * absolute one stands as written; a relative one is also checked against the
+ * kit root, because an entry pointing INTO the kit was always a plausible
+ * intent and the kit knows where its own skills are. Nothing that resolves
+ * is kept; word everything else is dropped and named in the header, the same
+ * way dropped bash rules and removed lanes are.
+ *
+ * @param {any} skills
+ * @param {string} configDir
+ * @param {string} [kitRoot] where the kit itself lives, when overridable
+ * @returns {{ skills: any, dropped: string[] }}
+ */
+export declare function cleanSkillPaths(skills: any, configDir: string, kitRoot?: string): {
+    skills: any;
+    dropped: string[];
+};
 /**
  * The memory plugin this kit can turn on.
  *
@@ -122,11 +151,14 @@ export declare const BASH_ALLOWLIST: string[];
 export { BASH_DENYLIST } from "./denylist.js";
 /**
  * @param {Profile} p
- * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string> }} [opts]
+ * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string>,
+ *          configDir?: string, kitRoot?: string }} [opts]
  * @returns {string}
  */
 export declare function generateConfig(p: Profile, opts?: {
     base?: Record<string, any>;
     comments?: boolean;
     unhealthy?: Set<string>;
+    configDir?: string;
+    kitRoot?: string;
 }): string;

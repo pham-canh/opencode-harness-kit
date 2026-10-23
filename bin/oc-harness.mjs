@@ -1769,7 +1769,10 @@ async function cmdUse(id, catalog = null, sink = {}) {
     )
   }
 
-  const out = generateConfig(p, { base: effectiveBase, comments: true })
+  // Relative skills paths resolve against the same directory the file lives
+  // in - the one OpenCode reads them against. The toolkit default assumes
+  // the standard config dir; the CLI knows where it actually wrote this one.
+  const out = generateConfig(p, { base: effectiveBase, comments: true, configDir: CONFIG_DIR })
   if (flag("--print")) {
     process.stdout.write(out)
     return

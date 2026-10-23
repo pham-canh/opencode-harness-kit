@@ -15,7 +15,7 @@ import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { checkBash, checkDenied, checkWrite, shellPayload } from "../src/rules.js"
+import { checkBash, checkDenied, checkWrite, shellPayload, ruleNames } from "../src/rules.js"
 import { matchesPattern } from "../src/denylist.js"
 import { mkdtemp } from "./helpers.mjs"
 
@@ -635,5 +635,91 @@ test("a symlink out of the project is a write out of the project", () => {
     assert.equal(checkWrite(join(dir, "new.txt"), undefined, dir), null)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a destructive script inside python -c is read, not skipped", () => {
+  // The permission list allows `python3 -c*` unprompted, and the guard read
+  // NONE of the program it carries:
+  //   python3 -c "import shutil; shutil.rmtree('/')"
+  // is `rm -rf /` in a script the shell rules never saw. Recursion is what
+  // makes it the same thing, and an argument not obviously a scratch dir
+  // blocks.
+  assert.equal(
+    blocked(`python3 -c "import shutil; shutil.rmtree('/')"`),
+    "destructive python via python -c",
+  )
+  assert.equal(
+    blocked(`python -u -c 'import shutil; shutil.rmtree("/etc/nginx")'`),
+    "destructive python via python -c",
+  )
+  assert.equal(
+    blocked(`python3 -c "import os,shutil; shutil.rmtree(cfg['root'])"`),
+    "destructive python via python -c",
+  )
+  // -e/--e variants of the same runner.
+  assert.equal(blocked(`node -e "require('fs').rmSync('/x',{recursive:true,force:true})"`), "destructive javascript via node -e")
+  // Two runners in one command: both programs are read.
+  assert.equal(
+    blocked(`python3 -c 'import shutil; shutil.rmtree("quiet")' && node -e "s=1"`),
+    "destructive python via python -c",
+  )
+
+  // Scratch directories the kit sends agents to keep themselves clean stay
+  // allowed: a tmp spelling in the argument is the allowance, and it binds
+  // to the argument of the call, not the whole program.
+  allowed(`python3 -c "import shutil; shutil.rmtree('/tmp/ock-scratch')"`)
+  allowed(`python3 -c "import shutil; shutil.rmtree(tmpdir())"`)
+  allowed(`python -c "import shutil; shutil.rmtree('/tmp/ock')"` )
+  // A single-file delete is ordinary work - os.remove/os.rmdir are not read.
+  allowed(`python3 -c "import os; os.remove('/etc/hostname')"`)
+  // A node program with no recursive option deletes at most one file.
+  allowed(`node -e "require('fs').rmSync('/etc/hostname')"`)
+  // And a runner the rules never saw carries no program worth reading.
+  allowed(`python3 -c "import shutil; print(shutil.rmtree)"`)
+})
+
+test("a destructive program inside node -e is read, not skipped", () => {
+  // The permission list allows `node -e*` unprompted the same way:
+  // `node -e "require('fs').rmSync('/x',{recursive:true,force:true})"` is
+  // `rm -rf` the shell rules never saw.
+  assert.equal(blocked(`node -e "require('fs').rmSync('/lib',{recursive:true})"`), "destructive javascript via node -e")
+  assert.equal(blocked(`node --eval "fs.rmdirSync(target, {recursive: true})"`), "destructive javascript via node -e")
+  assert.equal(
+    blocked(`node -e 'fs.rmSync("/", { recursive: true, force: true })'`),
+    "destructive javascript via node -e",
+  )
+
+  // Scratch carve-out, holding argument-over-program.
+  allowed(`node -e "fs.rmSync(tmpdir(), {recursive: true, force: true})"`)
+  allowed(`node -e "fs.rmSync('/tmp/ock-scratch', {recursive:true})"`)
+})
+
+test("a find that deletes what it walks is blocked; a find that reads is not", () => {
+  assert.equal(blocked("find . -delete"), "find with -delete or -exec rm")
+  assert.equal(blocked("find /etc -delete"), "find with -delete or -exec rm")
+  assert.equal(blocked("find . -name '*.log' -exec rm {} +"), "find with -delete or -exec rm")
+  assert.equal(blocked("find . -execdir rm -supp {} \\;"), "find with -delete or -exec rm")
+  // Wrapped in a shell the long way, still the same walk.
+  assert.equal(blocked('sh -c "find . -delete"'), "find with -delete or -exec rm")
+
+  // Reading find passes.
+  allowed("find . -name '*.py' -not -path '*/node_modules/*'")
+  allowed("find src -type f | head")
+  // A man page the agent reads - first word man, not find - is an ordinary read.
+  allowed("man find -delete")
+  // The temp carve-out that binds the deletion to scratch somewhere supports
+  // cleanup flows the shell rules already allow through the same door.
+  allowed("rm /tmp/ock-scratch/file")
+})
+
+test("the delete rules reveal their names to show and documentation", () => {
+  // A visitor reading `oc-harness show` deserves the names it now denies.
+  for (const name of [
+    "destructive python via python -c",
+    "destructive javascript via node -e",
+    "find with -delete or -exec rm",
+  ]) {
+    assert.ok(ruleNames().includes(name), `${name} missing from the rule list`)
   }
 })

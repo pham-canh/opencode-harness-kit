@@ -26,8 +26,9 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { writeFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { tmpdir } from "node:os"
 
 import {
   generateConfig,
@@ -263,6 +264,54 @@ test("a lane whose prompt was rewritten is user data and is left alone", () => {
     /Lanes this profile does not manage, removed/,
     "a kept lane was announced as removed",
   )
+})
+
+// --- dead skills paths -------------------------------------------------------
+
+test("a skills path that resolves nowhere is dropped and named", () => {
+  // The kit's own config shipped `paths: ["../skills"]`, which resolves to
+  // `~/.config/skills` - a directory that has never existed - and the entry
+  // rode along in every regeneration because nothing checked where a
+  // relative path actually lands. A dead entry is dropped from the file and
+  // named; a live one is kept wherever it points.
+  const dir = mkdtempSync(join(tmpdir(), "ock-skills-"))
+  mkdirSync(join(dir, "ownskills"), { recursive: true })
+  const text = generateConfig(loadProfile("fleet-safe"), {
+    configDir: dir,
+    base: {
+      skills: {
+        paths: ["../skills", join(dir, "ownskills"), "/definitely-nothing-ock"],
+      },
+    },
+  })
+  const out = parseGenerated(text)
+  assert.deepEqual([...out.skills.paths].sort(), [join(dir, "ownskills")], "kept paths are wrong")
+  // The two dead ones are named, so the user does not wonder where they went.
+  assert.match(text, /Skills paths that do not resolve, dropped/, "the header does not announce the drop")
+  assert.match(text, /\/definitely-nothing-ock/, "the absolute dead path is not named")
+  assert.match(text, /\.\.\/skills/, "the dead relative path is not named")
+  // A config with no paths at all is untouched - no announcement, no shape.
+  const plain = generateConfig(loadProfile("fleet-safe"))
+  assert.equal(parseGenerated(plain).skills?.paths, undefined)
+  assert.doesNotMatch(plain, /Skills paths that do not resolve/)
+})
+
+test("a relative skills path pointing into the kit stays alive", () => {
+  // A relative entry resolves against the config directory, but an entry
+  // that means the kit's own skills directory is also a plausible intent,
+  // and the kit knows where its own skills are: it checks its own root as a
+  // second base, so `./skills` - which does not exist under the config dir
+  // here - survives because the kit HAS one.
+  const dir = mkdtempSync(join(tmpdir(), "ock-skills-empty-"))
+  mkdirSync(join(dir, "config"), { recursive: true })
+  const text = generateConfig(loadProfile("fleet-safe"), {
+    configDir: join(dir, "config"),
+    kitRoot: process.cwd(),
+    base: { skills: { paths: ["./skills"] } },
+  })
+  const out = parseGenerated(text)
+  assert.deepEqual(out.skills.paths, ["./skills"], "a kit-relative entry was dropped")
+  assert.doesNotMatch(text, /Skills paths that do not resolve/)
 })
 
 // --- the privacy claim -------------------------------------------------------

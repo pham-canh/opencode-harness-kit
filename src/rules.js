@@ -1122,9 +1122,154 @@ export const BASH_RULES = [
     },
     why: "destroys work that only exists locally",
   },
+  {
+    name: "destructive python via python -c",
+    scope: "segment",
+    // The permission list allows `python3 -c*` unprompted, because a python
+    // one-liner is the ordinary way to read a sqlite file or count tokens -
+    // and the shells rules read NONE of what it runs. `python3 -c "import
+    // shutil; shutil.rmtree('/')"` is `rm -rf /` in a script the guard
+    // never looked at.
+    //
+    // Only recursive tree surgery is caught, and only when the target is not
+    // obviously scratch: an argument whose name is some spelling of tmp or
+    // temp is a script cleaning its own scratch directory, which the kit
+    // itself tells agents to use, and blocking that would break the
+    // workflow the harness sets up. A variable, an absolute path, a quoted
+    // literal that is not a temp name - all block, because "not obviously
+    // scratch" is the honest statement about what a caller can know.
+    check: (text) => embeddedPythonDestroys(text),
+    why: "recursive deletion by script, hidden from the shell rules",
+  },
+  {
+    name: "destructive javascript via node -e",
+    scope: "segment",
+    // Same hole, and the list allows `node -e*` unprompted the same way:
+    // `node -e "require('fs').rmSync('/x',{recursive:true,force:true})"` is
+    // `rm -rf` the shell rules never saw. Same scratch carve-out, for the
+    // same reason and with the same limit.
+    check: (text) => embeddedNodeDestroys(text),
+    why: "recursive deletion by script, hidden from the shell rules",
+  },
+  {
+    name: "find with -delete or -exec rm",
+    scope: "segment",
+    // The list allows `find*` unprompted, and a find that deletes is a walk
+    // that deletes everything it passes: `find . -delete` is `rm -rf .` with
+    // extra steps, and `-exec rm` is the same with the filter made visible.
+    // The segment's first word is the command, so `man find` - a page the
+    // agent reads, not runs - is an ordinary read and stays one here too.
+    check: (text) => findDestroys(text),
+    why: "a walk that deletes everything it passes",
+  },
 ]
 
 /** @type {Rule[]} */
+/**
+ * The program text a runner segment carries: `python3 -c 'code'`, `node -e
+ * "code"`, `node --eval 'code'`, with any runner flags in front. The shell
+ * wrappers (`bash -c`) have their own helper - `shellPayload` - because they
+ * take a whole command line; these runners take a program, and only the
+ * program inside the quoting is worth reading.
+ *
+ * Every such payload in the segment is returned, not just the first: `python
+ * -c '...' && node -e '...'` carries two programs and both need looking at.
+ *
+ * @param {string} text the segment, prefixes stripped
+ * @returns {string[]}
+ */
+function evalPrograms(text) {
+  const out = []
+  // The runner, its leading options, then the program flag. What FOLLOWS the
+  // flag is the program.
+  const re = /(?:^|[;&|\n]|\s)(?:python3?|node)\s+(?:-(?:[\w.]+)\s+)*(?:-c|--eval|-e)\s*/g
+  for (const m of text.matchAll(re)) {
+    const code = text.slice(m.index + m[0].length)
+    if (code.trim()) out.push(code)
+  }
+  return out
+}
+
+/**
+ * An argument's own name is a scratch directory when something about it says
+ * so: a /tmp path, the shutil or Node tempdir helper, a variable the caller
+ * named for scratch. This is an allowance for the workflow the kit sets up -
+ * agents keep scratch in temp dirs - and it catches NAME spellings only.
+ * A variable named `path` or `dir` is not scratch by name, and stays blocked.
+ *
+ * @param {string} arg
+ * @returns {boolean}
+ */
+function scratchish(arg) {
+  return /tmp|temp|scratch/i.test(arg) || /\btmpdir\b/.test(arg)
+}
+
+/**
+ * Whether a `python -c` payload does what `rm -rf` does.
+ *
+ * `shutil.rmtree` is THE recursive delete of python. `os.rmdir` takes one
+ * empty directory, `os.remove` one file, and a single-file cleanup is
+ * ordinary work - the rule reads the recursive call only, and only when the
+ * target is not named scratch.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+function embeddedPythonDestroys(text) {
+  for (const code of evalPrograms(text)) {
+    const call = /shutil\s*\.\s*rmtree\s*\(\s*([^,)]*)/.exec(code)
+    if (!call) continue
+    // No argument at all is a syntax error at best and unjudgable at worst -
+    // an unjudgable delete blocks, the same way an unknown write does.
+    if (!call[1] || !scratchish(call[1])) return true
+  }
+  return false
+}
+
+/**
+ * Whether a `node -e` payload does what `rm -rf` does.
+ *
+ * `fs.rmSync(..., { recursive: true })` and legacy `rmdirSync(...,
+ * { recursive: true })` are the recursive deletes of Node. The `recursive`
+ * option is what makes it the tree surgery worth naming; a non-recursive
+ * rmSync deletes exactly one file, which is ordinary work.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+function embeddedNodeDestroys(text) {
+  for (const code of evalPrograms(text)) {
+    for (const m of code.matchAll(/(?:rmSync|rmdirSync)\s*\(\s*([^,)]*)/g)) {
+      // The FLAG to look for is on the options object, not the first arg:
+      // `rmSync(p, { recursive: true })`. Read further into the whole code
+      // only when the call named no options in the call itself - an options
+      // object split across a variable is still read, because the option
+      // has to be SOMEWHERE in the program for it to matter.
+      if (!/recursive\s*:\s*true/.test(code)) continue
+      if (!m[1] || !scratchish(m[1])) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Whether a find segment deletes what it walks.
+ *
+ * `-delete` is the flag; `-exec rm` and `-execdir rm` are the same thing
+ * spelled the long way, and an `env rm` between them (`-exec env rm -rf`)
+ * is the same command through the env wrapper the rest of the rules strip.
+ *
+ * @param {string} text the segment, prefixes stripped - first word find
+ * @returns {boolean}
+ */
+function findDestroys(text) {
+  if (!/^find(?:\s|$)/.test(text)) return false
+  return (
+    /(?:^|\s)--?delete\b/.test(text) ||
+    /(?:^|\s)-exec(?:dir)?\s+(?:env\s+\S+\s+)*(rm|sh)\b/.test(text)
+  )
+}
+
 export const WRITE_RULES = [
   {
     // `unless` exists because the safe variants are the same shape as the

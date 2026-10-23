@@ -38,7 +38,7 @@ import {
   laneNames,
   LANE_NAMES,
 } from "../src/profile.js"
-import { existsSync, readdirSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -810,11 +810,17 @@ test("validation rejects a profile that is missing something essential", () => {
 })
 
 test("an inherited config is merged, not replaced wholesale", () => {
-  const base = { skills: { paths: ["/custom/skills"] }, permission: { edit: "deny" } }
+  // The inherited skills path is a real directory now: a path the kit keeps
+  // has to exist, so a fictional fixture would be dropped as dead by the
+  // same rule that keeps live ones.
+  const dir = mkdtempSync(join(tmpdir(), "ock-inherited-skills-"))
+  mkdirSync(join(dir, "custom", "skills"), { recursive: true })
+  const skillsPath = join(dir, "custom", "skills")
+  const base = { skills: { paths: [skillsPath] }, permission: { edit: "deny" } }
   const out = parseGenerated(
     generateConfig(loadProfile("fleet-safe"), { base }),
   )
-  assert.deepEqual(out.skills.paths, ["/custom/skills"])
+  assert.deepEqual(out.skills.paths, [skillsPath])
   assert.equal(out.permission.read, "allow")
   assert.equal(
     out.permission.doom_loop,

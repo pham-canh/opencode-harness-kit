@@ -1,6 +1,6 @@
 // src/index.ts
 import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 
 // src/guard.ts
 import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
@@ -738,8 +738,81 @@ var BASH_RULES = [
       return false;
     },
     why: "destroys work that only exists locally"
+  },
+  {
+    name: "destructive python via python -c",
+    scope: "segment",
+    // The permission list allows `python3 -c*` unprompted, because a python
+    // one-liner is the ordinary way to read a sqlite file or count tokens -
+    // and the shells rules read NONE of what it runs. `python3 -c "import
+    // shutil; shutil.rmtree('/')"` is `rm -rf /` in a script the guard
+    // never looked at.
+    //
+    // Only recursive tree surgery is caught, and only when the target is not
+    // obviously scratch: an argument whose name is some spelling of tmp or
+    // temp is a script cleaning its own scratch directory, which the kit
+    // itself tells agents to use, and blocking that would break the
+    // workflow the harness sets up. A variable, an absolute path, a quoted
+    // literal that is not a temp name - all block, because "not obviously
+    // scratch" is the honest statement about what a caller can know.
+    check: (text) => embeddedPythonDestroys(text),
+    why: "recursive deletion by script, hidden from the shell rules"
+  },
+  {
+    name: "destructive javascript via node -e",
+    scope: "segment",
+    // Same hole, and the list allows `node -e*` unprompted the same way:
+    // `node -e "require('fs').rmSync('/x',{recursive:true,force:true})"` is
+    // `rm -rf` the shell rules never saw. Same scratch carve-out, for the
+    // same reason and with the same limit.
+    check: (text) => embeddedNodeDestroys(text),
+    why: "recursive deletion by script, hidden from the shell rules"
+  },
+  {
+    name: "find with -delete or -exec rm",
+    scope: "segment",
+    // The list allows `find*` unprompted, and a find that deletes is a walk
+    // that deletes everything it passes: `find . -delete` is `rm -rf .` with
+    // extra steps, and `-exec rm` is the same with the filter made visible.
+    // The segment's first word is the command, so `man find` - a page the
+    // agent reads, not runs - is an ordinary read and stays one here too.
+    check: (text) => findDestroys(text),
+    why: "a walk that deletes everything it passes"
   }
 ];
+function evalPrograms(text) {
+  const out = [];
+  const re = /(?:^|[;&|\n]|\s)(?:python3?|node)\s+(?:-(?:[\w.]+)\s+)*(?:-c|--eval|-e)\s*/g;
+  for (const m of text.matchAll(re)) {
+    const code = text.slice(m.index + m[0].length);
+    if (code.trim()) out.push(code);
+  }
+  return out;
+}
+function scratchish(arg) {
+  return /tmp|temp|scratch/i.test(arg) || /\btmpdir\b/.test(arg);
+}
+function embeddedPythonDestroys(text) {
+  for (const code of evalPrograms(text)) {
+    const call = /shutil\s*\.\s*rmtree\s*\(\s*([^,)]*)/.exec(code);
+    if (!call) continue;
+    if (!call[1] || !scratchish(call[1])) return true;
+  }
+  return false;
+}
+function embeddedNodeDestroys(text) {
+  for (const code of evalPrograms(text)) {
+    for (const m of code.matchAll(/(?:rmSync|rmdirSync)\s*\(\s*([^,)]*)/g)) {
+      if (!/recursive\s*:\s*true/.test(code)) continue;
+      if (!m[1] || !scratchish(m[1])) return true;
+    }
+  }
+  return false;
+}
+function findDestroys(text) {
+  if (!/^find(?:\s|$)/.test(text)) return false;
+  return /(?:^|\s)--?delete\b/.test(text) || /(?:^|\s)-exec(?:dir)?\s+(?:env\s+\S+\s+)*(rm|sh)\b/.test(text);
+}
 var WRITE_RULES = [
   {
     // `unless` exists because the safe variants are the same shape as the
@@ -1720,7 +1793,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
   };
   let cached = null;
   let reportedFailure = false;
-  const resolve4 = () => {
+  const resolve5 = () => {
     if (cached) return cached;
     let profile = null;
     try {
@@ -1766,7 +1839,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
-        const { profile, keepCalls, keepTurns, keepUsers, keepDistinct, distinctBudget, threshold } = resolve4();
+        const { profile, keepCalls, keepTurns, keepUsers, keepDistinct, distinctBudget, threshold } = resolve5();
         if (!profile) return;
         const messages = output.messages;
         if (!Array.isArray(messages) || messages.length === 0) return;
@@ -1926,6 +1999,9 @@ function safeStringify(value) {
 }
 
 // src/config.js
+import { join as join7, resolve as resolve4 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+var DEFAULT_CONFIG_DIR = join7(homedir4(), ".config/opencode");
 function utilityModel(p) {
   const u = p?.utility;
   if (!u || typeof u.model !== "string" || !u.model) return null;
@@ -1934,7 +2010,7 @@ function utilityModel(p) {
 
 // src/health.js
 import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
@@ -1976,7 +2052,7 @@ function liveUnhealthy(health, now = Date.now()) {
   return out;
 }
 function healthPath(dir) {
-  return join7(dir, ".space", "health.json");
+  return join8(dir, ".space", "health.json");
 }
 function readHealth(dir) {
   let parsed;
@@ -1996,7 +2072,7 @@ function readHealth(dir) {
 }
 function writeHealth(dir, health) {
   try {
-    const spaceDir = join7(dir, ".space");
+    const spaceDir = join8(dir, ".space");
     if (!existsSync5(spaceDir)) mkdirSync2(spaceDir, { recursive: true });
     const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
     const file = healthPath(dir);
@@ -2264,9 +2340,9 @@ function applySessionModel(cfg, profile, opts = {}) {
 }
 
 // src/telemetry.ts
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 var TelemetryPlugin = async ({ worktree, directory }) => {
-  const dir = join8(projectRoot(directory, worktree), ".space");
+  const dir = join9(projectRoot(directory, worktree), ".space");
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
@@ -2452,9 +2528,9 @@ var HarnessPlugin = async (ctx, options) => {
     } catch {
     }
     try {
-      const dir = join9(project, ".space");
+      const dir = join10(project, ".space");
       mkdirSync3(dir, { recursive: true });
-      writeFileSync2(join9(dir, "active"), `${id}
+      writeFileSync2(join10(dir, "active"), `${id}
 `);
     } catch {
     }
