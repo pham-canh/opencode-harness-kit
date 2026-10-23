@@ -12,7 +12,7 @@
 // Plain JS with JSDoc types, like the rest of src/: the CLI and the tests run
 // under plain node, and the plugin loads .ts.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 /**
@@ -158,9 +158,18 @@ export function readHealth(dir) {
  */
 export function writeHealth(dir, health) {
   try {
-    if (!existsSync(join(dir, ".space"))) mkdirSync(join(dir, ".space"), { recursive: true })
+    const spaceDir = join(dir, ".space")
+    if (!existsSync(spaceDir)) mkdirSync(spaceDir, { recursive: true })
     const pruned = { ...(health ?? {}), unhealthy: liveUnhealthy(health) }
-    writeFileSync(healthPath(dir), JSON.stringify(pruned, null, 2))
+    const file = healthPath(dir)
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+    try {
+      writeFileSync(tmp, JSON.stringify(pruned, null, 2))
+      renameSync(tmp, file)
+    } catch (err) {
+      try { unlinkSync(tmp) } catch {}
+      throw err
+    }
   } catch {
     // Best effort. A health file that cannot be written means no failover,
     // and failing to write it must not break the session.

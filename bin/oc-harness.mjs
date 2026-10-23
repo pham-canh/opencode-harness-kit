@@ -1539,7 +1539,7 @@ async function cmdUse(id) {
 
   mkdirSync(dirname(CONFIG_FILE), { recursive: true })
   if (existsSync(CONFIG_FILE)) {
-// The config is the user's file once written. The backup is unconditional:
+    // The config is the user's file once written. The backup is unconditional:
     // `--yes` skips the question, it does not skip the safety net. Gating the
     // backup on `--yes` meant the one path that overwrites without asking was
     // also the one path with nothing to fall back to.
@@ -1560,7 +1560,15 @@ async function cmdUse(id) {
       stamp(`  existing config backed up to ${join(BACKUP_DIR, kept)}`),
     )
   }
-  writeFileSync(CONFIG_FILE, out)
+  // Write atomically to avoid truncating/corrupting the config on crash.
+  const tmp = `${CONFIG_FILE}.${process.pid}.${Date.now()}.tmp`
+  try {
+    writeFileSync(tmp, out)
+    renameSync(tmp, CONFIG_FILE)
+  } catch (err) {
+    try { unlinkSync(tmp) } catch {}
+    throw err
+  }
   console.log(`\n  ${green("✓")} wrote ${CONFIG_FILE}`)
   summary(p)
   console.log(`\n  ${stamp("verify with: opencode debug config")}\n`)
