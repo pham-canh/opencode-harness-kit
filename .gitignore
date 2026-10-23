@@ -26,23 +26,3 @@ baseline-*.txt
 .test-build-*/
 
 __pycache__/
-# OLD in-repo demo paths. The demo's non-published artifacts moved to the
-# private video repo (pham-canh/video, scratch/oc-harness-pitch); the video/
-# lines below remain only to ignore what old branches still write here.
-video/scenes/
-video/audio/
-video/space-harness-demo.mp4
-video/build/
-video/vo.m4a
-video/vo_timed.txt
-video/narration.m4a
-
-# The TAKE, not the recorder. A take is about one machine and one moment:
-# which commands ran, and which words were on the cards. The recorder is
-# published; the take is not. The video it produces lands in video/build/,
-# which is ignored above - so a recording stays on the machine that made it
-# until somebody decides, deliberately, to publish it.
-video/takes/
-
-# vrec and btake are not in this repo. They keep their own .gitignore in their own
-# repos, so anything left here would only ever match a stray copy of one of them.

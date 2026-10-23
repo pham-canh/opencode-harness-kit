@@ -12,6 +12,77 @@ is not happening.
 
 ---
 
+## [0.6.3] — 2026-10-23
+
+Nothing here changes the runtime. The plugin, the CLI and `dist/` are
+byte-for-byte what 0.6.2 shipped; this release is the front page and the
+packaging metadata catching up with decisions already made.
+
+### Removed
+
+- **The demo media is gone from the repository.** `docs/demo/pitch.mp4`
+  (12.5 MB) and `docs/demo-loop.gif` are deleted, and the README no longer
+  embeds them. The recording lives on in the private
+  [`pham-canh/video`](https://github.com/pham-canh/video) repo. Two reasons
+  it had to leave this one: the `.mp4` was never shipped by npm (`files`
+  covers `docs/*.md` only), so the README rendered on npmjs.com carried a
+  `<video>` tag whose source could not exist — a 404 embed on the public
+  page; and a repo whose pitch is "the metadata is the truth" was weighting
+  its own checkout with twelve megabytes nobody could watch.
+
+### Fixed
+
+- **The lockfile answered for a version two releases behind.**
+  `package-lock.json` still said `0.5.8` while `package.json` said `0.6.2`,
+  and carried a `peerDependencies` block the manifest no longer has. Both are
+  synced now, by hand rather than a regenerating `npm install`, so the locked
+  dependency versions are untouched.
+
+## [0.6.2] — 2026-10-23
+
+Published. Tag `v0.6.2`.
+
+### Fixed
+
+- **Transient catalogue errors stopped benching live routes.** When
+  `oc-harness doctor` or the router asked models.dev and the request failed
+  for a reason other than "this model is withdrawn" — a timeout, a rate
+  limit, a network blip — the failure was percolating into the route health
+  as if the model itself were dead, and a live route got benched on evidence
+  that was about the network, not the model. The distinction now matters:
+  transient errors are retried and reported as transient; only a confirmed
+  `status: "deprecated"` out of the catalogue marks a route unhealthy.
+
+## [0.6.1] — 2026-10-23
+
+Published. Tag `v0.6.1`.
+
+### Added
+
+- **A `flint-40b-free` profile, published with its retention verdict.** A
+  same-size free model beside the fleet's usual rungs, and the tenth free
+  model in the default fleet needed a lane to run in, so the build assigns
+  it.
+
+### Fixed
+
+- **The fleet no longer routes through a withdrawn model.**
+  `minimax-m3.1-flash-free` was marked deprecated in the catalogue while the
+  default fleet still carried it in a lane; `flint-40b-free` takes its place
+  in the default chains.
+
+- **`use` and `install` write their files atomically.** The config and the
+  health file are now written to a sibling temp file and renamed, so a
+  `install` interrupted mid-write can no longer leave a half-written config
+  behind. (A failure found its way through this when the code called
+  `renameSync` it had never imported; the import is there now.)
+
+- **A publish job re-run against an already-published tag is green**, not a
+  red crash on E409.
+
+- **eval's `padEnd` did not coerce its arguments to strings**, and died on a
+  numeric task id.
+
 ## [0.6.0] — 2026-10-22
 
 Published. The tag is what cut it: `git tag v0.6.0 && git push origin
