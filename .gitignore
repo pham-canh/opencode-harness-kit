@@ -27,3 +27,6 @@ coverage/
 .test-build-*/
 
 __pycache__/
+
+# Video work shot with this kit: scenes, audio, renders. Output, not source.
+/video/
