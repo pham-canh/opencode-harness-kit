@@ -1,3 +1,5 @@
+/** @type {string[]} */
+export declare const BASH_DENYLIST: string[];
 /**
  * Whether a glob pattern matches a command.
  *
@@ -11,7 +13,7 @@
  * @param {string} pattern
  * @returns {boolean}
  */
-export function matchesPattern(command: string, pattern: string): boolean;
+export declare function matchesPattern(command: string, pattern: string): boolean;
 /**
  * The first denied pattern a command matches, or null.
  *
@@ -32,6 +34,4 @@ export function matchesPattern(command: string, pattern: string): boolean;
  * @param {string} command
  * @returns {string | null}
  */
-export function deniedBy(command: string): string | null;
-/** @type {string[]} */
-export const BASH_DENYLIST: string[];
+export declare function deniedBy(command: string): string | null;

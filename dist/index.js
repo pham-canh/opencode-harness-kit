@@ -1932,7 +1932,7 @@ function utilityModel(p) {
 }
 
 // src/health.js
-import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync } from "node:fs";
+import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
 import { join as join7 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
@@ -1983,9 +1983,21 @@ function readHealth(dir) {
 }
 function writeHealth(dir, health) {
   try {
-    if (!existsSync5(join7(dir, ".space"))) mkdirSync2(join7(dir, ".space"), { recursive: true });
+    const spaceDir = join7(dir, ".space");
+    if (!existsSync5(spaceDir)) mkdirSync2(spaceDir, { recursive: true });
     const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
-    writeFileSync(healthPath(dir), JSON.stringify(pruned, null, 2));
+    const file = healthPath(dir);
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify(pruned, null, 2));
+      renameSync2(tmp, file);
+    } catch (err) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+      }
+      throw err;
+    }
   } catch {
   }
 }
