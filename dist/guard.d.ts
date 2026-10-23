@@ -8,6 +8,11 @@ export declare const MARKER = "[opencode-harness-kit] blocked";
  * markers, and a plain unified diff with `--- a/path` and `+++ b/path`
  * headers.
  *
+ * An update may also carry `*** Move to: path`, which is the path the file
+ * is written TO. Reading only the `*** Update File:` line checked the file
+ * the patch read from and left the destination unchecked, so a patch could
+ * move a file out of the project while every path it named was inside it.
+ *
  * A unified diff names the file TWICE: `--- a/path` is where the change
  * comes FROM, `+++ b/path` is where it goes TO. A deletion is `--- a/path`
  * and `+++ /dev/null`, so the path that has to be scope-checked is the one

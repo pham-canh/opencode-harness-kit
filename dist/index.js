@@ -955,6 +955,13 @@ function hunkFollows(lines, from) {
   }
   return false;
 }
+function hunkLineCount(header) {
+  const m = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/.exec(header);
+  if (!m) return 0;
+  const oldCount = m[2] === void 0 ? 1 : Number(m[2]);
+  const newCount = m[4] === void 0 ? 1 : Number(m[4]);
+  return oldCount + newCount;
+}
 function pathsInPatch(text) {
   const out = [];
   const push = (p) => {
@@ -965,15 +972,34 @@ function pathsInPatch(text) {
   };
   const lines = text.split("\n");
   let seenHunk = false;
+  let hunkRemaining = 0;
+  let applyPatch = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const marker = /^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/.exec(line);
     if (marker) {
+      applyPatch = true;
       push(marker[1]);
       continue;
     }
+    const move = /^\*\*\*\s+Move to:\s*(.+)$/.exec(line);
+    if (move) {
+      push(move[1]);
+      continue;
+    }
+    if (applyPatch) continue;
+    if (hunkRemaining > 0) {
+      const first = line[0];
+      if (first === " " || first === "-" || first === "+") {
+        hunkRemaining--;
+        continue;
+      }
+      if (first === "\\") continue;
+      hunkRemaining = 0;
+    }
     if (/^@@/.test(line)) {
       seenHunk = true;
+      hunkRemaining = hunkLineCount(line);
       continue;
     }
     const minus = /^---\s+(?:a\/)?(.+)$/.exec(line);

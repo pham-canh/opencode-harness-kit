@@ -478,6 +478,66 @@ test("a diff body that looks like a header pair is not a path", () => {
   )
 })
 
+test("a diff body that looks like a header pair is not a path when a hunk follows", () => {
+  // The pair reader only looked ahead for the NEXT `@@`, so a body pair at
+  // the end of a hunk was safe - but the same pair in the middle of a patch
+  // was read as the headers of a file, because the next hunk's `@@` was
+  // found. The number of lines the hunk header announces says where the
+  // body ends, and that is what has to be stepped over.
+  const patch = [
+    "--- a/src/ok.ts",
+    "+++ b/src/ok.ts",
+    "@@ -1 +1 @@",
+    "--- foo",
+    "+++ bar",
+    "@@ -10 +10 @@",
+    "-old",
+    "+new",
+  ].join("\n")
+  assert.deepEqual(
+    pathsInPatch(patch),
+    ["src/ok.ts"],
+    "the body of the first hunk was read as paths",
+  )
+})
+
+test("a patch that moves a file out of the project is blocked", async () => {
+  // `*** Move to:` is the path the file is written TO. Only the
+  // `*** Update File:` path was read, so a patch could move a file out of
+  // the project while every path the guard checked was inside it.
+  const dir = mkdtemp("ock-bypass-")
+  try {
+    const hooks = await GuardPlugin(hookContext(dir))
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/app.ts",
+      "*** Move to: ../../../etc/shadow",
+      "@@",
+      "-a",
+      "+b",
+      "*** End Patch",
+    ].join("\n")
+    assert.deepEqual(pathsInPatch(patch), ["src/app.ts", "../../../etc/shadow"])
+    const msg = await blocks(hooks, "apply_patch", { patchText: patch })
+    assert.ok(msg, "a patch that moved a file out of the project was allowed")
+    assert.match(msg, /outside the project/)
+
+    // A move inside the project is ordinary work.
+    const inside = [
+      "*** Begin Patch",
+      "*** Update File: src/app.ts",
+      "*** Move to: src/lib/app.ts",
+      "@@",
+      "-a",
+      "+b",
+      "*** End Patch",
+    ].join("\n")
+    assert.equal(await blocks(hooks, "apply_patch", { patchText: inside }), null)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("the real headers of a patch are still the paths it touches", () => {
   // The pair reader has to keep naming the files a patch touches. The
   // headers come before the first hunk, and a deletion names the file in

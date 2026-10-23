@@ -54,12 +54,36 @@ function hunkFollows(lines: string[], from: number): boolean {
 }
 
 /**
+ * How many lines a standard unified-diff hunk header announces.
+ *
+ * The body of a hunk is where a `---`/`+++` pair can appear as content, so
+ * the body has to be stepped over rather than read. `@@ -1 +1 @@` has one
+ * old and one new line; `@@ -1,0 +1,2 @@` has three; `@@` with no counts
+ * (opencode's own marker) announces none.
+ *
+ * @param {string} header
+ * @returns {number}
+ */
+function hunkLineCount(header: string): number {
+  const m = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/.exec(header)
+  if (!m) return 0
+  const oldCount = m[2] === undefined ? 1 : Number(m[2])
+  const newCount = m[4] === undefined ? 1 : Number(m[4])
+  return oldCount + newCount
+}
+
+/**
  * The files a patch touches.
  *
  * `apply_patch` sends a patch, not a path, so the paths have to be read out
  * of it. Two formats are in use: opencode's own `*** Update File: path`
  * markers, and a plain unified diff with `--- a/path` and `+++ b/path`
  * headers.
+ *
+ * An update may also carry `*** Move to: path`, which is the path the file
+ * is written TO. Reading only the `*** Update File:` line checked the file
+ * the patch read from and left the destination unchecked, so a patch could
+ * move a file out of the project while every path it named was inside it.
  *
  * A unified diff names the file TWICE: `--- a/path` is where the change
  * comes FROM, `+++ b/path` is where it goes TO. A deletion is `--- a/path`
@@ -92,15 +116,48 @@ export function pathsInPatch(text: string): string[] {
   // Whether a hunk header has been seen. After one, a `+++` line is added
   // content and not the header of another file.
   let seenHunk = false
+  // How many body lines of the current hunk are still to be stepped over.
+  // Reading a hunk body as headers is what turned a removed line whose
+  // content is "-- foo" into a path.
+  let hunkRemaining = 0
+  // opencode's own patch format names files with `*** ... File:` markers,
+  // and everything between them is content. A body line in that format is
+  // not a diff header, and the parser must not read one as a path.
+  let applyPatch = false
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const marker = /^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/.exec(line)
     if (marker) {
+      applyPatch = true
       push(marker[1])
       continue
     }
+    // The destination of an update that moves the file. It is a write just
+    // like the `*** Update File:` path, and the path it moves to is the one
+    // that can leave the project.
+    const move = /^\*\*\*\s+Move to:\s*(.+)$/.exec(line)
+    if (move) {
+      push(move[1])
+      continue
+    }
+    if (applyPatch) continue
+    // Step over the body of a hunk before looking for headers in it. A
+    // hunk body line starts with a space, `-` or `+`; `\ No newline...` is
+    // a note and counts for nothing.
+    if (hunkRemaining > 0) {
+      const first = line[0]
+      if (first === " " || first === "-" || first === "+") {
+        hunkRemaining--
+        continue
+      }
+      if (first === "\\") continue
+      // A line that cannot be a hunk body means the counts were wrong. Fall
+      // through and read this line normally rather than swallow a header.
+      hunkRemaining = 0
+    }
     if (/^@@/.test(line)) {
       seenHunk = true
+      hunkRemaining = hunkLineCount(line)
       continue
     }
     // The `---` and `+++` headers of a unified diff are one pair: the
