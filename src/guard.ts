@@ -58,8 +58,8 @@ function hunkFollows(lines: string[], from: number): boolean {
  *
  * The body of a hunk is where a `---`/`+++` pair can appear as content, so
  * the body has to be stepped over rather than read. `@@ -1 +1 @@` has one
- * old and one new line; `@@ -1,0 +1,2 @@` has three; `@@` with no counts
- * (opencode's own marker) announces none.
+ * old and one new line; `@@ -1,0 +1,2 @@` has two; `@@ -1,2 +1,3 @@` has
+ * five; `@@` with no counts (opencode's own marker) announces none.
  *
  * @param {string} header
  * @returns {number}
