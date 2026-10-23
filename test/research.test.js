@@ -80,8 +80,10 @@ function catalogFixture() {
         // A model the kit really ships, and the provider has pulled. The
         // command cases need this one because the command reads the kit's
         // OWN profiles, not a fixture profile - so only a real model id can
-        // show up in its report.
-        "minimax-m3.1-flash-free": {
+        // show up in its report. minimax-m3.1-flash-free was the last one
+        // before flint-40b-free replaced it on the tier, and flint is where
+        // that story now lives.
+        "flint-40b-free": {
           cost: { input: 0, output: 0, cache_read: 0 },
           status: "deprecated",
           tool_call: true,
@@ -134,8 +136,8 @@ test("the tier is the free models, whatever they are called", () => {
   assert.deepEqual(ids, [
     "alive-free",
     "alive-without-the-suffix",
+    "flint-40b-free",
     "gone-free",
-    "minimax-m3.1-flash-free",
     "text-only-free",
   ])
   const gone = tier.find((t) => t.id === "gone-free")
@@ -241,8 +243,8 @@ test("a candidate is live, free, and not already in use", () => {
 
   const ids = report.candidates.map((c) => c.id).sort()
   // `alive-free` is the profile's own model, so it is not a candidate.
-  // `gone-free` and `minimax-m3.1-flash-free` are withdrawn. `paid-model` is
-  // not on the tier.
+  // `gone-free` and `flint-40b-free` are withdrawn. `paid-model` is not on
+  // the tier.
   assert.deepEqual(ids, ["alive-without-the-suffix", "text-only-free"])
   assert.equal(report.tier.live, 3)
   assert.equal(report.tier.total, 5)
@@ -316,7 +318,7 @@ test("research names the models in use that have been withdrawn", () => {
   const r = runResearch(["research"], catalogFixture())
   assert.equal(r.code, 0, r.stderr)
   // A model the kit really ships, and the provider has pulled.
-  assert.match(r.stdout, /minimax-m3\.1-flash-free/)
+  assert.match(r.stdout, /flint-40b-free/)
   assert.match(r.stdout, /withdrawn from the provider/)
   // A model that is merely absent reads differently from one that is
   // withdrawn: the catalogue kept the record, and that is the whole point.
@@ -343,7 +345,7 @@ test("research --json prints one parseable object and nothing else", () => {
   assert.equal(parsed.ok, true)
   assert.equal(parsed.tier.provider, "opencode")
   assert.ok(Array.isArray(parsed.candidates))
-  const gone = parsed.shipped.gone.find((g) => g.id === "minimax-m3.1-flash-free")
+  const gone = parsed.shipped.gone.find((g) => g.id === "flint-40b-free")
   assert.ok(gone, "the withdrawn model the kit ships is missing from the report")
   assert.equal(gone.present, true, "the catalogue keeps the record of a withdrawn model")
   assert.ok(gone.asBase.length > 0, "it is the base model of a shipped profile")

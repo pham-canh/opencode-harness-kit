@@ -3,6 +3,17 @@
   "default": "fleet-safe",
   "profiles": [
     {
+      "id": "beam-free",
+      "file": "profiles/beam-free.json",
+      "title": "Beam Free",
+      "retention": "retained",
+      "free": true,
+      "topEffort": "max",
+      "context": 1048576,
+      "default": false,
+      "note": "Text only, freshest knowledge on the tier, fastest measured route. Keeps prompts for 30 days, so it is not zero-retention."
+    },
+    {
       "id": "fleet-safe",
       "file": "profiles/fleet-safe.json",
       "title": "Ten jobs, zero-retention models only",
@@ -23,28 +34,6 @@
       "context": 160000,
       "default": false,
       "note": "Every lane gets the model built for it. Five of the ten providers may use the data to improve the model, so the whole profile is may-train."
-    },
-    {
-      "id": "minimax-m3.1-flash-free",
-      "file": "profiles/minimax-m3.1-flash-free.json",
-      "title": "MiniMax M3.1 Flash Free",
-      "retention": "zero-retention",
-      "free": true,
-      "topEffort": "max",
-      "context": 1000000,
-      "default": false,
-      "note": "512k output tokens, the widest of any free route, and the fastest measured image reader at 7.7s."
-    },
-    {
-      "id": "beam-free",
-      "file": "profiles/beam-free.json",
-      "title": "Beam Free",
-      "retention": "retained",
-      "free": true,
-      "topEffort": "max",
-      "context": 1048576,
-      "default": false,
-      "note": "Text only, freshest knowledge on the tier, fastest measured route. Keeps prompts for 30 days, so it is not zero-retention."
     },
     {
       "id": "deepseek-v4.1-flash-free",
@@ -113,6 +102,17 @@
       "note": "Reads images correctly, at 19.2s - the slowest lane on the tier. Publishes audio input too, but OpenCode will not read a binary file, so that path is unreachable today."
     },
     {
+      "id": "flint-40b-free",
+      "file": "profiles/flint-40b-free.json",
+      "title": "Flint 40B Free",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": "max",
+      "context": 262144,
+      "default": false,
+      "note": "Open-weight MoE with about 2.5B active parameters for local coding agents. Knowledge cutoff 2026-06, no image input. May train on prompts during its free period."
+    },
+    {
       "id": "big-pickle",
       "file": "profiles/big-pickle.json",
       "title": "Big Pickle",
@@ -160,6 +160,11 @@
     {
       "id": "longcat-2.5-preview-free",
       "reason": "Withdrawn from the provider. A preview endpoint, so it could be pulled without a rename - and it was: models.dev still carries the record and marks it deprecated. It was the longform lane's primary in both fleets, so every lane fell back to its second rung, and the profile named only this model had nothing left to fall back to and was retired."
+    },
+    {
+      "id": "minimax-m3.1-flash-free",
+      "reason": "Deprecated by provider. Replaced on the tier by flint-40b-free for the lanes that ran it."
     }
-  ]
+  ],
+  "active": []
 }

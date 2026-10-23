@@ -84,7 +84,6 @@ const FREE_MODELS = [
   "flint-40b-free",
   "glm-5.3-flash-free",
   "mimo-v2.6-flash-free",
-  "minimax-m3.1-flash-free",
   "nemotron-3-ultra-free",
   "nemotron-3.5-lightning-free",
   "nemotron-3.5-super-vl-free",
@@ -193,7 +192,7 @@ test("a chain is ordered inside its own profile's ceiling", () => {
 })
 
 test("the safe fleet's second choice is still the best one inside the ceiling", () => {
-  // Seven of the ten lanes run on a second-choice model under a zero-retention
+  // Six of the ten lanes run on a second-choice model under a zero-retention
   // ceiling. That is the price of the ceiling, and it is only worth paying
   // when the model that takes over is the best one available for THAT job.
   const safe = loadProfile("fleet-safe")
@@ -203,7 +202,7 @@ test("the safe fleet's second choice is still the best one inside the ceiling", 
   assert.equal(resolveLaneModel(safe, "locate").model, "deepseek-v4.1-flash-free")
   assert.equal(resolveRoles(safe).locate, "low")
   // `vision` wants a fast image reader. minimax reads one in 7 seconds.
-  assert.equal(resolveLaneModel(safe, "vision").model, "minimax-m3.1-flash-free")
+  assert.equal(resolveLaneModel(safe, "vision").model, "deepseek-v4.1-flash-free")
   // `sweep` is a bulk mechanical search, so reasoning is pure waste on it.
   // It used to run on `longcat-2.5-preview-free`, which measured 420
   // reasoning tokens a message at 16.6s - the most expensive way to ask a
@@ -213,20 +212,21 @@ test("the safe fleet's second choice is still the best one inside the ceiling", 
   // measures 19 reasoning tokens at 3.4s.
   assert.equal(resolveLaneModel(safe, "sweep").model, "deepseek-v4.1-flash-free")
   assert.equal(resolveRoles(safe).sweep, "low")
-  // Seven lanes differ from the unrestricted fleet. The number is a fact about
+  // Six lanes differ from the unrestricted fleet. The number is a fact about
   // the tier, not a preference, and the docs quote it.
   const all = loadProfile("fleet-all")
   const displaced = Object.keys(safe.roles).filter(
     (lane) => resolveLaneModel(safe, lane).model !== resolveLaneModel(all, lane).model,
   )
-  assert.equal(displaced.length, 7)
-  assert.deepEqual(displaced.sort(), ["build", "locate", "plan", "reviewer", "sweep", "verify", "vision"])
+  assert.equal(displaced.length, 8)
+  assert.deepEqual(displaced.sort(), ["build", "locate", "longform", "plan", "reviewer", "sweep", "verify", "vision"])
 })
 
 test("a model whose terms are unknown is never used", () => {
   assert.equal(retentionAllowed("beam-free", "zero-retention"), false)
   assert.equal(retentionAllowed("beam-free", "retained"), true)
-  assert.equal(retentionAllowed("minimax-m3.1-flash-free", "zero-retention"), true)
+  assert.equal(retentionAllowed("flint-40b-free", "zero-retention"), false)
+  assert.equal(retentionAllowed("flint-40b-free", "may-train"), true)
   assert.equal(retentionAllowed("big-pickle", "zero-retention"), false)
   assert.equal(retentionAllowed("big-pickle", "may-train"), true)
   assert.equal(retentionAllowed("no-such-model", "may-train"), false)
@@ -353,7 +353,7 @@ test("the same plugin source produces different behaviour per profile", () => {
   const single = cfg("beam-free")
 
   // 1. The session model.
-  assert.equal(safe.model, "opencode/minimax-m3.1-flash-free")
+  assert.equal(safe.model, "opencode/deepseek-v4.1-flash-free")
   assert.equal(single.model, "opencode/beam-free")
 
   // 2. The utility route. `small_model` is what opencode uses for its short
@@ -616,7 +616,7 @@ test("modelsInPlay and effectiveRetention see past the base model", () => {
   const p = loadProfile("fleet-all")
   const inPlay = modelsInPlay(p)
   assert.ok(inPlay.includes("beam-free"), "a lane's model is in play")
-  assert.ok(inPlay.includes("minimax-m3.1-flash-free"))
+  assert.ok(inPlay.includes("flint-40b-free"))
   const eff = effectiveRetention(p)
   assert.equal(eff.retention, "may-train")
   // A profile that never leaves its base model is unaffected.
@@ -643,7 +643,7 @@ test("effectiveRetention names the MODEL responsible for the level", () => {
   const all = effectiveRetention(loadProfile("fleet-all"))
   assert.equal(all.retention, "may-train")
   assert.ok(
-    ["big-pickle", "flint-40b-free", "mimo-v2.6-flash-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "nemotron-3.5-super-vl-free"].includes(
+    ["big-pickle", "mimo-v2.6-flash-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "nemotron-3.5-super-vl-free", "flint-40b-free"].includes(
       all.worst,
     ),
     `worst should name a model, got ${all.worst}`,
@@ -660,15 +660,25 @@ test("the header states the input cap that governs, not the base model's", () =>
   // "narrowest lane", so the number and the label described two different
   // things. `reserved` and `prune` are derived from the narrowest one, and a
   // reader could not check the arithmetic.
+  //
+  // fleet-safe's lanes all share the base model's 200,000-token window, so
+  // for it the two numbers agree and no "narrowest lane" label prints. The
+  // case that keeps the label honest is fleet-all: its base (flint,
+  // 262,144) is wider than its narrowest lane (200,000), and the label has
+  // to appear there.
   const safe = loadProfile("fleet-safe")
   const text = generateConfig(safe)
   const cap = inputCap(safe)
   assert.match(text, new RegExp(`input cap\\s+${cap.toLocaleString("en-US")} tokens`))
-  assert.match(text, /narrowest lane; governs the shared reserve/)
   // The base model's own context is still named, and labelled as the base.
-  assert.match(text, /context\s+1,000,000 tokens\s+\(base model\)/)
+  assert.match(text, /context\s+200,000 tokens\s+\(base model\)/)
   // And the derived numbers follow the cap that was printed.
   assert.match(text, new RegExp(`compaction\\.reserved\\s+${reservedTokens(safe).toLocaleString("en-US")}`))
+
+  const all = loadProfile("fleet-all")
+  const allText = generateConfig(all)
+  assert.match(allText, /narrowest lane; governs the shared reserve/)
+  assert.match(allText, /context\s+262,144 tokens\s+\(base model\)/)
 
   // A single-model profile has one number and no fleet annotation.
   const single = generateConfig(loadProfile("beam-free"))
@@ -679,8 +689,7 @@ test("the header states the input cap that governs, not the base model's", () =>
 test("the header names each lane's real output cap", () => {
   // The whole reason locate stays on Lightning is its 262,144-token output
   // ceiling against Beam's 131,072. A header that prints only the base cap
-  // would let someone budget `build` at eight times what it can emit: the
-  // fleet's base cap is 1M and Flint's output ceiling is 65,536.
+  // would let someone budget `build` at four times what it can emit.
   const p = loadProfile("fleet-all")
   const splits = roleSplitModels(p)
   assert.equal(splits.length, 10)
@@ -695,7 +704,7 @@ test("the header names each lane's real output cap", () => {
 
 test("retention.yml is parsed and separates safe from training routes", () => {
   const r = loadRetention().models
-  assert.equal(r["opencode/minimax-m3.1-flash-free"].retention, "zero-retention")
+  assert.equal(r["opencode/deepseek-v4.1-flash-free"].retention, "zero-retention")
   assert.equal(r["opencode/big-pickle"].retention, "may-train")
   assert.equal(r["opencode/beam-free"].retention, "retained")
   // Folded block scalars must collapse to a single readable line.
@@ -914,7 +923,7 @@ test("REGRESSION: a hand-edited agent model does not survive regeneration", () =
   )
   assert.equal(
     out.agent.build.model,
-    "opencode/minimax-m3.1-flash-free",
+    "opencode/deepseek-v4.1-flash-free",
     "the managed lanes' models are pinned, not inherited",
   )
 })

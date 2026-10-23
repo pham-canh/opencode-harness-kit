@@ -48,8 +48,8 @@ test("a flag accepts both spellings", () => {
   try {
     const spaced = run(box, ["list", "--retention", "zero-retention"])
     const inline = run(box, ["list", "--retention=zero-retention"])
-    assert.match(spaced.out, /fleet-safe/)
-    assert.match(inline.out, /fleet-safe/)
+    assert.match(spaced.out, /deepseek-v4.1-flash-free/)
+    assert.match(inline.out, /deepseek-v4.1-flash-free/)
     assert.doesNotMatch(inline.out, /fleet-all/, "the filter was not applied")
 
     const init = run(box, ["init", "--profile=fleet-safe", "--yes"])
@@ -186,7 +186,7 @@ test("doctor exits non-zero when the install is broken", () => {
     const text = readFileSync(box.config, "utf8")
     writeFileSync(
       box.config,
-      text.replaceAll("opencode/minimax-m3.1-flash-free", "opencode/some-other-free"),
+      text.replaceAll("opencode/deepseek-v4.1-flash-free", "opencode/some-other-free"),
     )
     const fixture = join(box.dir, "catalog.json")
     writeFileSync(fixture, JSON.stringify({ opencode: { models: {} } }))

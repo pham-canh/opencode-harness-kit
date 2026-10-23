@@ -146,7 +146,11 @@ function healthOnDisk(dir) {
 }
 
 const HOUR = 60 * 60 * 1000
-const MODEL = "minimax-m3.1-flash-free"
+// A model whose retention.yml entry still exists, so a profile that names
+// it loads. minimax-m3.1-flash-free lost its entry when the provider pulled
+// it, and loadProfile refuses a model with no verdict - the fixture below
+// exists to exercise the router, not the loader.
+const MODEL = "glm-5.3-flash-free"
 
 // B1 - the router never records a spent route.
 
@@ -202,8 +206,11 @@ test("a session error with no model is charged to the session's route", async ()
   })
 
   const written = healthOnDisk(dir)
+  // The session has run on fleet-safe, so its route is the base model, and
+  // the charge has to land there. MODEL names a model the events carry;
+  // the session's own route is a different key.
   assert.ok(
-    written.unhealthy[`opencode/${MODEL}`],
+    written.unhealthy["opencode/deepseek-v4.1-flash-free"],
     `the session error was dropped: ${JSON.stringify(written)}`,
   )
 })
@@ -409,7 +416,7 @@ test("the router fails over for a route spent today, not for one spent last week
   await staleHooks.config(staleConfig)
   assert.equal(
     staleConfig.model,
-    "opencode/minimax-m3.1-flash-free",
+    "opencode/deepseek-v4.1-flash-free",
     "an expired record failed the session over",
   )
   assert.equal(

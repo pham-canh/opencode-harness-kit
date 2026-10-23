@@ -563,19 +563,19 @@ test("router walks the fallback queue when the session route is marked down", as
     join(dir, ".space", "health.json"),
     JSON.stringify({
       unhealthy: {
-        "opencode/minimax-m3.1-flash-free": { at: new Date().toISOString(), reason: "429" },
+        "opencode/deepseek-v4.1-flash-free": { at: new Date().toISOString(), reason: "429" },
       },
     }),
   )
   const hooks = await harness(dir)
   const config = { harness: { profile: "fleet-safe" } }
   await hooks.config(config)
-  assert.equal(config.model, "opencode/deepseek-v4.1-flash-free", "should move to the next profile")
+  assert.equal(config.model, "opencode/glm-5.3-flash-free", "should move to the next fallback")
   // A fleet is ten jobs. The session model moves onto a fallback, but the
   // fleet is still the active profile: the lanes have their own chains and
   // the chain that was supposed to survive the outage is not the session's.
   assert.equal(config.harness.profile, "fleet-safe")
-  assert.equal(config.harness.sessionModel, "opencode/deepseek-v4.1-flash-free")
+  assert.equal(config.harness.sessionModel, "opencode/glm-5.3-flash-free")
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -597,7 +597,7 @@ test("a spent session model does not collapse the fleet onto one model", async (
   const config = {
     harness: { profile: "fleet-safe" },
     agent: {
-      build: { model: "opencode/flint-40b-free", variant: "max" },
+      build: { model: "opencode/minimax-m3.1-flash-free", variant: "max" },
       doc: { model: "opencode/glm-5.3-flash-free" },
       reviewer: { model: "opencode/glm-5.3-flash-free" },
     },
@@ -641,12 +641,15 @@ test("router moves one lane down its chain and leaves the rest alone", async () 
     harness: { profile: "fleet-all" },
     agent: {
       plan: { model: "opencode/beam-free", variant: "max" },
-      build: { model: "opencode/flint-40b-free", variant: "max" },
+      build: { model: "opencode/minimax-m3.1-flash-free", variant: "max" },
     },
   }
   await hooks.config(config)
 
   assert.equal(config.agent.plan.model, "opencode/deepseek-v4.1-flash-free")
+  // minimax left retention.yml when the provider pulled it, and a lane on a
+  // model with unknown terms cannot be kept: the resolver hands the lane the
+  // model its chain allows.
   assert.equal(config.agent.build.model, "opencode/flint-40b-free")
   rmSync(dir, { recursive: true, force: true })
 })

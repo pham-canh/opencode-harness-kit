@@ -107,7 +107,7 @@ about your prompts.
 
 | lane | job | model | measured |
 |---|---|---|---|
-| `build` | write and verify the change | MiniMax M3.1 Flash | 6.9 s |
+| `build` | write and verify the change | Flint 40B Free | 6.9 s |
 | `plan` | turn a request into a plan | Beam | **6.1 s** |
 | `reviewer` | read a change in two passes | Nemotron 3 Ultra | 7.8 s (34 s cold) |
 | `locate` | find where something lives | Nemotron 3.5 Lightning | 6.9 s |
@@ -116,13 +116,14 @@ about your prompts.
 | `doc` | read a long document or a spec | GLM 5.3 Flash | 7.4 s |
 | `schema` | produce JSON or a JSON schema | DeepSeek V4.1 Flash | 10.7 s |
 | `sweep` | sweep a lot of code mechanically | Nemotron 3.5 Super VL | 8.4 s |
-| `longform` | read a megabyte, or write alternatives | MiniMax M3.1 Flash | 6.9 s |
+| `longform` | read a megabyte, or write alternatives | Flint 40B Free | 6.9 s |
 
 `longform` used to run on `longcat-2.5-preview-free`, and the provider
 withdrew it. A withdrawn model is not a lane, it is a hole in a lane: the
-route falls to the next rung of the same chain, which is MiniMax - the only
-model left on the tier with a million-token context. The `measured` column
-for that lane is therefore MiniMax's, not the withdrawn model's.
+route falls to the next rung of the same chain, where MiniMax then flint
+carried the lane - flint is the model that replaced MiniMax on the tier, and
+the only one left with the context the lane exists for. The `measured`
+column for that lane is therefore flint's, not either withdrawn model's.
 
 The `measured` column is the median of five one-line requests to that model
 on 2026-10-21 - the same prompt for every model, from the process start, so
@@ -243,7 +244,7 @@ it. One file covers ten jobs either way.
 |---|---|---|---|---|
 | `fleet-safe` (default) | 10 | 200,000 | `max` | zero-retention |
 | `fleet-all` | 10 | 160,000 | `max` | **may train** |
-| `minimax-m3.1-flash-free` | 5 | 1,000,000 | `max` | zero-retention |
+| `flint-40b-free` | 5 | 262,144 | `max` | **may train** |
 | `beam-free` | 5 | 1,048,576 | `max` | retained |
 | `deepseek-v4.1-flash-free` | 5 | 200,000 | `max` | zero-retention |
 | `glm-5.3-flash-free` | 5 | 200,000 | `max` | zero-retention |
@@ -283,6 +284,8 @@ withdrawn, and one of them was the **default** at the time:
 | `deepseek-v4-flash-free` | Withdrawn within a month. Replaced by `deepseek-v4.1-flash-free`. |
 | `muse-spark-1.3-contributor-free` | A Meta contributor route whose provider was permitted to train on prompts. The paid route is still in the catalogue. |
 | `mimo-v2.5-free` | Observed alive for one day. Replaced by `mimo-v2.6-flash-free`. |
+| `longcat-2.5-preview-free` | Was the `longform` lane's primary in both fleets, so when it was pulled every lane fell back a rung, and the one profile built only for that model was retired. |
+| `minimax-m3.1-flash-free` | Deprecated by the provider and replaced on the tier by `flint-40b-free`, which is the build and `longform` lane today. |
 
 The full list, with a reason for each, is in
 [`profiles/index.json`](profiles/index.json).
