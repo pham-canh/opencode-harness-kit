@@ -16,14 +16,20 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     concurrency:
-      group: test-${{ github.ref }}
+      # One group per OS. A shared group would make the matrix jobs cancel
+      # each other, which is a green CI that tested one platform.
+      group: test-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
     strategy:
       matrix:
+        # The terminal tests use script(1), and macOS ships the BSD one with
+        # a different command line. Running only on Linux let that difference
+        # ship. The suite is the product; it has to run where people use it.
+        os: [ubuntu-latest, macos-latest]
         node: ['22.x']
     steps:
       - uses: actions/checkout@v7
