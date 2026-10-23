@@ -35,12 +35,12 @@ export function runOnTerminal(command, args, options = {}) {
   }
 
   // BSD script cannot start without a parent terminal, so the pty comes from
-  // python3 instead. sys.argv[1:] is the command; pty.spawn returns its exit
-  // status after waiting for it.
+  // python3 instead. sys.argv[1:] is the command. pty.spawn returns the raw
+  // wait status, not an exit code: exiting with 256 for a child that exited 1
+  // would wrap to 0 and report success for a failed command.
   const python = [
-    "import pty, sys",
-    "status = pty.spawn(sys.argv[1:])",
-    "sys.exit(status if status >= 0 else 128 - status)",
+    "import os, pty, sys",
+    "sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))",
   ].join("\n")
   const r = spawnSync("python3", ["-c", python, command, ...args], options)
   if (r.error) {
