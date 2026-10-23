@@ -25,11 +25,13 @@ baseline-*.txt
 # but the handler does not run if the process is killed, so ignore it regardless.
 .test-build-*/
 
-# video build artifacts (the recorder is in the loom tools repo: rec/build.py)
+__pycache__/
+# OLD in-repo demo paths. The demo's non-published artifacts moved to the
+# private video repo (pham-canh/video, scratch/oc-harness-pitch); the video/
+# lines below remain only to ignore what old branches still write here.
 video/scenes/
 video/audio/
 video/space-harness-demo.mp4
-__pycache__/
 video/build/
 video/vo.m4a
 video/vo_timed.txt
