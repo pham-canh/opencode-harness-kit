@@ -121,7 +121,7 @@ test("use reports the lane models and the retention that actually applies", () =
   const box = sandbox()
   try {
     const out = run(box, ["use", "fleet-all", "--dryrun"])
-    assert.match(out, /lane model\s+build=minimax-m3\.1-flash-free/)
+    assert.match(out, /lane model\s+build=flint-40b-free/)
     assert.match(out, /retention\s+may-train/)
     // The base model is zero-retention, so saying so unqualified would be the
     // exact lie this profile exists to avoid.

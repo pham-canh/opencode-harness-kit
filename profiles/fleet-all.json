@@ -49,8 +49,9 @@
   },
   "roleModels": {
     "build": {
-      "model": "minimax-m3.1-flash-free",
+      "model": "flint-40b-free",
       "chain": [
+        "flint-40b-free",
         "minimax-m3.1-flash-free",
         "deepseek-v4.1-flash-free"
       ]
