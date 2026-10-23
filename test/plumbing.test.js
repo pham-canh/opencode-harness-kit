@@ -61,6 +61,11 @@ con.commit()`,
     const out = execFileSync(
       process.execPath,
       [
+        // `-e` is CommonJS unless told otherwise, and an `import` there dies
+        // with "Cannot use import statement outside a module" on Node 22.
+        // The fallback is exercised in a child process on purpose, so the
+        // child has to be told it is a module.
+        "--input-type=module",
         "-e",
         `import { query } from ${JSON.stringify(join(REPO, "src", "sqlite.js"))};
          const rows = query(${JSON.stringify(db)}, "select id, name from t");

@@ -1033,6 +1033,10 @@ test("a repository that cannot be read is a diagnostic, not a stack trace", asyn
     join(dir, "package.json"),
     JSON.stringify({
       name: "bad-repo",
+      // The copy is imported, so the scratch package has to be a module too.
+      // Without this the import of trust.js dies with "Cannot use import
+      // statement outside a module" before main() can say anything.
+      type: "module",
       repository: { type: "git", url: "https://gitlab.com/a/b.git" },
     }),
   )
