@@ -236,16 +236,28 @@ export function unhealthyRoutes(dir) {
  * lane chains list bare model ids, so the prefix is dropped here. Comparing
  * the two directly would never match, and a spent route would look healthy.
  *
+ * The drop collides when two providers host the same model id: a recorded
+ * `openrouter/<x>` then reads as a spent `opencode/<x>`, and every lane whose
+ * chain names the opencode one is pushed off a route that is fine. `provider`
+ * narrows the answer to the routes a session of THAT provider can actually
+ * hit - a provider-qualified key for another provider is dropped, and a key
+ * with no provider at all is kept, because a bare key is a standing statement
+ * about the model id and it is not readable as any narrower one. Callers
+ * including the router, whose lane set may not share one provider, keep the
+ * unfiltered call and its old behaviour.
+ *
  * A route whose window has passed is not spent any more, and is not returned
  * here: the provider's quota comes back at 00:00 UTC, and a lane that stays
  * on its fallback forever is a lane that never comes back either.
  *
  * @param {string} dir the project root
+ * @param {string} [provider] only count routes served by this provider
  * @returns {Set<string>}
  */
-export function unhealthyModels(dir) {
+export function unhealthyModels(dir, provider) {
   const out = new Set()
   for (const key of Object.keys(unhealthyRoutes(dir))) {
+    if (provider && key.includes("/") && !key.startsWith(`${provider}/`)) continue
     out.add(key.includes("/") ? key.slice(key.indexOf("/") + 1) : key)
   }
   return out

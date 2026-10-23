@@ -20,7 +20,6 @@ import { TelemetryPlugin } from "./telemetry.js"
 import { applyEffort, planEffort } from "./effort.js"
 import { profileIdFromConfig } from "./profile.js"
 import { projectRoot } from "./project.js"
-import { unhealthyModels } from "./health.js"
 
 export interface HarnessOptions {
   /** Profile id. Defaults to the one recorded in the config by `oc-harness use`. */
@@ -69,9 +68,9 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
     // file the router writes is somewhere else entirely.
     const project = projectRoot(ctx.directory, ctx.worktree)
     try {
-      // The same set of spent routes the router used. A lane that failed over
-      // to a model with fewer effort levels must not keep the variant the
-      // previous model had.
+      // The same set of spent routes the router used, read HERE under the
+      // profile's own provider: a health file keyed `openrouter/<x>` must not
+      // read as a spent `opencode/<x>` for a profile served by opencode.
       //
       // The session model is read before the effort plan is applied, because
       // the router may have moved it onto a fallback while the base route was
@@ -80,16 +79,28 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
         typeof config?.harness?.sessionModel === "string"
           ? config.harness.sessionModel
           : undefined
-      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(project) }), {
+      applyEffort(config, planEffort(id, { dir: project }), {
         sessionModel,
       })
-      // Record it where the prune hook looks, so pruning picks up this
-      // profile's thresholds without access to the resolved config.
-      //
-      // Under the PROJECT root, not the worktree: the worktree is the
-      // filesystem root in a project that is not a git repository, and the
-      // write fails there with a permission error that this catch swallows.
-      // The pruner then finds no active profile and does nothing at all.
+    } catch {
+      // Never block startup on a bad profile.
+    }
+    // Record it where the prune hook looks, so pruning picks up this
+    // profile's thresholds without access to the resolved config.
+    //
+    // Under the PROJECT root, not the worktree: the worktree is the
+    // filesystem root in a project that is not a git repository, and the
+    // write fails there with a permission error that this catch swallows.
+    // The pruner then finds no active profile and does nothing at all.
+    //
+    // This used to sit inside the same try as applyEffort, and an applyEffort
+    // throw skipped it: a config that could not accept the effort plan (an
+    // agent dictionary OpenCode froze, a model line it rejects) left the
+    // marker stale, and the pruner ran on the PREVIOUS profile's thresholds
+    // until the next clean startup. The marker is therefore written
+    // independently - it is a statement about which profile the config names,
+    // not a consequence of whether the effort plan applied.
+    try {
       const dir = join(project, ".space")
       mkdirSync(dir, { recursive: true })
       writeFileSync(join(dir, "active"), `${id}\n`)

@@ -63,6 +63,7 @@ function bundle(entry, out) {
 }
 bundle("src/index.ts", join(BUILD_DIR, "index.js"))
 bundle("src/telemetry-store.ts", join(BUILD_DIR, "telemetry-store.js"))
+bundle("src/prune.ts", join(BUILD_DIR, "prune.js"))
 
 /** The pruner, on its own, as opencode would register it. */
 async function pruneHooks(worktree) {
@@ -73,6 +74,11 @@ async function pruneHooks(worktree) {
 /** The telemetry store: the writer, and the file list it promises. */
 async function telemetryStore() {
   return import(pathToFileURL(join(BUILD_DIR, "telemetry-store.js")).href)
+}
+
+/** The prune logger on its own, so the rotation can be driven with a tiny cap. */
+async function pruneLogger() {
+  return import(pathToFileURL(join(BUILD_DIR, "prune.js")).href)
 }
 
 function ctx(worktree) {
@@ -146,6 +152,11 @@ function lastPruneLine(dir) {
   return JSON.parse(lines[lines.length - 1])
 }
 
+/** Every line of a prune log generation, as parsed objects. */
+function pruneLines(file) {
+  return readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
+}
+
 // --------------------------------------------------------------------------
 // The pruner: the number it reports has to be the number it achieved
 // --------------------------------------------------------------------------
@@ -180,6 +191,60 @@ test("the prune log reports the real request-size delta, not the text delta", as
     line.savedChars <= 0,
     `a request that grew must never be reported as a saving, got ${line.savedChars}`,
   )
+})
+
+test("a prune log that outgrew its ceiling rotates instead of growing forever", async () => {
+  // The prune log was an append with no ceiling. Measured live: 1.5MB in a
+  // day on one project, a line per prune run, nothing sampling its size.
+  // The telemetry log had a three-generation rotation already - the prune
+  // log now borrows it - and this test drives the rotation directly with a
+  // tiny cap, because reaching a 4MB ceiling through the hook is not a
+  // fixture, it is a fixture maker.
+  const { logPrune } = await pruneLogger()
+  const dir = workspace("ock-prune-rotate-")
+  const stats = { stubbed: 1, kept: 0, bytesBefore: 100, bytesAfter: 90, saved: 10, threshold: 1024 }
+  const log = join(dir, ".space", "prune.jsonl")
+
+  // The first line is under any ceiling: it lands in the file itself.
+  await logPrune(dir, "fleet-safe", stats, 1024)
+  assert.ok(!existsSync(`${log}.1`), "a short log rotated anyway")
+  assert.equal(pruneLines(log).length, 1)
+
+  // The second line pushes the file over the tiny ceiling - rotation
+  // happens BEFORE the append, so the moved generation holds the old line
+  // and the new line starts a fresh file. The newest run stays in the log
+  // the reader opens first; the old line moved to .1 with its own
+  // timestamps readable.
+  await logPrune(dir, "mimo-v2", stats, 1)
+  assert.ok(existsSync(`${log}.1`), "the outgrown log did not rotate")
+  assert.deepEqual(
+    pruneLines(`${log}.1`).map((l) => l.profile),
+    ["fleet-safe"],
+    "the generation the rotation moved is not the one the file held",
+  )
+  assert.deepEqual(
+    pruneLines(log).map((l) => l.profile),
+    ["mimo-v2"],
+    "the newest run was rotated away from the front of the log",
+  )
+
+  // A third write under the same cap rotates again: the previous current
+  // generation moves to .1, overwriting nothing worth keeping because the
+  // scheme keeps THREE files, and the log never grows past the cap.
+  await logPrune(dir, "mimo-v2", stats, 1)
+  assert.deepEqual(
+    pruneLines(`${log}.1`).map((l) => l.profile),
+    ["mimo-v2"],
+    "the moved generation is not the newest completed file",
+  )
+  assert.deepEqual(pruneLines(log).map((l) => l.profile), ["mimo-v2"])
+
+  // And without an explicit cap, the logger rotates at the same 4MB the
+  // telemetry log uses - one schedule, not two drifting ones. The constant
+  // lives in the telemetry store, which the prune log imports: bundling
+  // prune.ts does not re-export the constant, so read it where it is named.
+  const store = await telemetryStore()
+  assert.equal(store.MAX_BYTES, 4 * 1024 * 1024)
 })
 
 test("a short reasoning part is replaced, and the growth is reported", async () => {

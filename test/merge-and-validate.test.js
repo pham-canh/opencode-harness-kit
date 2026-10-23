@@ -43,6 +43,7 @@ import {
   modelsInPlay,
   effectiveRetention,
   ProfileError,
+  promptRef,
 } from "../src/profile.js"
 import { isOneStatement, query } from "../src/sqlite.js"
 import { checkBash } from "../src/rules.js"
@@ -192,6 +193,76 @@ test("a bash rule the kit cannot write is named in the file, not dropped silentl
   // The kit's own rules are untouched by the drop.
   assert.equal(out.permission.bash["ls*"], "allow", "the allowlist still allows ls")
   assert.equal(out.permission.bash["*"], "ask", "the kit's default still asks")
+})
+
+// --- stale lanes on a profile switch -----------------------------------------
+
+test("a lane the profile does not manage is dropped, and named, not left behind", () => {
+  // `oc-harness use` compiles over the config that is already on disk, and
+  // the compiler only walks the profile's own roles - so a fleet lane from a
+  // previous profile survived the switch with its pinned model and kit
+  // prompt, still delegatable, running a model that may no longer match the
+  // file's own retention claim. The five-lane profile downgraded from a
+  // fleet was the case nobody saw until the stale lane answered a task.
+  const out = parseGenerated(
+    generateConfig(loadProfile("deepseek-v4.1-flash-free"), {
+      base: {
+        agent: {
+          longform: { prompt: promptRef("longform"), model: "opencode/some-fleet-model" },
+          doc: { prompt: promptRef("doc"), model: "opencode/some-fleet-model" },
+          custom: { description: "a user's own agent", model: "opencode/whatever" },
+        },
+      },
+    }),
+  )
+  assert.equal(out.agent.longform, undefined, "the stale fleet lane survived the switch")
+  assert.equal(out.agent.doc, undefined, "the second stale fleet lane survived the switch")
+  // An agent that is not a lane name at all belongs to the user, and stays.
+  assert.ok(out.agent.custom, "a user agent was dropped beside the stale lanes")
+  // The five lanes the profile does manage are all still there.
+  for (const role of ["plan", "build", "reviewer", "locate", "verify"]) {
+    assert.ok(out.agent[role], `the managed lane ${role} is gone`)
+  }
+})
+
+test("a lane with the kit's prompt path is announced in the header, not vanished", () => {
+  const text = generateConfig(loadProfile("deepseek-v4.1-flash-free"), {
+    base: {
+      agent: {
+        longform: { prompt: promptRef("longform"), model: "opencode/some-fleet-model" },
+      },
+    },
+  })
+  assert.match(
+    text,
+    /Lanes this profile does not manage, removed from the agent map/,
+    "the removal is not announced in the file",
+  )
+  assert.match(text, /longform/, "the removed lane is not named in the file")
+})
+
+test("a lane whose prompt was rewritten is user data and is left alone", () => {
+  // The removal rule is about ownership, not about the name: a prompt the
+  // kit did not write is the user's entry, and dropping it would delete work
+  // a `use` cannot recreate. It is kept - pinned model stale or not - and
+  // its header reports nothing.
+  const text = generateConfig(loadProfile("deepseek-v4.1-flash-free"), {
+    base: {
+      agent: {
+        longform: { prompt: "{file:/mine/longform.md}", model: "opencode/some-fleet-model" },
+      },
+    },
+  })
+  const out = parseGenerated(text)
+  assert.ok(
+    out.agent.longform,
+    "a lane the user rewrote was dropped with the kit's",
+  )
+  assert.doesNotMatch(
+    text,
+    /Lanes this profile does not manage, removed/,
+    "a kept lane was announced as removed",
+  )
 })
 
 // --- the privacy claim -------------------------------------------------------

@@ -373,6 +373,29 @@ export function generateConfig(p, opts = {}) {
     agent[role] = existing
   }
 
+  // A lane the profile no longer manages gets no pin from the loop above -
+  // the loop only walks the profile's own roles - so a fleet lane left over
+  // from a previous profile survived every later `oc-harness use`, still
+  // carrying the previous profile's pinned model and kit prompt, and a model
+  // that may no longer match the file's retention header.
+  //
+  // The entry is removed only when the KIT still owns it: its prompt is the
+  // compiler's own lane file. An entry a user has rewritten - a different
+  // prompt file, or no prompt at all - is user data, and it is left alone:
+  // dropping it here would delete work a `use` cannot recreate.
+  //
+  // Every removal is named in the header alongside the dropped bash rules.
+  const removedLanes = []
+  for (const name of Object.keys(agent)) {
+    if (roles[name] !== undefined) continue
+    if (!lanes[name]) continue
+    const prompt = agent[name]?.prompt
+    if (typeof prompt === "string" && prompt.endsWith(`/prompts/${name}.md}`)) {
+      delete agent[name]
+      removedLanes.push(name)
+    }
+  }
+
   // The user's own bash rules are merged in, not replaced.
   //
   // The map used to be built from the kit's two lists alone, so every rule
@@ -532,6 +555,7 @@ export function generateConfig(p, opts = {}) {
     instructionsPath,
     unhealthy,
     dropped: own.dropped,
+    removedLanes,
   })
 }
 
@@ -539,7 +563,7 @@ export function generateConfig(p, opts = {}) {
  * @param {Record<string, any>} cfg
  * @param {Profile} p
  * @param {{ comments: boolean, instructionsPath?: string, unhealthy?: Set<string>,
- *          dropped?: string[] }} opts
+ *          dropped?: string[], removedLanes?: string[] }} opts
  * @returns {string}
  */
 function render(cfg, p, opts) {
@@ -610,6 +634,15 @@ function render(cfg, p, opts) {
           `${c}The verb has to be one of allow, ask or deny - a rule the kit cannot`,
           `${c}write would fail the schema for the whole file:`,
           ...opts.dropped.map((d) => `${c}  ${d}`),
+        ]
+      : []),
+    ...(opts.removedLanes?.length
+      ? [
+          `${c}`,
+          `${c}Lanes this profile does not manage, removed from the agent map:`,
+          ...opts.removedLanes.map((r) => `${c}  ${r}`),
+          `${c}A lane whose prompt you had rewritten is left alone instead - pin the`,
+          `${c}lane back with a prompt of your own if it was yours.`,
         ]
       : []),
     `${c}`,

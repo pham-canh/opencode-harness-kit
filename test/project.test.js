@@ -230,3 +230,53 @@ test("the router records a spent route where the effort hook looks for it", asyn
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("the marker is written even when the effort plan cannot apply", async () => {
+  // applyEffort's first write is the session model. A config object that
+  // cannot take one - OpenCode freezes parts of the resolved config; a future
+  // opencode freezing the model line froze every lane's effort with it - used
+  // to skip the marker write that sat in the same try, and the pruner then ran
+  // on the PREVIOUS profile's thresholds until the next clean startup. The
+  // marker states which profile the config names; it is not a consequence of
+  // the effort plan.
+  const dir = mkdtempSync(join(tmpdir(), "ock-frozen-config-"))
+  try {
+    const { HarnessPlugin } = await import(DIST)
+    const hooks = await HarnessPlugin(ctx("/", dir), {
+      only: ["prune", "telemetry"],
+      profile: "fleet-safe",
+    })
+    await assert.doesNotReject(() => hooks.config(Object.freeze({})))
+
+    const marker = join(dir, ".space", "active")
+    assert.ok(existsSync(marker), "a config the effort cannot write onto must not lose the marker")
+    assert.equal(readFileSync(marker, "utf8").trim(), "fleet-safe")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("the marker is written even when the profile cannot be planned", async () => {
+  // planEffort loading its profile and the marker naming the active profile
+  // used to share one try, so a profile the kit could not compute (removed,
+  // corrupted, or one whose catalogue check failed offline) left the marker
+  // stale. What the marker has to say is what the config files say, not
+  // whether the plan ran: the pruner reads the marker, fails to load THAT
+  // profile, and says so once per session - which is the honest state for an
+  // install whose profile is broken.
+  const dir = mkdtempSync(join(tmpdir(), "ock-broken-profile-"))
+  try {
+    const { HarnessPlugin } = await import(DIST)
+    const hooks = await HarnessPlugin(ctx("/", dir), {
+      only: ["prune", "telemetry"],
+      profile: "no-such-profile",
+    })
+    await assert.doesNotReject(() => hooks.config({}))
+
+    const marker = join(dir, ".space", "active")
+    assert.ok(existsSync(marker), "a profile the plan cannot compute must not lose the marker")
+    assert.equal(readFileSync(marker, "utf8").trim(), "no-such-profile")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

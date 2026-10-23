@@ -35,12 +35,23 @@ export type EffortResult = {
  */
 export declare const MANAGED_ROLES: string[];
 /**
+ * The spent routes the effort plan honours.
+ *
+ * `opts.unhealthy` is a bare-model set a caller computed already - the one
+ * contract the tests and the CLI use. `opts.dir` is the project root, and it
+ * asks the plan to read the health file itself under the profile's OWN
+ * provider: a health file keyed `openrouter/<x>` must not read as a spent
+ * `opencode/<x>`, and a bare set has already lost the provider it came from,
+ * so the caller cannot narrow it after the fact. Passing both is the
+ * caller's narrowed set, and it wins.
+ *
  * @param {string} profileId
- * @param {{ unhealthy?: Set<string> }} [opts]
+ * @param {{ unhealthy?: Set<string>, dir?: string }} [opts]
  * @returns {EffortResult}
  */
 export declare function planEffort(profileId: string, opts?: {
     unhealthy?: Set<string>;
+    dir?: string;
 }): EffortResult;
 /**
  * Mutate the resolved OpenCode config so each managed agent declares its own

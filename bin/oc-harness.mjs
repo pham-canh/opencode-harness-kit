@@ -94,7 +94,17 @@ function ensurePackageCopy() {
   for (const name of ["dist", "profiles", "prompts", "skills"]) {
     cpSync(join(ROOT, name), join(COPY_ROOT, name), { recursive: true })
   }
-  for (const name of ["lanes.json", "retention.yml", "GLOBAL.md"]) {
+  for (const name of ["lanes.json", "retention.yml", "GLOBAL.md", "package.json"]) {
+    // `package.json` travels with the copy because `kitVersion()` in
+    // src/config.js reads it UP from the plugin bundle's own location
+    // (`../package.json` from `dist/`). Without it, every kit field the
+    // telemetry plugin and the CLI print from a copy install read
+    // "unknown" - an install that could not say which version it was.
+    //
+    // `bin/` is deliberately NOT copied: nothing inside the copy points at
+    // the CLI, and `npx` re-fetches the entry point when the cache has been
+    // cleaned. A second copy of a 176KB CLI for a path nobody in the copy
+    // walks is dead weight, not durability.
     cpSync(join(ROOT, name), join(COPY_ROOT, name))
   }
   writeFileSync(join(COPY_ROOT, ".source"), `${want}\n`)

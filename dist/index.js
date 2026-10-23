@@ -1891,11 +1891,12 @@ var PrunePlugin = async ({ worktree, directory }) => {
     }
   };
 };
-async function logPrune(worktree, profileId, stats) {
+async function logPrune(worktree, profileId, stats, maxBytes = MAX_BYTES) {
   const dir = join6(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
+    rotate(join6(dir, "prune.jsonl"), maxBytes);
     await appendFile(
       join6(dir, "prune.jsonl"),
       JSON.stringify({
@@ -2016,9 +2017,10 @@ function writeHealth(dir, health) {
 function unhealthyRoutes(dir) {
   return liveUnhealthy(readHealth(dir));
 }
-function unhealthyModels(dir) {
+function unhealthyModels(dir, provider) {
   const out = /* @__PURE__ */ new Set();
   for (const key of Object.keys(unhealthyRoutes(dir))) {
+    if (provider && key.includes("/") && !key.startsWith(`${provider}/`)) continue;
     out.add(key.includes("/") ? key.slice(key.indexOf("/") + 1) : key);
   }
   return out;
@@ -2355,8 +2357,10 @@ function truncate2(s, n = 300) {
 // src/effort.js
 function planEffort(profileId, opts = {}) {
   const p = loadProfile(profileId);
+  const unhealthy = opts.unhealthy ?? (opts.dir ? unhealthyModels(opts.dir, p.provider) : void 0);
+  const scoped = unhealthy === void 0 ? opts : { ...opts, unhealthy };
   const levels = p.effort?.levels ?? [];
-  const roles = resolveRoles(p, opts);
+  const roles = resolveRoles(p, scoped);
   const notes = [];
   if (levels.length === 0) {
     notes.push(
@@ -2378,7 +2382,7 @@ function planEffort(profileId, opts = {}) {
   }
   const laneModels = {};
   for (const role of Object.keys(p.roles ?? {})) {
-    laneModels[role] = resolveLaneModel(p, role, opts).model;
+    laneModels[role] = resolveLaneModel(p, role, scoped).model;
   }
   return {
     profileId,
@@ -2442,9 +2446,12 @@ var HarnessPlugin = async (ctx, options) => {
     const project = projectRoot(ctx.directory, ctx.worktree);
     try {
       const sessionModel = typeof config?.harness?.sessionModel === "string" ? config.harness.sessionModel : void 0;
-      applyEffort(config, planEffort(id, { unhealthy: unhealthyModels(project) }), {
+      applyEffort(config, planEffort(id, { dir: project }), {
         sessionModel
       });
+    } catch {
+    }
+    try {
       const dir = join9(project, ".space");
       mkdirSync3(dir, { recursive: true });
       writeFileSync2(join9(dir, "active"), `${id}

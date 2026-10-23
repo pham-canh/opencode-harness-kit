@@ -480,6 +480,54 @@ test("a health file with no routes keeps the profile the fleet is running", asyn
 
 // B5 - the two halves of the health file used different keys.
 
+test("a spent route on another provider does not read as a spent route on this one", () => {
+  // The prefix drop that makes a qualified health key match a bare chain id
+  // also erased WHICH provider had died: a recorded `openrouter/<x>` passed
+  // `unhealthyModels()` as a bare `x`, and every lane whose chain names
+  // `opencode/<x>` was pushed off a route that was fine. The provider
+  // argument narrows the answer, and a hand-written route with no provider
+  // at all is a standing statement about the model id, so it still passes.
+  const dir = mkdtemp("ock-router-health-")
+  const when = new Date().toISOString()
+  mkdirSync(join(dir, ".space"), { recursive: true })
+  writeFileSync(
+    join(dir, ".space", "health.json"),
+    JSON.stringify({
+      unhealthy: {
+        [`opencode/${MODEL}`]: { at: when },
+        [`openrouter/${MODEL}`]: { at: when },
+        [MODEL]: { at: when },
+      },
+    }),
+  )
+
+  // Each provider sees its own route. The bare entry is providerless, so
+  // every filtered view keeps it.
+  assert.deepEqual(
+    [...unhealthyModels(dir, "opencode")].sort(),
+    [MODEL],
+    `opencode's own view is wrong: ${[...unhealthyModels(dir, "opencode")]}`,
+  )
+  assert.deepEqual(
+    [...unhealthyModels(dir, "opencode")].sort(),
+    [...unhealthyModels(dir, "openrouter")].sort(),
+    "the two views disagree where both providers hold the same routes",
+  )
+  assert.ok(unhealthyModels(dir).has(MODEL), "the unfiltered call lost the bare route")
+
+  // Only openrouter is spent: opencode must NOT read that as its own.
+  writeFileSync(
+    join(dir, ".space", "health.json"),
+    JSON.stringify({ unhealthy: { [`openrouter/${MODEL}`]: { at: when } } }),
+  )
+  assert.equal(
+    unhealthyModels(dir, "opencode").has(MODEL),
+    false,
+    `opencode inherited a spent route from openrouter: ${[...unhealthyModels(dir, "opencode")]}`,
+  )
+  assert.ok(unhealthyModels(dir, "openrouter").has(MODEL), "openrouter cannot see its own route")
+})
+
 test("a profile on another provider fails over at startup when its route is spent", async () => {
   // The router files a failure under the route the EVENT names, and the
   // config hook looked the route up under a hardcoded "opencode/" prefix.

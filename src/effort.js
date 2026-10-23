@@ -12,6 +12,7 @@
 // `max` gets the nearest level that actually exists.
 
 import { loadProfile, resolveRoles, resolveDefaultVariant, resolveLaneModel, LANE_NAMES } from "./profile.js"
+import { unhealthyModels } from "./health.js"
 
 /**
  * @typedef {import("./profile.js").Profile} Profile
@@ -39,14 +40,27 @@ import { loadProfile, resolveRoles, resolveDefaultVariant, resolveLaneModel, LAN
 export const MANAGED_ROLES = LANE_NAMES
 
 /**
+ * The spent routes the effort plan honours.
+ *
+ * `opts.unhealthy` is a bare-model set a caller computed already - the one
+ * contract the tests and the CLI use. `opts.dir` is the project root, and it
+ * asks the plan to read the health file itself under the profile's OWN
+ * provider: a health file keyed `openrouter/<x>` must not read as a spent
+ * `opencode/<x>`, and a bare set has already lost the provider it came from,
+ * so the caller cannot narrow it after the fact. Passing both is the
+ * caller's narrowed set, and it wins.
+ *
  * @param {string} profileId
- * @param {{ unhealthy?: Set<string> }} [opts]
+ * @param {{ unhealthy?: Set<string>, dir?: string }} [opts]
  * @returns {EffortResult}
  */
 export function planEffort(profileId, opts = {}) {
   const p = loadProfile(profileId)
+  const unhealthy =
+    opts.unhealthy ?? (opts.dir ? unhealthyModels(opts.dir, p.provider) : undefined)
+  const scoped = unhealthy === undefined ? opts : { ...opts, unhealthy }
   const levels = p.effort?.levels ?? []
-  const roles = resolveRoles(p, opts)
+  const roles = resolveRoles(p, scoped)
   const notes = []
 
   if (levels.length === 0) {
@@ -75,7 +89,7 @@ export function planEffort(profileId, opts = {}) {
   /** @type {Record<string, string>} */
   const laneModels = {}
   for (const role of Object.keys(p.roles ?? {})) {
-    laneModels[role] = resolveLaneModel(p, role, opts).model
+    laneModels[role] = resolveLaneModel(p, role, scoped).model
   }
 
   return {

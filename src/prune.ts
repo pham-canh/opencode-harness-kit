@@ -21,6 +21,7 @@ import { loadProfile, pruneThreshold, ROOT } from "./profile.js"
 import { projectRoot } from "./project.js"
 import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
+import { rotate as rotateFile, MAX_BYTES } from "./telemetry-store.js"
 
 /**
  * Which profile is active. In order: an explicit environment variable, then the
@@ -486,13 +487,26 @@ export const PrunePlugin: Plugin = async ({ worktree, directory }) => {
   }
 }
 
-async function logPrune(
+/**
+ * Append one line to the project's prune log, and rotate it when the file
+ * outgrew `maxBytes`.
+ *
+ * Exported so the rotation can be driven directly in the tests: reaching it
+ * through the hook needs a 4MB fixture, which is not a fixture.
+ *
+ * @param {string} worktree the project the log belongs to
+ * @param {string} profileId the profile the prune ran under
+ * @param {StubStats & { saved: number, threshold: number }} stats
+ * @param {number} [maxBytes] rotate above this; the telemetry default
+ */
+export async function logPrune(
   worktree: string,
   profileId: string,
   stats: StubStats & {
     saved: number
     threshold: number
   },
+  maxBytes: number = MAX_BYTES,
 ) {
   // The WORKTREE, not `process.cwd()`. Every other writer in this kit uses
   // the worktree, and the plugin's worktree is the project. The process cwd
@@ -504,6 +518,12 @@ async function logPrune(
   try {
     const { mkdir, appendFile } = await import("node:fs/promises")
     await mkdir(dir, { recursive: true })
+    // Rotated on the same scheme as the telemetry log: the file records one
+    // line per prune run, nothing samples its SIZE before appending, and an
+    // active project filled it to 1.5 megabytes in a day. The telemetry store
+    // already owns the three-generation rotation; the prune log borrows it
+    // rather than naming its own file schedule.
+    rotateFile(join(dir, "prune.jsonl"), maxBytes)
     await appendFile(
       join(dir, "prune.jsonl"),
       JSON.stringify({
