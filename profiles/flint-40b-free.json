@@ -1,0 +1,50 @@
+{
+  "$comment": "Metadata read from models.dev on 2026-10-23 and confirmed by a live call the same day. No latency figure is claimed: one call that answered is not a measurement. Regenerate the capability fields with `oc-harness refresh flint-40b-free`.",
+  "id": "flint-40b-free",
+  "title": "Flint 40B Free",
+  "provider": "opencode",
+  "model": "flint-40b-free",
+  "family": "flint",
+  "verified": "2026-10-23",
+  "retention": "may-train",
+  "notes": "An open-weight mixture of experts, 40B total with about 2.5B active, built for coding agents. Small enough to serve locally, and the weights are published, so the same model can be pointed at a local runtime instead of the free tier. 262k context and a 64k output cap, the full effort ladder, tool calls and structured output; it does not read images. Zen keeps prompts for 30 days and may train on them during the free period.",
+  "limits": {
+    "context": 262144,
+    "output": 65536
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": true,
+    "attachment": false
+  },
+  "effort": {
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "default": "max",
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low"
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": [
+    "deepseek-v4.1-flash-free",
+    "nemotron-3.5-lightning-free"
+  ]
+}
