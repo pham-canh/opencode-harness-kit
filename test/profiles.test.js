@@ -68,17 +68,20 @@ function parseGenerated(text) {
 
 /**
  * The free models the tier is serving, checked against the live catalog on
- * 2026-10-22. A profile missing one of them is a job with nobody to do it.
+ * 2026-10-23. A profile missing one of them is a job with nobody to do it.
  *
  * `longcat-2.5-preview-free` was on this list until the provider withdrew
  * it. It is not here any more: a model that cannot run is not a job, and
  * leaving it in the list would make this test pass on a tier that no longer
- * has it.
+ * has it. `flint-40b-free` arrived on 2026-10-21 and is here for the same
+ * reason in reverse: a free model without a lane is a route paid for and
+ * never used.
  */
 const FREE_MODELS = [
   "beam-free",
   "big-pickle",
   "deepseek-v4.1-flash-free",
+  "flint-40b-free",
   "glm-5.3-flash-free",
   "mimo-v2.6-flash-free",
   "minimax-m3.1-flash-free",
@@ -190,7 +193,7 @@ test("a chain is ordered inside its own profile's ceiling", () => {
 })
 
 test("the safe fleet's second choice is still the best one inside the ceiling", () => {
-  // Six of the ten lanes run on a second-choice model under a zero-retention
+  // Seven of the ten lanes run on a second-choice model under a zero-retention
   // ceiling. That is the price of the ceiling, and it is only worth paying
   // when the model that takes over is the best one available for THAT job.
   const safe = loadProfile("fleet-safe")
@@ -210,14 +213,14 @@ test("the safe fleet's second choice is still the best one inside the ceiling", 
   // measures 19 reasoning tokens at 3.4s.
   assert.equal(resolveLaneModel(safe, "sweep").model, "deepseek-v4.1-flash-free")
   assert.equal(resolveRoles(safe).sweep, "low")
-  // Six lanes differ from the unrestricted fleet. The number is a fact about
+  // Seven lanes differ from the unrestricted fleet. The number is a fact about
   // the tier, not a preference, and the docs quote it.
   const all = loadProfile("fleet-all")
   const displaced = Object.keys(safe.roles).filter(
     (lane) => resolveLaneModel(safe, lane).model !== resolveLaneModel(all, lane).model,
   )
-  assert.equal(displaced.length, 6)
-  assert.deepEqual(displaced.sort(), ["locate", "plan", "reviewer", "sweep", "verify", "vision"])
+  assert.equal(displaced.length, 7)
+  assert.deepEqual(displaced.sort(), ["build", "locate", "plan", "reviewer", "sweep", "verify", "vision"])
 })
 
 test("a model whose terms are unknown is never used", () => {
@@ -640,7 +643,7 @@ test("effectiveRetention names the MODEL responsible for the level", () => {
   const all = effectiveRetention(loadProfile("fleet-all"))
   assert.equal(all.retention, "may-train")
   assert.ok(
-    ["big-pickle", "mimo-v2.6-flash-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "nemotron-3.5-super-vl-free"].includes(
+    ["big-pickle", "flint-40b-free", "mimo-v2.6-flash-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "nemotron-3.5-super-vl-free"].includes(
       all.worst,
     ),
     `worst should name a model, got ${all.worst}`,
@@ -676,17 +679,18 @@ test("the header states the input cap that governs, not the base model's", () =>
 test("the header names each lane's real output cap", () => {
   // The whole reason locate stays on Lightning is its 262,144-token output
   // ceiling against Beam's 131,072. A header that prints only the base cap
-  // would let someone budget `build` at four times what it can emit.
+  // would let someone budget `build` at eight times what it can emit: the
+  // fleet's base cap is 1M and Flint's output ceiling is 65,536.
   const p = loadProfile("fleet-all")
   const splits = roleSplitModels(p)
   assert.equal(splits.length, 10)
   const locate = splits.find((s) => s.role === "locate")
   assert.equal(locate.limits.output, 262144)
   const build = splits.find((s) => s.role === "build")
-  assert.equal(build.limits.output, 512000)
+  assert.equal(build.limits.output, 65536)
   const text = generateConfig(p)
   assert.match(text, /locate=nemotron-3\.5-lightning-free \(out 262,144\)/)
-  assert.match(text, /build=minimax-m3\.1-flash-free \(out 512,000\)/)
+  assert.match(text, /build=flint-40b-free \(out 65,536\)/)
 })
 
 test("retention.yml is parsed and separates safe from training routes", () => {

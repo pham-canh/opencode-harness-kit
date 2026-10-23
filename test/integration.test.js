@@ -597,7 +597,7 @@ test("a spent session model does not collapse the fleet onto one model", async (
   const config = {
     harness: { profile: "fleet-safe" },
     agent: {
-      build: { model: "opencode/minimax-m3.1-flash-free", variant: "max" },
+      build: { model: "opencode/flint-40b-free", variant: "max" },
       doc: { model: "opencode/glm-5.3-flash-free" },
       reviewer: { model: "opencode/glm-5.3-flash-free" },
     },
@@ -641,13 +641,13 @@ test("router moves one lane down its chain and leaves the rest alone", async () 
     harness: { profile: "fleet-all" },
     agent: {
       plan: { model: "opencode/beam-free", variant: "max" },
-      build: { model: "opencode/minimax-m3.1-flash-free", variant: "max" },
+      build: { model: "opencode/flint-40b-free", variant: "max" },
     },
   }
   await hooks.config(config)
 
   assert.equal(config.agent.plan.model, "opencode/deepseek-v4.1-flash-free")
-  assert.equal(config.agent.build.model, "opencode/minimax-m3.1-flash-free")
+  assert.equal(config.agent.build.model, "opencode/flint-40b-free")
   rmSync(dir, { recursive: true, force: true })
 })
 
