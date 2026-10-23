@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { mkdtemp } from "./helpers.mjs"
+import { runOnTerminal } from "./pty.js"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
@@ -56,16 +57,12 @@ test("auto asks nothing, even on a terminal", () => {
   // The timeout is the assertion: if the command waited for a keypress, the
   // spawn would be killed and the exit code would not be 0.
   const box = sandbox()
-  const r = spawnSync(
-    "script",
-    ["-q", "-e", "-c", `node ${CLI} auto --offline`, "/dev/null"],
-    {
-      env: { ...process.env, OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: box.dir },
-      encoding: "utf8",
-      cwd: box.dir,
-      timeout: 60_000,
-    },
-  )
+  const r = runOnTerminal("node", [CLI, "auto", "--offline"], {
+    env: { ...process.env, OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: box.dir },
+    encoding: "utf8",
+    cwd: box.dir,
+    timeout: 60_000,
+  })
   assert.equal(r.status, 0, `auto must not wait for an answer:\n${r.stdout ?? ""}`)
   assert.match(
     `${r.stdout ?? ""}`,
@@ -150,16 +147,12 @@ test("auto keeps a file of the user's instead of asking about it", () => {
   mkdirSync(prompts, { recursive: true })
   writeFileSync(join(prompts, "plan.md"), "# mine\n")
 
-  const r = spawnSync(
-    "script",
-    ["-q", "-e", "-c", `node ${CLI} auto --offline`, "/dev/null"],
-    {
-      env: { ...process.env, OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: box.dir },
-      encoding: "utf8",
-      cwd: box.dir,
-      timeout: 60_000,
-    },
-  )
+  const r = runOnTerminal("node", [CLI, "auto", "--offline"], {
+    env: { ...process.env, OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: box.dir },
+    encoding: "utf8",
+    cwd: box.dir,
+    timeout: 60_000,
+  })
   assert.notEqual(r.status, 0, `the unrepaired problem is a failure:\n${r.stdout ?? ""}`)
   assert.equal(
     readFileSync(join(prompts, "plan.md"), "utf8"),

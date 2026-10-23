@@ -17,6 +17,7 @@ import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, wri
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { mkdtemp } from "./helpers.mjs"
+import { runOnTerminal } from "./pty.js"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
@@ -44,9 +45,8 @@ function run(box, args, opts = {}) {
  * Run the CLI with a terminal attached.
  *
  * The commands that ask a question only ask it on a terminal, so a test that
- * wants to answer one has to give the command a terminal. script(1) does
- * that, and it is not on every machine - so the caller skips rather than
- * passes a test that asked nothing.
+ * wants to answer one has to give the command a terminal. `runOnTerminal`
+ * knows the two script(1) command lines; this wrapper only adapts its result.
  *
  * @param {{dir: string, env: Record<string, string>}} box
  * @param {string[]} args
@@ -54,16 +54,12 @@ function run(box, args, opts = {}) {
  * @returns {{code: number, out: string}}
  */
 function runWithTerminal(box, args, input) {
-  const r = spawnSync(
-    "script",
-    ["-qec", `node ${JSON.stringify(CLI)} ${args.join(" ")}`, "/dev/null"],
-    {
-      env: box.env,
-      encoding: "utf8",
-      cwd: box.dir,
-      input,
-    },
-  )
+  const r = runOnTerminal("node", [CLI, ...args], {
+    env: box.env,
+    encoding: "utf8",
+    cwd: box.dir,
+    input,
+  })
   return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` }
 }
 
