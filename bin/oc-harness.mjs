@@ -45,6 +45,7 @@ import {
 } from "../src/profile.js"
 import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin, canAddMemoryPlugin, kitVersion, MEMORY_PLUGIN } from "../src/config.js"
 import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
+import { readHealth, unhealthyRoutes, writeHealth } from "../src/health.js"
 import { planEffort } from "../src/effort.js"
 import { findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
 import { researchModels, isWithdrawn, pruneWithdrawnChains } from "../src/research.js"
@@ -489,6 +490,46 @@ function projectRoot() {
  * one in the plural one, and a checker that only looks at `agents/` misses
  * half of them.
  */
+/**
+ * The health records whose model the catalogue lists again.
+ *
+ * Issue #9: a route recorded as withdrawn carried the quota's day-long
+ * window, so a pulled model was retried once a day, forever. The withdrawn
+ * window fixed the expiry half; this is the other half. A record whose
+ * model has COME BACK to the catalogue - back on the tier, or no longer
+ * flagged as withdrawn in it - describes a route that works again right
+ * now, and every hour the record still stands, the profile's config hook
+ * benches a live route and sends the lane to a rung down its chain.
+ *
+ * The clear is conservative in the way the health file itself is: a model
+ * that is IN the catalogue and not flagged withdrawn in it is trusted as
+ * returned. A model the fetch never saw stays recorded - a network error
+ * must not un-bench a route.
+ *
+ * @param {string} dir the project root the health file lives under
+ * @param {any} catalog the live model catalogue, or null
+ * @returns {string[]} the route keys that were cleared
+ */
+function clearRecoveredRoutes(dir, catalog) {
+  if (!catalog || typeof catalog !== "object") return []
+  const routes = unhealthyRoutes(dir)
+  const recovered = []
+  for (const key of Object.keys(routes)) {
+    const slash = key.indexOf("/")
+    // A key without its provider half was never written by the router.
+    if (slash < 1) continue
+    const provider = key.slice(0, slash)
+    const model = key.slice(slash + 1)
+    const record = catalog?.[provider]?.models?.[model]
+    if (record && !isWithdrawn(record)) recovered.push(key)
+  }
+  if (!recovered.length) return []
+  const health = readHealth(dir)
+  for (const key of recovered) delete health.unhealthy?.[key]
+  writeHealth(dir, health)
+  return recovered
+}
+
 function agentDirs() {
   const project = projectRoot()
   return [
@@ -876,6 +917,9 @@ async function cmdAuto() {
   try {
     // 1. The catalogue. A model that was withdrawn has to be caught before
     //    it is used, and the profile files are the only place that lives.
+    //    The same fetch feeds the health cleanup and the use step below;
+    //    offline, it stays null and both of those stand down with it.
+    let refreshed = { changed: [], gone: [], same: [], skipped: [], catalog: null }
     if (flag("--offline")) {
       steps.push({ step: "refresh", status: "skipped", detail: "--offline" })
     } else {
@@ -884,7 +928,7 @@ async function cmdAuto() {
       // profile that could not be read used to vanish from the report - and
       // the report said "ok": true while a profile was never checked against
       // the live catalogue.
-      const refreshed = await cmdRefreshAll()
+      refreshed = await cmdRefreshAll()
       for (const g of refreshed.gone) {
         problems.push(`profile ${g} is no longer in the live catalogue`)
       }
@@ -901,14 +945,35 @@ async function cmdAuto() {
       })
     }
 
+    // 1.5. The health file. A record whose model the catalogue lists again
+    //     describes a route that works, and the profile's config hook benches
+    //     a live route while it stands. This step runs with the same fetch the
+    //     refresh made, so it costs nothing extra. A `--offline` doctor skips
+    //     it with the refresh it belongs to: a catalogue that was not read
+    //     must not be trusted to un-bench anything.
+    const recovered = clearRecoveredRoutes(projectRoot(), refreshed.catalog)
+    if (recovered.length) {
+      for (const key of recovered) console.log(`  ${green("+")} ${key} is in the live catalogue again; the spent record was cleared`)
+      steps.push({
+        step: "health",
+        status: "ok",
+        detail: `${recovered.length} spent record(s) cleared`,
+      })
+    }
+
     // 2. The behavioural layer: the plugin link, the prompts, the skills, the
     //    global rules. Without them the config means nothing.
     await cmdInstall()
     steps.push({ step: "install", status: "ok" })
 
-    // 3. The config, recompiled from the profile.
-    await cmdUse(id)
-    steps.push({ step: "use", status: "ok", detail: id })
+    // 3. The config, recompiled from the profile - against the SAME catalogue
+    //    fetch, so the step does not pull models.dev a second time.
+    const used = await cmdUse(id, refreshed.catalog, { wantJson, report: { problems } })
+    if (used === "refused") {
+      steps.push({ step: "use", status: "failed", detail: id })
+    } else {
+      steps.push({ step: "use", status: "ok", detail: id })
+    }
 
     // 4. The check that says whether all of that worked.
     const verifyProblems = cmdVerify()
@@ -1452,7 +1517,28 @@ function memorySpec() {
   return MEMORY_PLUGIN
 }
 
-async function cmdUse(id) {
+/**
+ * Install a profile's config.
+ *
+ * @param {string} id
+ * @param {any} [catalog] a catalogue an earlier step already fetched
+ * @param {{ wantJson?: boolean, report?: { problems: string[] } | null }} [sink]
+ *   where a refusal goes instead of `fail()`. The one caller that runs with
+ *   an calmed stdout is `auto --json`: a script reads its report, the report
+ *   names the refusal as a problem, and the run still gets to print the
+ *   report. Channels an exit here and the report is never printed, which is
+ *   exactly the bug the JSON report exists to prevent.
+ */
+async function cmdUse(id, catalog = null, sink = {}) {
+  const wantJson = sink.wantJson === true
+  /** Refuse: issue the message the way the caller's stdout wants it said. */
+  const refuse = (msg) => {
+    if (sink.report) {
+      sink.report.problems.push(msg)
+      return false
+    }
+    fail(msg, wantJson)
+  }
   if (!id) fail("usage: oc-harness use <profile> [--print] [--yes]")
   let p = null
   try {
@@ -1505,6 +1591,76 @@ async function cmdUse(id) {
     // config is written. Telling the user to re-run with --yes at that point
     // would be asking them to do something that has already happened.
     console.error(msg + "  Continuing: there is no terminal to ask.\n")
+  }
+
+  // The live catalogue, checked at install time because the profile that gets
+  // installed is a promise about what will serve tomorrow.
+  //
+  // Issue #11: `use` used to install a profile without reading the catalogue
+  // at all, so the first run of the harness was the first thing that knew a
+  // lane's model was gone. The profile's file was written, the header said
+  // every lane was healthy, and the harness said so by failing.
+  //
+  // - A dead BASE model ends the install: the profile has nothing to fall
+  //   back to, and writing a config that fails on the session's first token
+  //   is the bug, not the fix.
+  // - Dead rungs are pruned IN MEMORY before the config is compiled, so the
+  //   written config runs on what the catalogue still serves. The profile
+  //   file on disk keeps the rung until `oc-harness refresh` makes the fix
+  //   durable - an install must not rewrite the package's own data.
+  // - A lane with no rung left fails the install: a lane with no model is
+  //   not a lane, and the profile's author has to name the replacement.
+  //
+  // Fail-open: a catalogue that cannot be read is a warning, not a refusal.
+  // Refusing installs on a flaky network takes the tool away from the
+  // machine that needs to build offline, and `--offline` says that out loud.
+  if (!catalog && !flag("--offline")) {
+    try {
+      catalog = await fetchCatalog()
+    } catch (err) {
+      console.error(
+        yellow(
+          `  could not check the live catalogue (${err instanceof Error ? err.message : String(err)}). Install continues with the profile as it ships.`,
+        ),
+      )
+    }
+  }
+  if (catalog) {
+    const models = catalog?.[p.provider]?.models ?? {}
+    const record = models[p.model]
+    if (!record || isWithdrawn(record)) {
+      if (!refuse(
+        `profile ${id}'s base model ${p.provider}/${p.model} is no longer in the live catalogue.` +
+          ` Pick another profile: oc-harness list <no-args>`,
+      )) return "refused"
+    }
+    // The prune is silent until it has something to say. Its costs are the
+    // output below: the rungs it dropped and the one route that moved, and
+    // the way to make both durable.
+    const prune = pruneWithdrawnChains(p, catalog, p.provider)
+    if (prune.emptied.length) {
+      const lanes = prune.emptied.map((lane) => {
+        const rm = prune.lanes.find((l) => l.lane === lane)
+        return `${lane} (its models were: ${rm?.removed.join(", ")})`
+      })
+      if (!refuse(
+        `profile ${id}: every rung of the ${prune.emptied.join(", ")} lane is no longer in the live catalogue.` +
+          ` No model can serve that lane, so the profile needs a replacement before it installs.`,
+      )) return "refused"
+    }
+    if (prune.pruned.length || prune.utilityMoved) {
+      const drops = []
+      for (const lane of prune.lanes) drops.push(`lane ${lane.lane}: ${lane.from.join(" -> ")} becomes ${lane.to.join(" -> ")}`)
+      if (prune.fallback) drops.push(`fallback: ${prune.fallback.removed.join(", ")} dropped`)
+      if (prune.utilityMoved) drops.push(`the utility route moved to ${p.utility.model}`)
+      console.error(
+        yellow(
+          `  the live catalogue no longer serves ${prune.pruned.join(", ")}: the config this run compiled drops them.` +
+            ` Run oc-harness refresh to make the fix durable in the profile file itself.`,
+        ) +
+          `\n    ${drops.join("\n    ")}`,
+      )
+    }
   }
 
   const base = readConfigJson()
@@ -1833,7 +1989,10 @@ async function cmdRefreshAll() {
   // dropped, so a caller that silences the human output - `auto --json` -
   // never saw them: a withdrawn model or a profile that was never checked
   // against the catalogue went into a report that said everything was fine.
-  return { changed, gone, same, skipped }
+  // The catalogue itself comes back with the report: `doctor` runs the
+  // refresh as its opening step, and the steps that follow it check against
+  // the same fetch instead of pulling models.dev twice.
+  return { changed, gone, same, skipped, catalog }
 }
 
 /**

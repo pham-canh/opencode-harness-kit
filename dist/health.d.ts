@@ -7,6 +7,13 @@ export type SpentEntry = {
      * the pattern that matched
      */
     reason: string;
+    /**
+     * why the route was written off.
+     * `withdrawn` entries expire on the catalogue's clock, not the quota's:
+     * a rate limit resets at 00:00 UTC, a pulled model does not. Entries
+     * written before the field existed behave as `spent`.
+     */
+    class?: ("spent" | "withdrawn");
 };
 export type Health = {
     unhealthy: Record<string, SpentEntry>;
@@ -21,6 +28,14 @@ export type Health = {
  * @returns {number}
  */
 export declare function spentWindowMs(): number;
+/**
+ * The window, in milliseconds, a route recorded as withdrawn is honoured for.
+ *
+ * Read at call time, like `spentWindowMs`.
+ *
+ * @returns {number}
+ */
+export declare function withdrawnWindowMs(): number;
 /**
  * Whether a recorded route is still spent.
  *

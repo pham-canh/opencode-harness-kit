@@ -436,3 +436,55 @@ test("cost reports what the kit is doing on this project", () => {
     box.cleanup()
   }
 })
+
+test("use drops rungs the live catalogue no longer serves", () => {
+  // Issue #11: `use` installed a profile without reading the catalogue, so
+  // the first run of the harness was the first thing that knew a lane's
+  // model was gone. The check runs at install time, on the same catalogue
+  // fixture the doctor tests below use, and the drag a missing rung leaves
+  // is visible in the config the command writes.
+  const box = sandbox()
+  try {
+    const fixture = join(box.dir, "catalog.json")
+    // glm is the reviewer lane's primary in fleet-safe, and is missing
+    // here. deepseek - the lane's next rung, and the profile's own base -
+    // is in.
+    writeFileSync(
+      fixture,
+      JSON.stringify({
+        opencode: { models: { "deepseek-v4.1-flash-free": { status: "live" } } },
+      }),
+    )
+    const env = { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${fixture}` }
+    const r = run(box, ["use", "fleet-safe", "--yes"], { env })
+    assert.equal(r.code, 0, r.out)
+    assert.match(r.out, /no longer serves/, r.out)
+    const text = readFileSync(box.config, "utf8")
+    // The lane's model follows its chain's first live rung.
+    assert.match(text, /"model": "opencode\/deepseek-v4\.1-flash-free"/)
+    assert.doesNotMatch(text, /glm-5\.3-flash-free/, "a dead rung survived the install")
+    // And the written config never names a model outside the fixture.
+    assert.doesNotMatch(text, /beam-free|mimo|nemotron|big-pickle|flint/, "the fleet reached outside the catalogue")
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("use refuses a profile whose base model has left the catalogue", () => {
+  // A dead basE model ends the install. The profile has nothing to fall
+  // back to, and writing a config that fails on its first token is the bug
+  // the doctor would have found a run later.
+  const box = sandbox()
+  try {
+    const fixture = join(box.dir, "catalog.json")
+    writeFileSync(fixture, JSON.stringify({ opencode: { models: {} } }))
+    const env = { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${fixture}` }
+    const r = run(box, ["use", "fleet-safe", "--yes"], { env })
+    assert.notEqual(r.code, 0, "the install went through on a dead base model")
+    assert.match(r.out, /deepseek-v4\.1-flash-free/, "the failure did not name the model")
+    // And the config was left alone.
+    assert.ok(existsSync(box.config) === false || readFileSync(box.config, "utf8").includes("deepseek-v4.1-flash-free") === false)
+  } finally {
+    box.cleanup()
+  }
+})
