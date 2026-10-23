@@ -1,29 +1,22 @@
 // A terminal for the tests that need one.
 //
-// script(1) exists on Linux and macOS, but it is two different programs with
-// two different command lines. util-linux has `-e` to pass the child's exit
-// code through and `-c` to take the whole command as one string. BSD/macOS
-// script has neither: the command is the arguments after the file, and the
-// exit status is script's own. Calling the Linux form everywhere made the
-// macOS run fail with "illegal option -- e" before the command under test
-// ever started.
+// `script(1)` exists on Linux and macOS, but only the Linux one can be used
+// from a process whose stdin is a pipe. BSD/macOS script calls tcgetattr on
+// its own stdin and gives up when that is a socket:
 //
-// The callers only need `status`, so both forms are made to return it.
+//   script: tcgetattr/ioctl: Operation not supported on socket
+//
+// which is exactly what a test runner's pipes look like. macOS script is
+// usable only when its parent already has a terminal, and the point of these
+// tests is that it does not.
+//
+// So macOS uses python3's pty.spawn, which allocates a fresh pseudo-terminal
+// instead of borrowing the parent's. It is on the GitHub macOS image, and it
+// does the same two things the callers need: the command sees a terminal, and
+// the caller gets its exit code. Linux keeps util-linux script, which needs
+// no interpreter.
 
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
-
-/**
- * Quote one argument for /bin/sh.
- *
- * @param {string} value
- * @returns {string}
- */
-function quote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`
-}
 
 /**
  * Run a command with a terminal attached, and report its exit code.
@@ -34,31 +27,26 @@ function quote(value) {
  * @returns {import("node:child_process").SpawnSyncReturns<string>}
  */
 export function runOnTerminal(command, args, options = {}) {
-  const inner = [command, ...args].map(quote).join(" ")
   if (process.platform !== "darwin") {
-    // util-linux: -e returns the child's status, -c takes the command.
+    // util-linux: -e returns the child's status, -c takes the command as one
+    // string. The command is quoted for the shell script(1) hands it to.
+    const inner = [command, ...args].map((value) => `'${String(value).replace(/'/g, `'\\''`)}'`).join(" ")
     return spawnSync("script", ["-q", "-e", "-c", inner, "/dev/null"], options)
   }
 
-  // BSD: `script -q file command...`, and the status is script's own. The
-  // child writes its status to a file so the test sees the command's result
-  // rather than script's.
-  const dir = mkdtempSync(join(tmpdir(), "ock-pty-"))
-  const statusFile = join(dir, "status")
-  try {
-    const r = spawnSync(
-      "script",
-      ["-q", "/dev/null", "sh", "-c", `${inner}; echo $? > ${quote(statusFile)}`],
-      options,
+  // BSD script cannot start without a parent terminal, so the pty comes from
+  // python3 instead. sys.argv[1:] is the command; pty.spawn returns its exit
+  // status after waiting for it.
+  const python = [
+    "import pty, sys",
+    "status = pty.spawn(sys.argv[1:])",
+    "sys.exit(status if status >= 0 else 128 - status)",
+  ].join("\n")
+  const r = spawnSync("python3", ["-c", python, command, ...args], options)
+  if (r.error) {
+    throw new Error(
+      `the macOS terminal tests need python3 to allocate a pty: ${r.error.message}`,
     )
-    let status = r.status
-    try {
-      status = Number(readFileSync(statusFile, "utf8").trim())
-    } catch {
-      // script itself did not start; r.status and r.error say why.
-    }
-    return { ...r, status }
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
   }
+  return r
 }
