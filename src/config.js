@@ -477,7 +477,7 @@ export function generateConfig(p, opts = {}) {
   // so this order is the whole rule.
   const own = userBashRules(base)
   const bashRules = {
-    "*": "allow",
+    "*": "ask",
     ...Object.fromEntries(BASH_ALLOWLIST.map((rule) => [rule, "allow"])),
     ...own.rules,
     ...Object.fromEntries(BASH_DENYLIST.map((rule) => [rule, "deny"])),
