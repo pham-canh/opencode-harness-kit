@@ -5,4 +5,4 @@
  * @param {string | null | undefined} worktree opencode's worktree, as a fallback
  * @returns {string}
  */
-export declare function projectRoot(directory: string | null | undefined, worktree: string | null | undefined): string;
+export function projectRoot(directory: string | null | undefined, worktree: string | null | undefined): string;
