@@ -3,31 +3,12 @@
 [![CI](https://github.com/pham-canh/opencode-harness-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/pham-canh/opencode-harness-kit/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/opencode-harness-kit.svg)](https://www.npmjs.com/package/opencode-harness-kit)
 
-<p align="center">
-  <video src="docs/demo/pitch.mp4" width="720" controls></video>
-</p>
-
-*Four minutes forty-seven seconds, recorded live from a real terminal and
-narrated — every command on screen is typed and executed while the camera
-runs. The voiceover and the account of recording it — the two mistakes that
-cost the most time included — have moved to the private video repo
-[`pham-canh/video`](https://github.com/pham-canh/video), folder
-`scratch/oc-harness-pitch/`, where all video tooling is gathered. Only the
-published `.mp4` and the front-page loop stay here.*
-
-*It was recorded against an earlier version of the kit: the numbers it names
-are the ones from then, and the ones below are the ones now.*
-
 A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
 
 ```bash
 npx -y opencode-harness-kit init    # pick a free model, then install + verify
 ```
-
-<p align="center">
-  <img src="docs/demo-loop.gif" width="760" alt="oc-harness list showing the model-agnostic profiles, then oc-harness verify reporting a consistent install">
-</p>
 
 then restart opencode. That is the whole quickstart. No npm account needed on
 your side — `npx` only downloads the published kit. Prefer git? The same three
