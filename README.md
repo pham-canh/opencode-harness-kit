@@ -252,6 +252,7 @@ it. One file covers ten jobs either way.
 | `nemotron-3.5-lightning-free` | 5 | 262,144 | — | **may train** |
 | `mimo-v2.6-flash-free` | 5 | 200,000 | — | **may train** |
 | `big-pickle` | 5 | 160,000 | — | **may train** |
+| `flint-40b-free` | 5 | 262,144 | `max` | **may train** |
 
 The five-lane profiles run everything on one model, which is the right shape
 when you want one route and want to know exactly which one.

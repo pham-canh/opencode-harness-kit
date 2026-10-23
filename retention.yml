@@ -74,6 +74,15 @@ models:
     verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
+  opencode/flint-40b-free:
+    retention: may-train
+    note: >-
+      "During its free period, collected data may be used to improve the
+      model. Data is retained for 30 days." The weights are open, so the same
+      model can be served locally instead of through the free tier.
+    verified: 2026-10-23
+    source: https://opencode.ai/docs/zen
+
   opencode/mimo-v2.6-flash-free:
     retention: may-train
     note: >-
