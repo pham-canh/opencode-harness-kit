@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { readHealth, unhealthyModels, unhealthyRoutes, writeHealth } from "../src/health.js"
+import { isSpent, readHealth, unhealthyModels, unhealthyRoutes, writeHealth } from "../src/health.js"
 import { mkdtemp } from "./helpers.mjs"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -55,6 +55,16 @@ execFileSync(
 process.on("exit", () => rmSync(BUILD_DIR, { recursive: true, force: true }))
 
 const { HarnessPlugin } = await import(DIST)
+
+// The classifier, from the router's own bundle: index.ts exists only for
+// plugin functions (opencode must not be handed a bare function), so the
+// named export tests want is a separate entry point.
+execFileSync(
+  join(ROOT, "node_modules", ".bin", "esbuild"),
+  ["src/router.ts", "--bundle", "--platform=node", "--format=esm", `--outfile=${join(BUILD_DIR, "router.js")}`],
+  { cwd: ROOT, stdio: "ignore" },
+)
+const { classifyError } = await import(join(BUILD_DIR, "router.js"))
 const { pathsInPatch } = await import(GUARD_DIST)
 
 /** A minimal but structurally faithful stand-in for opencode's plugin input. */
@@ -535,5 +545,116 @@ test("a profile on another provider fails over at startup when its route is spen
   } finally {
     if (prev === undefined) delete process.env.OPENCODE_HARNESS_PROFILES
     else process.env.OPENCODE_HARNESS_PROFILES = prev
+  }
+})
+
+// #8 - a transient failure is not a spent route.
+
+test("a 502 from the host does not spend the route", async () => {
+  // Benching a route under the quota's window for one 502 is how a capacity
+  // blip cost a model a day. The route is retried by the next request, and
+  // the one that failed already burned. Nothing is written, which is the
+  // whole of the transient verdict: the health file keeps saying nothing
+  // about a route that works again minutes later.
+  const dir = mkdtemp("ock-router-health-")
+  const hooks = await router(dir)
+  await hooks.config({ harness: { profile: "fleet-safe" } })
+  for (const text of ["HTTP 502 Bad Gateway", "503 service unavailable", "upstream overloaded", "error 529"]) {
+    await hooks.event({
+      event: messageUpdated({ error: apiError(text, 502) }),
+    })
+  }
+  await hooks.event({
+    event: {
+      type: "session.error",
+      properties: { sessionID: "ses_1", error: apiError("post it: upstream connect error", 502) },
+    },
+  })
+
+  const file = join(dir, ".space", "health.json")
+  assert.equal(existsSync(file), false, `a transient error wrote a health file: ${file}`)
+})
+
+test("the transient class does not absorb the quota and the dead class", () => {
+  // The transient patterns are numbers that also appear in unrelated error
+  // bodies. The classifier has to keep the classes apart: a 429 is spent, a
+  // model the provider pulled is withdrawn, and only a 5xx-shaped error is
+  // transient.
+  const spent = classifyError({ data: { message: "rate limit exceeded" } })
+  assert.equal(spent.kind, "spent")
+  const gone = classifyError({ data: { message: "model x-y not found" } })
+  assert.equal(gone.kind, "withdrawn")
+  const live = classifyError({ data: { message: "invalid json at line 3" } })
+  assert.equal(live, null)
+})
+
+
+// #9 - a withdrawn model has the catalogue's clock, not the quota's.
+
+test("a withdrawn model is still spent after the quota's window is over", async () => {
+  // The quota resets at 00:00 UTC. A pulled model does not. An entry written
+  // by a "model not found" error had the day's window, so the kit retried a
+  // model the provider had removed, once a day, forever, and every lane
+  // whose chain named it first paid the failed request before falling
+  // through.
+  const dir = mkdtemp("ock-router-health-")
+  const hooks = await router(dir)
+  await hooks.event({
+    event: messageUpdated({ error: apiError("model glm-5.3-flash-free not found", 404) }),
+  })
+
+  const written = healthOnDisk(dir)
+  const route = written.unhealthy[`opencode/${MODEL}`]
+  assert.ok(route, `the withdrawn route was not recorded: ${JSON.stringify(written)}`)
+  assert.equal(route.class, "withdrawn", "the entry did not carry its class")
+  assert.match(route.reason, /not found/)
+
+  // The route is spent at twenty-five hours: the withdrawal window is the
+  // catalogue's month, not the quota's day.
+  assert.equal(
+    isSpent(route, Date.now() - 0),
+    true,
+    "a fresh withdrawn entry is not spent",
+  )
+  const later = { ...route, at: new Date(Date.now() - 25 * HOUR).toISOString() }
+  assert.equal(
+    isSpent(later),
+    true,
+    "a withdrawn entry outlived the quota window, as it should",
+  )
+  // And the same age with NO class expired exactly once per day before the
+  // field existed. The old records behave as the old records did.
+  const legacy = { at: new Date(Date.now() - 25 * HOUR).toISOString(), reason: "model-x not found" }
+  assert.equal(isSpent(legacy), false, "a legacy entry picked up the withdrawn window")
+})
+
+test("the withdrawn window shrinks when the environment asks it to", async () => {
+  // HARNESS_WITHDRAWN_WINDOW_HOURS overrides the month, so the kit can be
+  // tuned in the field - and here, by a test that would otherwise wait a day
+  // to watch an expiry.
+  process.env.HARNESS_WITHDRAWN_WINDOW_HOURS = "1"
+  try {
+    const dir = mkdtemp("ock-router-health-")
+    plant(dir, {
+      [`opencode/${MODEL}`]: {
+        at: new Date(Date.now() - 25 * HOUR).toISOString(),
+        reason: "model not found",
+        class: "withdrawn",
+      },
+    })
+    const hooks = await router(dir)
+    const cfg = { harness: { profile: "fleet-safe" } }
+    await hooks.config(cfg)
+    // With the month-long window an entry this old with a withdrawn class is
+    // STILL in force (the first test asserts exactly that). With the window
+    // at one hour it is expired, so the session keeps the base route instead
+    // of failing over to glm.
+    assert.equal(
+      cfg.model,
+      "opencode/deepseek-v4.1-flash-free",
+      "an expired withdrawn record was still honoured",
+    )
+  } finally {
+    delete process.env.HARNESS_WITHDRAWN_WINDOW_HOURS
   }
 })

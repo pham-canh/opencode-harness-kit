@@ -1935,11 +1935,19 @@ function utilityModel(p) {
 import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
 import { join as join7 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
+var DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
   const raw = process.env.HARNESS_SPENT_WINDOW_HOURS;
   if (!raw) return DEFAULT_WINDOW_MS;
   const hours = Number(raw);
   if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_WINDOW_MS;
+  return hours * 60 * 60 * 1e3;
+}
+function withdrawnWindowMs() {
+  const raw = process.env.HARNESS_WITHDRAWN_WINDOW_HOURS;
+  if (!raw) return DEFAULT_WITHDRAWN_WINDOW_MS;
+  const hours = Number(raw);
+  if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_WITHDRAWN_WINDOW_MS;
   return hours * 60 * 60 * 1e3;
 }
 function isSpent(entry, now = Date.now()) {
@@ -1951,7 +1959,11 @@ function isSpent(entry, now = Date.now()) {
   if (typeof at !== "string") return true;
   const when = Date.parse(at);
   if (Number.isNaN(when)) return true;
-  return now - when <= spentWindowMs();
+  const kind = (
+    /** @type {any} */
+    entry.class
+  );
+  return now - when <= (kind === "withdrawn" ? withdrawnWindowMs() : spentWindowMs());
 }
 function liveUnhealthy(health, now = Date.now()) {
   const out = {};
@@ -2018,17 +2030,17 @@ var SPENT = [
   /rate[_ -]?limit/i,
   /\b429\b/,
   /quota (?:exceeded|exhausted)/i,
-  /overloaded_error/i,
-  // A withdrawn model, named in the error. The words have to sit next to
-  // each other - "model minimax-m3.1-flash-free not found", "model_not_found",
-  // "ModelNotFound" - because the text this runs against is the provider's
-  // own error and that can be a whole response body. The old pattern ran
-  // over the entire event, where a body that mentioned a model in one place
-  // and "not found" in another read as a withdrawn model: a live route
-  // written off by a coincidence.
+  /overloaded_error/i
+];
+var WITHDRAWN = [
   /\bmodel[\W_]*not[\W_]*found\b/i,
   /\bmodel\b[\w.:/-]*(?:\s+[\w.:/-]+){0,2}\s+not found\b/i,
   /no available provider/i
+];
+var TRANSIENT = [
+  /\b502\b|\b503\b|\b529\b/,
+  /bad gateway/i,
+  /\bupstream\b/
 ];
 function errorText(err) {
   if (err == null) return "";
@@ -2059,7 +2071,12 @@ function errorText(err) {
 function classifyError(err) {
   const text = errorText(err);
   if (!text) return null;
-  for (const p of SPENT) if (p.test(text)) return p.source;
+  for (const p of SPENT)
+    if (p.test(text)) return { kind: "spent", reason: p.source };
+  for (const p of WITHDRAWN)
+    if (p.test(text)) return { kind: "withdrawn", reason: p.source };
+  for (const p of TRANSIENT)
+    if (p.test(text)) return { kind: "transient", reason: p.source };
   return null;
 }
 function errorOf(e) {
@@ -2175,14 +2192,21 @@ var RouterPlugin = async ({ worktree, directory }) => {
       }
       const err = errorOf(e);
       if (!err) return;
-      const reason = classifyError(err);
-      if (!reason) return;
+      const verdict = classifyError(err);
+      if (!verdict) return;
       const sessionID = sessionIdOf(e);
       const key = seen ?? (sessionID ? sessionRoutes.get(sessionID) : void 0) ?? configuredRoute ?? lastRoute;
       if (!key) return;
+      if (verdict.kind === "transient") return;
       const health = readHealth(project);
       if (unhealthyRoutes(project)[key]) return;
-      health.unhealthy[key] = { at: (/* @__PURE__ */ new Date()).toISOString(), reason };
+      health.unhealthy[key] = {
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        reason: verdict.reason,
+        // The class decides the window the entry expires under. A model the
+        // provider pulled is not back at 00:00 UTC, whichever the quota says.
+        class: verdict.kind
+      };
       writeHealth(project, health);
       failedSessions++;
     },

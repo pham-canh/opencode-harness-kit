@@ -19,6 +19,10 @@ import { join } from "node:path"
  * @typedef {object} SpentEntry
  * @property {string} at when the route was recorded as spent
  * @property {string} reason the pattern that matched
+ * @property {("spent"|"withdrawn")} [class] why the route was written off.
+ *   `withdrawn` entries expire on the catalogue's clock, not the quota's:
+ *   a rate limit resets at 00:00 UTC, a pulled model does not. Entries
+ *   written before the field existed behave as `spent`.
  */
 
 /**
@@ -43,6 +47,20 @@ import { join } from "node:path"
 const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000
 
 /**
+ * How long a route recorded as WITHDRAWN is honoured for, by default.
+ *
+ * A rate limit resets at 00:00 UTC. A withdrawal does not: the provider
+ * pulled the model, and no number of days' sleep brings it back. Treating
+ * both with the one window meant a model that had left the catalogue was
+ * retried once a day, forever, and every lane that named it first paid a
+ * failed request before falling through.
+ *
+ * Thirty days is the scale the toolkit's catalogue turns on - free tiers
+ * rotate monthly - and HARNESS_WITHDRAWN_WINDOW_HOURS overrides it.
+ */
+const DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
  * The window, in milliseconds, a recorded spent route is honoured for.
  *
  * Read at call time rather than at import time, so a caller that changes it
@@ -58,6 +76,21 @@ export function spentWindowMs() {
   // a negative one would expire routes that were never spent. Neither is a
   // setting anybody meant, so the default stands.
   if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_WINDOW_MS
+  return hours * 60 * 60 * 1000
+}
+
+/**
+ * The window, in milliseconds, a route recorded as withdrawn is honoured for.
+ *
+ * Read at call time, like `spentWindowMs`.
+ *
+ * @returns {number}
+ */
+export function withdrawnWindowMs() {
+  const raw = process.env.HARNESS_WITHDRAWN_WINDOW_HOURS
+  if (!raw) return DEFAULT_WITHDRAWN_WINDOW_MS
+  const hours = Number(raw)
+  if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_WITHDRAWN_WINDOW_MS
   return hours * 60 * 60 * 1000
 }
 
@@ -79,7 +112,12 @@ export function isSpent(entry, now = Date.now()) {
   if (typeof at !== "string") return true
   const when = Date.parse(at)
   if (Number.isNaN(when)) return true
-  return now - when <= spentWindowMs()
+  // The window the entry was written under. An entry that carries no class
+  // was written by an older version of the kit, or by a hand, and gets the
+  // quota's window: the quota resets, which is the assumption every entry
+  // used to carry.
+  const kind = /** @type {any} */ (entry).class
+  return now - when <= (kind === "withdrawn" ? withdrawnWindowMs() : spentWindowMs())
 }
 
 /**

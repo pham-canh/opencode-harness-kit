@@ -36,23 +36,51 @@ import {
   resolveRoles,
 } from "./profile.js"
 
-/** Patterns that mean "this route is spent", not "this request was bad". */
+/**
+ * Patterns that mean "this route is spent", not "this request was bad": the
+ * provider's quota for the free tier ran out. The quota resets, which is why
+ * these expire on the day's window.
+ */
 const SPENT = [
   /FreeUsageLimitError/i,
   /rate[_ -]?limit/i,
   /\b429\b/,
   /quota (?:exceeded|exhausted)/i,
   /overloaded_error/i,
-  // A withdrawn model, named in the error. The words have to sit next to
-  // each other - "model minimax-m3.1-flash-free not found", "model_not_found",
-  // "ModelNotFound" - because the text this runs against is the provider's
-  // own error and that can be a whole response body. The old pattern ran
-  // over the entire event, where a body that mentioned a model in one place
-  // and "not found" in another read as a withdrawn model: a live route
-  // written off by a coincidence.
+]
+
+/**
+ * Patterns that mean "this model is gone": the provider pulled it.
+ *
+ * The words have to sit next to each other - "model minimax-m3.1-flash-free
+ * not found", "model_not_found", "ModelNotFound" - because the text this
+ * runs against is the provider's own error and that can be a whole response
+ * body. The old pattern ran over the entire event, where a body that
+ * mentioned a model in one place and "not found" in another read as a
+ * withdrawn model: a live route written off by a coincidence.
+ *
+ * These get their own class and their own window: no number of days' sleep
+ * returns a pulled model, so benching one for 24h retried a death once a
+ * day, forever.
+ */
+const WITHDRAWN = [
   /\bmodel[\W_]*not[\W_]*found\b/i,
   /\bmodel\b[\w.:/-]*(?:\s+[\w.:/-]+){0,2}\s+not found\b/i,
   /no available provider/i,
+]
+
+/**
+ * Patterns that mean "this request could not be answered" - the host was at
+ * capacity, a gateway hiccuped - and nothing about the ROUTE is worse.
+ *
+ * Benching a route for one of these benches a model that answered minutes
+ * later. They are not spent, not withdrawn, and they record nothing: the
+ * next request tries the same route again.
+ */
+const TRANSIENT = [
+  /\b502\b|\b503\b|\b529\b/,
+  /bad gateway/i,
+  /\bupstream\b/,
 ]
 
 /**
@@ -99,15 +127,26 @@ function errorText(err: any): string {
 }
 
 /**
- * Whether a provider error means the route is spent.
+ * Which of the three classes a provider error belongs to.
+ *
+ * The classes decide what happens to the health file: `spent` is recorded
+ * under the quota's window, `withdrawn` under the catalogue's, and
+ * `transient` is not recorded at all. Exported so a test can feed an error
+ * straight through the classifier instead of inventing an event to carry
+ * it.
  *
  * @param {any} err
- * @returns {string | null} the pattern that matched
+ * @returns {{ kind: "spent" | "withdrawn" | "transient", reason: string } | null}
  */
-function classifyError(err: any): string | null {
+export function classifyError(err: any): { kind: "spent" | "withdrawn" | "transient"; reason: string } | null {
   const text = errorText(err)
   if (!text) return null
-  for (const p of SPENT) if (p.test(text)) return p.source
+  for (const p of SPENT)
+    if (p.test(text)) return { kind: "spent", reason: p.source }
+  for (const p of WITHDRAWN)
+    if (p.test(text)) return { kind: "withdrawn", reason: p.source }
+  for (const p of TRANSIENT)
+    if (p.test(text)) return { kind: "transient", reason: p.source }
   return null
 }
 
@@ -352,8 +391,8 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
       // anything about the route.
       const err = errorOf(e)
       if (!err) return
-      const reason = classifyError(err)
-      if (!reason) return
+      const verdict = classifyError(err)
+      if (!verdict) return
 
       // The route the failure belongs to: the event's own, else the route
       // this session was last seen on, else the route it was configured
@@ -367,9 +406,27 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
         lastRoute
       if (!key) return
 
+      // A transient failure is the host failing to answer one request, not
+      // the route becoming unusable. Nothing is written, so the next request
+      // tries the same rung again - benching the route under the quota's
+      // window is how a capacity blip cost a model a day.
+      //
+      // ("Advances to the next rung inside the same request" is not on the
+      // table: `chat.params` carries only temperature and sampling, the model
+      // on `chat.message` is read-only, and `config` has already run. What a
+      // transient verdict buys - and what this buys - is a route that is
+      // still live when the next request arrives.)
+      if (verdict.kind === "transient") return
+
       const health = readHealth(project)
       if (unhealthyRoutes(project)[key]) return // already recorded, do not spam
-      health.unhealthy[key] = { at: new Date().toISOString(), reason }
+      health.unhealthy[key] = {
+        at: new Date().toISOString(),
+        reason: verdict.reason,
+        // The class decides the window the entry expires under. A model the
+        // provider pulled is not back at 00:00 UTC, whichever the quota says.
+        class: verdict.kind,
+      }
       writeHealth(project, health)
       failedSessions++
     },
