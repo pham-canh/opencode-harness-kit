@@ -12,7 +12,7 @@
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
 
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync, renameSync, unlinkSync } from "node:fs"
+import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync, renameSync, unlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -55,6 +55,74 @@ const CONFIG_DIR =
   process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config/opencode")
 const CONFIG_FILE = join(CONFIG_DIR, "opencode.jsonc")
 const ROOT = import.meta.dirname ? join(import.meta.dirname, "..") : process.cwd()
+
+// A git CHECKOUT is the kit's own source of truth and is expected to stay
+// where it is: everything the kit installs symlinks back at the repository,
+// so an edit there takes effect on the next opencode start.
+//
+// Anything else - `npx`, a plain `npm install` - reached this file through a
+// package cache npm is free to clean at any command, and a symlink INTO that
+// cache is a dangling path the day `npm cache clean --force` runs. For those
+// installs the package is COPIED once to a private, durable place under the
+// config directory, and every install target links into the copy instead.
+const CHECKOUT = existsSync(join(ROOT, ".git"))
+const COPY_ROOT = join(CONFIG_DIR, "kit")
+
+/**
+ * Mirror the package's runtime assets into `COPY_ROOT`.
+ *
+ * Runs at most once per version: a `.source` marker records which package
+ * version the copy was made from, and an install of the same version keeps
+ * the existing copy rather than re-wiping files freshly linked into.
+ *
+ * The copy is whole on purpose. The plugin bundle looks for its profiles and
+ * data by walking up from itself, the prompts and skills are linked per file
+ * out of it, and every asset the behavioral layer needs lives inside it -
+ * which is also what makes `uninstall` clean: one tree, created by one
+ * command, owned by nobody else.
+ */
+function ensurePackageCopy() {
+  if (CHECKOUT) return
+  const want = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version
+  let have = null
+  try {
+    have = readFileSync(join(COPY_ROOT, ".source"), "utf8").trim()
+  } catch {}
+  if (have === want) return
+  rmSync(COPY_ROOT, { recursive: true, force: true })
+  mkdirSync(COPY_ROOT, { recursive: true })
+  for (const name of ["dist", "profiles", "prompts", "skills"]) {
+    cpSync(join(ROOT, name), join(COPY_ROOT, name), { recursive: true })
+  }
+  for (const name of ["lanes.json", "retention.yml", "GLOBAL.md"]) {
+    cpSync(join(ROOT, name), join(COPY_ROOT, name))
+  }
+  writeFileSync(join(COPY_ROOT, ".source"), `${want}\n`)
+}
+
+/**
+ * The root the kit installs FROM: the repository in a checkout, `COPY_ROOT`
+ * otherwise. Calling it at all triggers `ensurePackageCopy()`, so a caller
+ * holding the returned paths can rely on the files existing.
+ *
+ * @returns {string}
+ */
+function kitSourceRoot() {
+  if (CHECKOUT) return ROOT
+  ensurePackageCopy()
+  return COPY_ROOT
+}
+
+/**
+ * The root installed files may POINT at: the repository in a checkout, the
+ * durable package copy otherwise. `isOurs(below)` judges ownership against
+ * it.
+ *
+ * @returns {string}
+ */
+function kitTargetRoot() {
+  return CHECKOUT ? ROOT : COPY_ROOT
+}
 
 const args = process.argv.slice(2)
 const cmd = args[0] ?? "list"
@@ -382,12 +450,13 @@ function cmdShow(id) {
 }
 
 /**
- * Link the built plugin into ~/.config/opencode/plugins so opencode loads it
- * without an npm install. This is the path to use while developing, and it
- * means the kit is usable before anything is published.
+ * Put the built plugin where opencode loads it from -
+ * ~/.config/opencode/plugins/opencode-harness-kit.js - symlinked at the kit
+ * itself from a checkout, at the durable package copy when the kit was
+ * reached through npm or npx.
  */
 function cmdLink() {
-  const dist = join(ROOT, "dist", "index.js")
+  const dist = join(kitSourceRoot(), "dist", "index.js")
   if (!existsSync(dist)) {
     fail("dist/index.js missing. Run: npm run build")
   }
@@ -426,10 +495,14 @@ function cmdLink() {
 
 /** Where the behavioural layer has to land for the config to mean anything. */
 function installTargets() {
+  // `kitSourceRoot()` is the repository in a checkout, and the durable copy
+  // of the package under the config directory otherwise - an npx cache is
+  // npm's to clean, and links into it would dangle the day it goes.
+  const root = kitSourceRoot()
   return [
-    { src: join(ROOT, "prompts"), dest: join(CONFIG_DIR, "prompts"), kind: "dir" },
-    { src: join(ROOT, "skills"), dest: join(CONFIG_DIR, "skills"), kind: "dir" },
-    { src: join(ROOT, "GLOBAL.md"), dest: join(CONFIG_DIR, "GLOBAL.md"), kind: "file" },
+    { src: join(root, "prompts"), dest: join(CONFIG_DIR, "prompts"), kind: "dir" },
+    { src: join(root, "skills"), dest: join(CONFIG_DIR, "skills"), kind: "dir" },
+    { src: join(root, "GLOBAL.md"), dest: join(CONFIG_DIR, "GLOBAL.md"), kind: "file" },
   ]
 }
 
@@ -607,7 +680,15 @@ function isLegacyAgentLink(full) {
  * prompts, the four skills, the global rules - was a `cp` line in the README
  * that nobody ran. Nothing checked it afterwards, which is how a config ended
  * up pointing at an instruction file that did not exist while still looking
- * correct. Symlinks rather than copies, so the repo stays the source of truth.
+ * correct.
+ *
+ * From a checkout everything symlinks at the repository: edit there, live
+ * everywhere. From npm or npx there is no repository to hold the truth - the
+ * cache that supplied this process can be cleaned at any moment - so the
+ * package is first COPIED to a private, durable place under the config
+ * directory (`~/.config/opencode/kit/`), and every link points in there.
+ * `linkOne` and the ownership checks are unchanged; only what sits at the far
+ * end of the link differs.
  */
 async function cmdInstall() {
   const dist = join(ROOT, "dist", "index.js")
@@ -1180,7 +1261,7 @@ function cmdVerify() {
     problems.push(
       `${kitInstruction} does not exist - the rules in it are not being loaded. Run: oc-harness install`,
     )
-  } else if (!pointsIntoKit(kitTarget)) {
+  } else if (!isOurs(kitTarget)) {
     // The kit's own file, and not a file that happens to have its name. The
     // installer refuses to replace a real file, so a user who already had a
     // GLOBAL.md keeps it - and the check above was satisfied by its mere
@@ -1218,7 +1299,7 @@ function cmdVerify() {
     // The config's own reference is still checked below: the lane's prompt
     // path is a separate thing, and a broken one is worth saying whatever
     // the file at that path happens to be.
-    if (!pointsIntoKit(file)) {
+    if (!isOurs(file)) {
       problems.push(
         `prompts/${role}.md is not the kit's file - the ${role} lane runs on somebody else's instructions. Run: oc-harness install`,
       )
@@ -1372,7 +1453,7 @@ function cmdVerify() {
       // This does not stop the frontmatter check below. A directory that is
       // not the kit's can still be a skill whose name has drifted away from
       // its directory, and that is a second thing worth saying.
-      if (!pointsIntoKit(join(skillsDir, name))) {
+      if (!isOurs(join(skillsDir, name))) {
         problems.push(
           `skills/${name} is not the kit's skill - the ${name} step of the loop runs on somebody else's instructions. Run: oc-harness install`,
         )
@@ -2040,6 +2121,36 @@ function pointsIntoKit(p) {
 }
 
 /**
+ * Whether an installed path holds the kit's file.
+ *
+ * From a checkout that means a link into the repository itself. From npm or
+ * npx the install copied the package to `COPY_ROOT` and linked everything at
+ * THAT, so "ours" is a link into - or a file inside - the copy. Links are
+ * resolved relative to the link and without requiring them to exist, so a
+ * dangling link still counts as the kit's: the state `npm uninstall` leaves
+ * behind, and `uninstall`'s job to fix.
+ *
+ * @param {string} p
+ * @returns {boolean}
+ */
+function isOurs(p) {
+  if (CHECKOUT) return pointsIntoKit(p)
+  let st
+  try {
+    st = lstatSync(p)
+  } catch {
+    return false
+  }
+  const root = resolve(COPY_ROOT)
+  const under = (q) => q === root || q.startsWith(root + sep) || q.startsWith(root + "/")
+  if (st.isSymbolicLink()) {
+    const target = readlinkSync(p)
+    return under(isAbsolute(target) ? target : resolve(dirname(p), target))
+  }
+  return under(resolve(p))
+}
+
+/**
  * Copy the machine-derived fields of a live catalogue entry into a profile.
  *
  * Only the fields a machine can know: the ceilings, the effort levels and the
@@ -2333,11 +2444,14 @@ function findProjectSpace(startDir) {
  * Remove what the kit installed.
  *
  * The install SYMLINKS the plugin, the prompts, the skills and GLOBAL.md out
- * of the kit's directory and into the config directory. So `npm uninstall`
- * the kit leaves four dangling symlinks behind, and opencode then loads
- * neither the rules nor the guard - and says nothing about it.
+ * of the kit - the repository in a checkout, the durable package copy
+ * otherwise - and into the config directory. So `npm uninstall` the kit
+ * leaves four dangling symlinks behind, and opencode then loads neither the
+ * rules nor the guard - and says nothing about it.
  *
- * So the kit can take them back out, and it says what it removed.
+ * So the kit can take them back out, and it says what it removed. A copy of
+ * the package under the config directory is the kit's ENTIRELY - it exists
+ * only because `install` made it - so it goes with the links.
  */
 function cmdUninstall() {
   const removed = []
@@ -2358,14 +2472,16 @@ function cmdUninstall() {
     }
     // A symlink is not enough to make it ours. The user may have their own
     // symlink in that directory - to their own prompts, to a shared folder -
-    // and "a symlink in prompts/ is the kit's" would delete it. A link whose
-    // target is inside this package is the kit's; anything else is kept.
+    // and "a symlink in prompts/ is the kit's" would delete it. A link that
+    // is the kit's to manage goes; anything else is kept. Whose a link is is
+    // `isOurs`'s decision: into the repository from a checkout, into the
+    // package copy otherwise.
     //
     // The target is resolved WITHOUT requiring it to exist. A DANGLING link
     // is the case this command exists for - `npm uninstall` leaves four of
     // them behind - and `realpathSync` throws on those, which classified the
     // kit's own broken links as somebody else's and left them in place.
-    const ours = entries.filter((f) => pointsIntoKit(join(full, f)))
+    const ours = entries.filter((f) => isOurs(join(full, f)))
     if (!ours.length) {
       kept.push(`${dir}/ holds real files`)
       continue
@@ -2388,14 +2504,14 @@ function cmdUninstall() {
   for (const t of targets) {
     if (!existsSync(t) && !isSymlink(t)) continue
     try {
-      // Only a link into this package is ours to remove. A real file the
+      // Only a link the kit installed is ours to remove. A real file the
       // user put there is theirs, and so is a link to their own file -
       // `GLOBAL.md` is a standard opencode name.
       if (!isSymlink(t)) {
         kept.push(`${t} is a real file`)
         continue
       }
-      if (!pointsIntoKit(t)) {
+      if (!isOurs(t)) {
         kept.push(`${t} points somewhere else`)
         continue
       }
@@ -2403,6 +2519,18 @@ function cmdUninstall() {
       removed.push(t)
     } catch {
       kept.push(`${t} (could not be removed)`)
+    }
+  }
+  // The package copy - `~/.config/opencode/kit/` when the kit was reached
+  // through npm or npx - exists only because `install` created it, so it
+  // goes out with the links. Unreachable from a checkout, where no copy
+  // exists.
+  if (!CHECKOUT && existsSync(COPY_ROOT)) {
+    try {
+      rmSync(COPY_ROOT, { recursive: true, force: true })
+      removed.push("kit/ (the package copy this install was built from)")
+    } catch {
+      kept.push(`${COPY_ROOT} (could not be removed)`)
     }
   }
   console.log(`\n${bold("uninstall")}\n`)

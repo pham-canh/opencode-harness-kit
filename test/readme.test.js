@@ -241,3 +241,67 @@ test("eval/RESULTS.md still has every A/B section it is supposed to have", () =>
     assert.ok(results.includes(heading), `eval/RESULTS.md is missing "${heading}"`)
   }
 })
+
+test("profiles/index.json lists every profile once", () => {
+  // `list` and `init` both walk the index array, and nothing deduplicates it:
+  // a repeated id is printed twice, offered twice, and the README's count of
+  // shipped profiles is one higher than the truth. The duplicate survived
+  // every check except this one, because every other check fell back to a
+  // Set, which collapses it.
+  const ids = INDEX.profiles.map((p) => p.id)
+  const dupes = ids.filter((id, i) => ids.indexOf(id) !== i)
+  assert.deepEqual(dupes, [], `profiles/index.json lists ${dupes.join(", ")} twice`)
+  assert.equal(
+    INDEX.profiles.length,
+    listProfileIds().length,
+    "the index and the loader disagree about how many profiles ship",
+  )
+})
+
+test("the README's shipped-profiles table has one row per shipped profile", () => {
+  // A repeated row is how an added profile can look shipped when it is not,
+  // and how a count of twelve can survive a table of eleven. Count the rows
+  // against the index instead of trusting either list.
+  const table = README.slice(
+    README.indexOf("## Shipped profiles"),
+    README.indexOf("## Free models are perishable"),
+  )
+  // The id cell may carry a suffix - `fleet-safe` (default) - so the match
+  // stops at the closing backtick and ignores what the cell appends to it.
+  const rows = [...table.matchAll(/^\| `([^`]+)`/gm)].map((m) => m[1])
+  assert.equal(
+    rows.length,
+    INDEX.profiles.length,
+    `the table has ${rows.length} rows against ${INDEX.profiles.length} shipped profiles`,
+  )
+  const dupes = rows.filter((id, i) => rows.indexOf(id) !== i)
+  assert.deepEqual(dupes, [], `the table lists ${dupes.join(", ")} twice`)
+})
+
+test("retention.yml lists every model once", () => {
+  // The hand-rolled parser in src/profile.js overwrites `models[id]` on every
+  // repeated key, so a duplicate silently replaces whatever record came
+  // first - here, a 2026-10-23 notes with the provider's terms quoted lost to
+  // a vaguer 2026-10-22 stub. Nothing else in the pipeline can see the
+  // difference, which is why it gets its own red line here.
+  const raw = readFileSync(join(ROOT, "retention.yml"), "utf8")
+  const keys = [...raw.matchAll(/^  ([a-z0-9.-]+\/[a-z0-9.-]+):$/gm)].map((m) => m[1])
+  const dupes = keys.filter((id, i) => keys.indexOf(id) !== i)
+  assert.deepEqual(dupes, [], `retention.yml repeats ${dupes.join(", ")}; the second record erases the first`)
+})
+
+test("every npx reference in the README names this package", () => {
+  // `oc-harness` is this kit's BINARY, not a package on the registry:
+  // `npx oc-harness init` 404s for exactly the person the Install section is
+  // written for. Pin every `npx` reference to the package that actually
+  // publishes the binary.
+  for (const m of README.matchAll(/npx (?:-y )?(@?[a-zA-Z0-9][\w/.@-]+)/g)) {
+    const spec = m[1]
+    const pkg = spec.startsWith("@") ? `@${spec.slice(1).split("@")[0]}` : spec.split("@")[0]
+    assert.equal(
+      pkg,
+      "opencode-harness-kit",
+      `the README tells a reader to npx ${spec}, and "${pkg}" is not the package that publishes \`oc-harness\``,
+    )
+  }
+})

@@ -12,6 +12,47 @@ is not happening.
 
 ---
 
+## [0.6.4] — 2026-10-23
+
+Fixed, each one found by re-reading what 0.6.3 published, not by running
+anything new:
+
+- **The install command in the README named a package that does not exist.**
+  The Install section said `npx oc-harness init` "from the registry", and
+  `oc-harness` is this kit's binary name, not a package anyone can fetch: the
+  command every new reader was pointed at returns `npm error 404 'oc-harness'
+  is not in this registry`. Every install path in the README now reads
+  `npx -y opencode-harness-kit@latest <cmd>`, bare `oc-harness` is defined
+  once as shorthand for one of the two real forms, and a test pins every
+  `npx` reference in the README to this package. Released because the npm
+  page is a snapshot: the README on npmjs.com renders from the published
+  tarball, so fixing it in git changes nothing for the next visitor.
+- **`profiles/index.json` listed `flint-40b-free` twice**, and the README's
+  shipped-profiles table repeated it with a second, differently-worded
+  note. `oc-harness list` printed twelve rows, `oc-harness init` offered
+  twelve choices, flint twice in both, and the README counted twelve
+  shipped profiles. Eleven profiles ship; one entry remains, carrying the
+  honest note of both. Tests now diff the index, the table and the loader,
+  with no Set to collapse the difference.
+- **`retention.yml` repeated `opencode/flint-40b-free`, and the last key
+  won.** The hand-rolled parser overwrites `models[id]` on every repeat, so
+  the vague 2026-10-22 stub silently replaced the 2026-10-23 record that
+  quotes the provider's terms verbatim - same retention class, wrong date,
+  lost detail. A test now scans the file for repeated keys.
+- **`install` from npx symlinked into the npx cache.** The installer always
+  symlinked the plugin, prompts, skills and GLOBAL.md back to the package
+  root - right from a git checkout ("edit here, live everywhere"), visible
+  breakage from an npx cache that `npm cache clean --force` deletes. From a
+  checkout nothing changes; from npx or any npm install, where `.git` is
+  absent, `install` now copies, so the harness on disk does not dangle the
+  day the cache is cleaned. `verify` and `uninstall` learn that a
+  byte-identical copy of the kit's file is the kit's, and a test installs
+  from a copy of the package with no `.git` into a temp HOME, asserts real
+  files where links used to go, and runs `verify` green.
+
+No runtime change: `dist/`, the plugin and every model-facing artifact are
+byte-for-byte what 0.6.3 shipped.
+
 ## [0.6.3] — 2026-10-23
 
 Nothing here changes the runtime. The plugin, the CLI and `dist/` are
@@ -210,15 +251,19 @@ default fleet was carrying a dead fallback rung in **all ten lanes** while
   release, and it is out of the repository now.
 
   A take is about one machine and one moment, and so is the recording of it.
-  The `.gitignore` already said as much: "a recording stays on the machine
-  that made it until somebody decides, deliberately, to publish it". The
-  decision went the other way, so the file went back where that rule keeps
-  it — `video/build/`, which is ignored — and the README no longer links a
-  video the repository does not carry.
+  The `.gitignore` of that release said the same thing: "a recording stays on
+  the machine that made it until somebody decides, deliberately, to publish
+  it". The decision went the other way then, so the file went back where
+  that rule keeps it — `video/build/`, which is ignored — and the README no
+  longer links a video the repository does not carry. (Neither the rule nor
+  the recording survived 0.6.3, which removed the rule along with the
+  demonstration.)
 
-  What is published is still the old `docs/demo/pitch.mp4`: four minutes
-  forty-seven seconds, recorded live from a Mac terminal, with a voice. The
-  npm package never carried a video at all.
+  At the time, what was published on GitHub was still the old
+  `docs/demo/pitch.mp4`: four minutes forty-seven seconds, recorded live
+  from a Mac terminal, with a voice. 0.6.3 removed it, and the history
+  rewrite of that release means no tag carries it today. The npm package
+  never carried a video at all.
 
 ## [0.5.8] — 2026-10-22
 

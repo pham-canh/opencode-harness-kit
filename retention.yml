@@ -110,14 +110,6 @@ models:
     verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
-  opencode/flint-40b-free:
-    retention: may-train
-    note: >-
-      Free trial endpoint on opencode zen; treated as may-train until terms
-      state otherwise.
-    verified: 2026-10-22
-    source: https://opencode.ai/docs/zen
-
   # --- Paid routes, kept because the catalog still serves them and a profile
   # may be pointed at one. ---
 

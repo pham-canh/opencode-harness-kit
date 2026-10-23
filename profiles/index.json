@@ -110,7 +110,7 @@
       "topEffort": "max",
       "context": 262144,
       "default": false,
-      "note": "Open-weight MoE with about 2.5B active parameters for local coding agents. Knowledge cutoff 2026-06, no image input. May train on prompts during its free period."
+      "note": "Open-weight MoE, 40B total with about 2.5B active parameters, built for coding agents and small enough to serve locally. Full effort ladder, 262k context, 64k output, no image input. Knowledge cutoff 2026-06. May train on prompts during its free period."
     },
     {
       "id": "big-pickle",
@@ -122,17 +122,6 @@
       "context": 160000,
       "default": false,
       "note": "Stealth model, no public identity, no effort levels, no image input. The provider may train on it during its free period."
-    },
-    {
-      "id": "flint-40b-free",
-      "file": "profiles/flint-40b-free.json",
-      "title": "Flint 40B Free",
-      "retention": "may-train",
-      "free": true,
-      "topEffort": "max",
-      "context": 262144,
-      "default": false,
-      "note": "Open-weight MoE, 40B total with about 2.5B active, built for coding agents and small enough to serve locally. Full effort ladder, 262k context, 64k output, no image input."
     }
   ],
   "excluded": [],

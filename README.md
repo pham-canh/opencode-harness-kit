@@ -20,7 +20,8 @@ git clone https://github.com/pham-canh/opencode-harness-kit.git
 ```
 
 The three steps `init` runs, spelled out for when you want to know what
-happened (prefix with `npx` or `./bin/oc-harness.mjs` to taste):
+happened (prefix each with `npx -y opencode-harness-kit@latest` or
+`./bin/oc-harness.mjs` to taste):
 
 ```bash
 oc-harness use fleet-safe    # compile the profile
@@ -48,7 +49,7 @@ lanes.json                   ← the jobs
 src/                         ← no model name anywhere in here
 ```
 
-Same plugin source, twelve shipped profiles, twelve different behaviours. The
+Same plugin source, eleven shipped profiles, eleven different behaviours. The
 test suite asserts that rather than taking it on faith.
 
 ### How a request travels
@@ -237,7 +238,6 @@ it. One file covers ten jobs either way.
 | `nemotron-3.5-lightning-free` | 5 | 262,144 | — | **may train** |
 | `mimo-v2.6-flash-free` | 5 | 200,000 | — | **may train** |
 | `big-pickle` | 5 | 160,000 | — | **may train** |
-| `flint-40b-free` | 5 | 262,144 | `max` | **may train** |
 
 The five-lane profiles run everything on one model, which is the right shape
 when you want one route and want to know exactly which one.
@@ -306,7 +306,7 @@ A CI job that failed on the second kind would go red on a Tuesday because
 somebody else changed a provider's limits, and a job that goes red for a
 reason you cannot act on is a job people stop reading.
 
-It is not a hypothetical. The day this was written, four of the twelve
+It is not a hypothetical. The day this was written, four of the shipped
 shipped profiles had already drifted from the live catalogue — the
 `temperature` flag had flipped on every one of them.
 
@@ -561,7 +561,8 @@ oc-harness auto --json   the same reconcile, as a report a script can read
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness use <id> --dryrun   print a summary of what would be written, write nothing
 oc-harness refresh <id> re-derive a profile against the live model list
-oc-harness install    symlink the plugin, prompts, skills and GLOBAL.md
+oc-harness install    symlink the plugin, prompts, skills and GLOBAL.md into the config dir
+                      (from `npx`, they link into a package copy it makes first - see Install)
 oc-harness link       just the plugin, no prompts or skills
 oc-harness verify     check the install against the profile; non-zero on drift
 oc-harness agents     report agents the effort tiering does not reach
@@ -857,12 +858,15 @@ One command if you are new here (`init` asks which free profile to run on,
 then runs the two commands below plus `verify`):
 
 ```bash
-npx oc-harness init
+npx -y opencode-harness-kit@latest init
 ```
 
-Two commands, in this order, if you already know which profile you want
-(`npx oc-harness …` from the registry, or `./bin/oc-harness.mjs …` from a
-checkout — they are the same program):
+Two commands, in this order, if you already know which profile you want.
+Two forms of the same program: `npx -y opencode-harness-kit@latest …` from
+the registry, or `./bin/oc-harness.mjs …` from a checkout. Bare `oc-harness`
+elsewhere in this README is shorthand for whichever form installed it —
+`npx` leaves no global binary, so every command already naming just
+`oc-harness` is one of the two above in disguise:
 
 ```bash
 oc-harness use fleet-safe   # writes opencode.jsonc
@@ -872,6 +876,15 @@ oc-harness install                # writes everything that file points at
 `install` symlinks (not copies) the plugin, `prompts/`, `skills/` and
 `GLOBAL.md` into `~/.config/opencode/`, so this repo stays the single source
 of truth and an edit here takes effect on the next opencode start.
+
+That is the checkout behaviour, and it relies on the repository staying put.
+Run through `npx` — or any package install — there is no repository to hold
+the truth, only a npm cache that `npm cache clean --force` can delete under
+it: the installer then COPIES the package once to
+`~/.config/opencode/kit/` and links into that instead, so `npm cache clean`
+cannot dangle the harness out from under its own config. Same commands, same
+config; `uninstall` takes the copy out with the links, and `verify` judges
+both modes by the same ownership rules.
 
 ### The one command that asks nothing
 
