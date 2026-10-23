@@ -750,7 +750,7 @@ console.log("")
 console.log(`  ${"metric (median)".padEnd(16)} ${"kit on".padStart(10)} ${"kit off".padStart(10)}`)
 console.log(`  ${"-".repeat(16)} ${"-".repeat(10)} ${"-".repeat(10)}`)
 for (const [label, a, b] of rows) {
-  console.log(`  ${label.padEnd(16)} ${String(a).padStart(10)} ${String(b).padStart(10)}`)
+  console.log(`  ${String(label).padEnd(16)} ${String(a).padStart(10)} ${String(b).padStart(10)}`)
 }
 
 if (jobs.length > 1) {
