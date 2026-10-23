@@ -3,15 +3,15 @@
   "id": "fleet-safe",
   "title": "Ten jobs, zero-retention models only",
   "provider": "opencode",
-  "model": "minimax-m3.1-flash-free",
-  "family": null,
+  "model": "deepseek-v4.1-flash-free",
+  "family": "deepseek",
   "verified": "2026-10-22",
   "retention": "zero-retention",
   "maxRetention": "zero-retention",
-  "notes": "The default. Every lane resolves to a model whose provider states a zero-retention policy: no training, nothing kept. The cost is that six of the ten jobs run on a second-choice model - the planner loses beam (30-day retention) and the reviewer loses Nemotron 3 Ultra - so this is the floor, not the ceiling. The chains are ordered within the ceiling rather than copied from `fleet-all`: `locate` takes deepseek because it publishes a `low` effort level that longcat does not, and `vision` takes minimax because it reads an image in 7 seconds. `fleet-all` gives every lane the model built for it.",
+  "notes": "The default. Every lane resolves to a model whose provider states a zero-retention policy: no training, nothing kept. The cost is that six of the ten jobs run on a second-choice model - the planner loses beam (30-day retention) and the reviewer loses Nemotron 3 Ultra - so this is the floor, not the ceiling. The chains are ordered within the ceiling rather than copied from `fleet-all`: `locate` takes deepseek because it publishes a `low` effort level that longcat does not, and `vision` takes deepseek because it is the zero-retention route the provider kept for image reads. `fleet-all` gives every lane the model built for it.",
   "limits": {
-    "context": 1000000,
-    "output": 512000
+    "context": 200000,
+    "output": 32000
   },
   "supports": {
     "reasoning": true,
@@ -49,10 +49,10 @@
   },
   "roleModels": {
     "build": {
-      "model": "minimax-m3.1-flash-free",
+      "model": "deepseek-v4.1-flash-free",
       "chain": [
-        "minimax-m3.1-flash-free",
-        "deepseek-v4.1-flash-free"
+        "deepseek-v4.1-flash-free",
+        "glm-5.3-flash-free"
       ]
     },
     "plan": {
@@ -73,7 +73,7 @@
       "model": "deepseek-v4.1-flash-free",
       "chain": [
         "deepseek-v4.1-flash-free",
-        "minimax-m3.1-flash-free"
+        "glm-5.3-flash-free"
       ]
     },
     "verify": {
@@ -84,10 +84,10 @@
       ]
     },
     "vision": {
-      "model": "minimax-m3.1-flash-free",
+      "model": "deepseek-v4.1-flash-free",
       "chain": [
-        "minimax-m3.1-flash-free",
-        "deepseek-v4.1-flash-free"
+        "deepseek-v4.1-flash-free",
+        "glm-5.3-flash-free"
       ]
     },
     "doc": {
@@ -108,14 +108,14 @@
       "model": "deepseek-v4.1-flash-free",
       "chain": [
         "deepseek-v4.1-flash-free",
-        "minimax-m3.1-flash-free"
+        "glm-5.3-flash-free"
       ]
     },
     "longform": {
-      "model": "minimax-m3.1-flash-free",
+      "model": "deepseek-v4.1-flash-free",
       "chain": [
-        "minimax-m3.1-flash-free",
-        "deepseek-v4.1-flash-free"
+        "deepseek-v4.1-flash-free",
+        "glm-5.3-flash-free"
       ]
     }
   },

@@ -334,7 +334,10 @@ test("the ceiling on the distinct outputs bounds the reasoning that rides along 
   const profilesDir = ownProfiles({
     id: "prune-ceiling",
     provider: "opencode",
-    model: "minimax-m3.1-flash-free",
+    // glm still has a retention.yml entry; minimax lost its when the
+    // provider pulled it, which stops the pruner from ever loading this
+    // fixture.
+    model: "glm-5.3-flash-free",
     retention: "zero-retention",
     limits: { context: 200000, output: 32000 },
     prune: {

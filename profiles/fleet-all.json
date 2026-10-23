@@ -3,15 +3,15 @@
   "id": "fleet-all",
   "title": "Ten jobs, every free model, one of them may train",
   "provider": "opencode",
-  "model": "minimax-m3.1-flash-free",
-  "family": null,
+  "model": "flint-40b-free",
+  "family": "flint",
   "verified": "2026-10-22",
   "retention": "may-train",
   "maxRetention": "may-train",
   "notes": "Every lane gets the model built for it: beam plans, Nemotron 3 Ultra reviews, Lightning sweeps, MiMo sees, GLM audits, Super VL reasons with the effort turned off. Five of the ten providers state that collected data may be used to improve the model, or log the session, so the profile as a whole is may-train and the generated config says so in its header. Install it for public or throwaway repositories.",
   "limits": {
-    "context": 1000000,
-    "output": 512000
+    "context": 262144,
+    "output": 65536
   },
   "supports": {
     "reasoning": true,
@@ -52,7 +52,6 @@
       "model": "flint-40b-free",
       "chain": [
         "flint-40b-free",
-        "minimax-m3.1-flash-free",
         "deepseek-v4.1-flash-free"
       ]
     },
@@ -91,7 +90,7 @@
       "model": "mimo-v2.6-flash-free",
       "chain": [
         "mimo-v2.6-flash-free",
-        "minimax-m3.1-flash-free"
+        "deepseek-v4.1-flash-free"
       ]
     },
     "doc": {
@@ -117,9 +116,9 @@
       ]
     },
     "longform": {
-      "model": "minimax-m3.1-flash-free",
+      "model": "flint-40b-free",
       "chain": [
-        "minimax-m3.1-flash-free",
+        "flint-40b-free",
         "beam-free"
       ]
     }
@@ -131,7 +130,7 @@
     "keepUserMessages": true
   },
   "fallback": [
-    "minimax-m3.1-flash-free",
+    "flint-40b-free",
     "deepseek-v4.1-flash-free"
   ]
 }

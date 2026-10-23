@@ -489,7 +489,10 @@ test("a profile whose id does not match its file name is refused", () => {
   const profile = {
     id: "beam-renamed",
     provider: "opencode",
-    model: "minimax-m3.1-flash-free",
+    // A model retention.yml still speaks about. minimax-m3.1-flash-free
+    // lost its entry when the provider pulled it, which would make the
+    // fixture fail before the id check it exists to exercise.
+    model: "glm-5.3-flash-free",
     retention: "zero-retention",
     limits: { context: 1000000, output: 512000 },
     effort: { levels: ["low", "high"], default: "low" },

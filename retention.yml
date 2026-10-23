@@ -27,14 +27,6 @@ models:
   # --- Zero-retention: the provider states a zero-retention policy and does
   # not train on your data. ---
 
-  opencode/minimax-m3.1-flash-free:
-    retention: zero-retention
-    note: >-
-      "Its provider follows a zero-retention policy and does not use your data
-      for model training." Free for a limited time.
-    verified: 2026-10-19
-    source: https://opencode.ai/docs/zen
-
   opencode/glm-5.3-flash-free:
     retention: zero-retention
     note: >-
@@ -116,6 +108,14 @@ models:
       confidential data. Your use is logged for security purposes and to
       improve NVIDIA products and services."
     verified: 2026-10-19
+    source: https://opencode.ai/docs/zen
+
+  opencode/flint-40b-free:
+    retention: may-train
+    note: >-
+      Free trial endpoint on opencode zen; treated as may-train until terms
+      state otherwise.
+    verified: 2026-10-22
     source: https://opencode.ai/docs/zen
 
   # --- Paid routes, kept because the catalog still serves them and a profile
