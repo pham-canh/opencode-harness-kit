@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process"
 import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { mkdtemp } from "./helpers.mjs"
+import { mkdtemp, catalogueUrl } from "./helpers.mjs"
 import { runOnTerminal } from "./pty.js"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -27,7 +27,12 @@ function sandbox() {
   return {
     dir,
     config: join(dir, "opencode.jsonc"),
-    env: { ...process.env, OPENCODE_CONFIG_DIR: dir, OC_HARNESS_NO_HOOK: "1" },
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG_DIR: dir,
+      OC_HARNESS_NO_HOOK: "1",
+      OPENCODE_HARNESS_CATALOG_URL: catalogueUrl(),
+    },
   }
 }
 

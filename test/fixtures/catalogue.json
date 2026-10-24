@@ -1,0 +1,60 @@
+{
+  "opencode": {
+    "models": {
+      "beam-free": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      },
+      "big-pickle": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      },
+      "deepseek-v4.1-flash-free": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      },
+      "flint-40b-free": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      },
+      "nemotron-3-ultra-free": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      },
+      "glm-5.3-flash-free": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      },
+      "nemotron-3.5-lightning-free": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      },
+      "mimo-v2.6-flash-free": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      },
+      "nemotron-3.5-super-vl-free": {
+        "limit": {
+          "context": 200000,
+          "output": 32000
+        }
+      }
+    }
+  }
+}

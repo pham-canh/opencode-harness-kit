@@ -67,7 +67,7 @@
     "typecheck": "tsc --noEmit && npm run typecheck:scripts",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "pretest": "node -e \"const fs=require('fs');if(!fs.existsSync('test')){console.error('no test directory here - this is an installed package, not a checkout');process.exit(1)}\"",
-    "test": "node --test \"test/*.test.js\"",
+    "test": "OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json node --test \"test/*.test.js\"",
     "test:all": "npm run build && npm run typecheck && npm test",
     "test:dist": "git diff --exit-code -- dist/ || (echo \"dist/ is out of sync with src/. Run: npm run build && git add dist/\" && exit 1)",
     "check": "npm run build && npm run test:dist && npm run typecheck && npm test",

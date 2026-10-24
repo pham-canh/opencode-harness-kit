@@ -11,9 +11,9 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { join, resolve, sep } from "node:path"
+import { basename, join, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
-import { mkdtemp } from "./helpers.mjs"
+import { mkdtemp, catalogueUrl } from "./helpers.mjs"
 
 const REPO = join(fileURLToPath(new URL(".", import.meta.url)), "..")
 const CLI = "bin/oc-harness.mjs"
@@ -37,10 +37,17 @@ function packageCopy(checkout) {
     // The filter SEES the root itself; returning false for it copies
     // nothing. What must not ship is the kit's .git - the marker the CLI
     // switches install mode on - and node_modules.
+    //
+    // The `.test-build-*` trees are scratch: another test file builds one
+    // inside the repo to exercise `dist/`, and removes it on its own exit.
+    // Copying the repo while that happens walks into a directory that is
+    // already gone, and the copy dies with ENOENT on a path none of these
+    // tests asked for.
     filter: (src) => {
       if (src === REPO) return true
       if (src === join(REPO, ".git") || src.startsWith(join(REPO, ".git") + sep)) return false
       if (src.startsWith(join(REPO, "node_modules") + sep)) return false
+      if (basename(src).startsWith(".test-build-")) return false
       return true
     },
   })
@@ -53,6 +60,7 @@ function packageCopy(checkout) {
     HOME: home,
     OPENCODE_CONFIG_DIR: config,
     OC_HARNESS_NO_HOOK: "1",
+    OPENCODE_HARNESS_CATALOG_URL: catalogueUrl(),
   }
   return { pkg, home, config, cli: join(pkg, CLI), env }
 }

@@ -100,6 +100,37 @@ test("every shipped profile loads and validates", () => {
   }
 })
 
+test("the offline catalogue names every model the profiles do", () => {
+  // The fixture is what the suite runs against, so it has to follow the
+  // profiles: a model added to a chain and not to the fixture is pruned as
+  // dead, and the test that installs that profile fails for a reason that
+  // has nothing to do with what it was checking.
+  //
+  // Regenerate with: node test/fixtures/catalogue.mjs
+  const fixture = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "catalogue.json"), "utf8"),
+  )
+  const named = new Set()
+  for (const id of listProfileIds()) {
+    const p = loadProfile(id)
+    const provider = p.provider ?? "opencode"
+    if (p.model) named.add(`${provider}/${p.model}`)
+    for (const spec of Object.values(p.roleModels ?? {})) {
+      for (const m of spec?.chain ?? []) {
+        const model = typeof m === "string" ? m : m?.model
+        if (model) named.add(`${provider}/${model}`)
+      }
+    }
+  }
+  for (const key of named) {
+    const [provider, model] = key.split("/")
+    assert.ok(
+      fixture[provider]?.models?.[model],
+      `the offline catalogue is missing ${key}; regenerate test/fixtures/catalogue.json`,
+    )
+  }
+})
+
 test("every free model on the tier has a profile", () => {
   const ids = listProfileIds()
   for (const model of FREE_MODELS) {

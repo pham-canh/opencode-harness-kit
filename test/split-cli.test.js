@@ -17,7 +17,7 @@ import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseJsonc, listProfileIds, loadProfile } from "../src/profile.js"
-import { mkdtemp } from "./helpers.mjs"
+import { mkdtemp, catalogueUrl } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
@@ -27,7 +27,7 @@ function sandbox() {
   return {
     dir,
     config: join(dir, "opencode.jsonc"),
-    env: { ...process.env, OPENCODE_CONFIG_DIR: dir },
+    env: { ...process.env, OPENCODE_CONFIG_DIR: dir, OPENCODE_HARNESS_CATALOG_URL: catalogueUrl() },
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   }
 }

@@ -15,7 +15,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { mkdtemp } from "./helpers.mjs"
+import { mkdtemp, catalogueUrl } from "./helpers.mjs"
 import { runOnTerminal } from "./pty.js"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -23,7 +23,10 @@ const CLI = join(REPO, "bin", "oc-harness.mjs")
 
 function sandbox() {
   const dir = mkdtemp("ock-auto-")
-  return { dir, env: { ...process.env, OPENCODE_CONFIG_DIR: dir } }
+  return {
+    dir,
+    env: { ...process.env, OPENCODE_CONFIG_DIR: dir, OPENCODE_HARNESS_CATALOG_URL: catalogueUrl() },
+  }
 }
 
 function run(box, args, opts = {}) {
@@ -58,7 +61,12 @@ test("auto asks nothing, even on a terminal", () => {
   // spawn would be killed and the exit code would not be 0.
   const box = sandbox()
   const r = runOnTerminal("node", [CLI, "auto", "--offline"], {
-    env: { ...process.env, OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: box.dir },
+    env: {
+      ...process.env,
+      OC_HARNESS_NO_HOOK: "1",
+      OPENCODE_CONFIG_DIR: box.dir,
+      OPENCODE_HARNESS_CATALOG_URL: catalogueUrl(),
+    },
     encoding: "utf8",
     cwd: box.dir,
     timeout: 60_000,
@@ -148,7 +156,12 @@ test("auto keeps a file of the user's instead of asking about it", () => {
   writeFileSync(join(prompts, "plan.md"), "# mine\n")
 
   const r = runOnTerminal("node", [CLI, "auto", "--offline"], {
-    env: { ...process.env, OC_HARNESS_NO_HOOK: "1", OPENCODE_CONFIG_DIR: box.dir },
+    env: {
+      ...process.env,
+      OC_HARNESS_NO_HOOK: "1",
+      OPENCODE_CONFIG_DIR: box.dir,
+      OPENCODE_HARNESS_CATALOG_URL: catalogueUrl(),
+    },
     encoding: "utf8",
     cwd: box.dir,
     timeout: 60_000,
