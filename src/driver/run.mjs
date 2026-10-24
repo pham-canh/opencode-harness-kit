@@ -27,6 +27,7 @@ import {
   writeFileSync,
   renameSync,
   unlinkSync,
+  realpathSync,
   statSync,
 } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
@@ -270,7 +271,14 @@ export function outOfScope(task, cwd, before) {
     .filter((path) => path !== ".space" && !path.startsWith(".space/"))
   if (!moved.length) return null
 
-  const allowed = named.map((path) => relative(after.root, resolve(cwd, path)).split(sep).join("/"))
+  // Both sides go through the same root, and both are resolved the same way.
+  // `git rev-parse --show-toplevel` answers with a real path, while the caller
+  // may hand over a symlinked one: on macOS /var is /private/var, so a take
+  // under /var/folders compared `src/a.js` against
+  // ../../../var/folders/.../src/a.js and called every edit out of scope.
+  const base = realpathSync(cwd)
+  const root = realpathSync(after.root)
+  const allowed = named.map((path) => relative(root, resolve(base, path)).split(sep).join("/"))
   const outside = moved.filter(
     (path) => !allowed.some((a) => path === a || path.startsWith(`${a}/`)),
   )
