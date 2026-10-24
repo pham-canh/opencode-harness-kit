@@ -4,8 +4,8 @@
   "lanes": {
     "build": {
       "mode": "primary",
-      "description": "Writes and verifies code. Use when the plan is settled and files need to change.",
-      "steps": 40,
+    "description": "Writes and verifies code. Use when the plan is settled and files need to change.",
+    "steps": 120,
       "permission": { "edit": "allow" },
       "prompt": "prompts/build.md"
     },

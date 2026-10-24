@@ -77,6 +77,12 @@ and the read-only lanes no longer have a write-capable shell.
 
 ### Changed
 
+- **The `build` lane's step cap is 120, not 40.** A session that reaches the
+  cap is forced into a text-only response, which in an interactive session
+  looks like the agent stopping mid-task after a few minutes and in
+  `oc-harness run` looks like a task that never finished. 40 steps is a
+  reasonable ceiling for one planned task and not for a session that is
+  building and testing a change. The other lanes keep their caps.
 - The README and `docs/EXIT-CODES.md` describe `run` as build + verify, not
   plan → build → review → finish. It never planned, committed or pushed.
 - Exit code 5 is now used, and documented.
