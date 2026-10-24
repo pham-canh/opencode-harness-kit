@@ -69,18 +69,22 @@
       "permission": {
         "edit": "deny",
         "bash": {
-          "*": "allow",
+          "*": "ask",
           "git status *": "allow",
           "git diff *": "allow",
-          "mkdir*": "allow",
           "ps*": "allow",
+          "node --test*": "allow",
+          "npm test*": "allow",
+          "npm run *": "allow",
+          "npx *": "allow",
+          "bun test*": "allow",
+          "deno test*": "allow",
+          "make*": "allow",
           "python3 -m pytest*": "allow",
           "pytest*": "allow",
           "ruff*": "allow",
           "mypy*": "allow",
           "black*": "allow",
-          "npm test*": "allow",
-          "npm run *": "allow",
           "npx tsc*": "allow",
           "cargo test*": "allow",
           "go test*": "allow"
@@ -102,11 +106,16 @@
       "permission": {
         "edit": "deny",
         "bash": {
-          "*": "allow",
+          "*": "deny",
           "pdftotext*": "allow",
-          "python3 -c*": "allow",
           "cat*": "allow",
-          "ls*": "allow"
+          "ls*": "allow",
+          "head*": "allow",
+          "tail*": "allow",
+          "wc*": "allow",
+          "file*": "allow",
+          "grep*": "allow",
+          "rg*": "allow"
         }
       },
       "prompt": "prompts/doc.md"
