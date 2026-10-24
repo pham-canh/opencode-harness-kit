@@ -185,6 +185,37 @@ export const isDone = (t) => t.checked || t.status === "done"
 /** @param {Task} t */
 export const isBlocked = (t) => t.status === "blocked"
 
+// A command that cannot fail proves nothing. `true`, `:`, `echo ok` and
+// `sleep 0` all exit 0 whether or not the change landed, so a task whose whole
+// verify line is one of them would be marked done by a run that did nothing.
+//
+// Redirection is excluded on purpose: `echo ok > out.txt` writes a file, and
+// catching that is a different (and much harder) question than catching a
+// command with no effect at all.
+const vacuousRe = /^(?:true|:|exit(?:\s+0)?|echo(?:\s+[^;&|<>]*)?|printf(?:\s+[^;&|<>]*)?|sleep\s+0+)$/
+
+/**
+ * Is this verify command guaranteed to exit 0 whatever the agent did?
+ *
+ * A command with a real step anywhere in it is not vacuous: `true && npm test`
+ * still fails when the tests fail, so it is accepted. Only a command made
+ * entirely of no-ops is refused.
+ *
+ * @param {string} command
+ * @returns {boolean}
+ */
+export function isVacuousVerify(command) {
+  const body = String(command ?? "")
+    .replace(/\s+#.*$/, "")
+    .trim()
+  if (!body) return true
+  const parts = body
+    .split(/\s*(?:&&|\|\||;|\n)\s*/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  return parts.length === 0 || parts.every((p) => vacuousRe.test(p))
+}
+
 /**
  * Record the outcome of a task: flip the checkbox, set the status, and record
  * the verify output that was actually observed.

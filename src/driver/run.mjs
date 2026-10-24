@@ -39,6 +39,7 @@ import {
   summarize,
   isBlocked,
   isDone,
+  isVacuousVerify,
 } from "../tasks.js"
 
 const TASKS_PATH = join(".space", "tasks.md")
@@ -85,8 +86,12 @@ function pidAlive(pid) {
  * A lock whose pid is gone is stale and is cleared. A lock that cannot be
  * parsed is treated the same way: a crashed run must not need a manual `rm`
  * before the next one can start.
+ *
+ * A live pid is never cleared automatically, because the lock may belong to a
+ * run that is simply slow. `force` is the explicit override for the case where
+ * the pid was reused by an unrelated process and waiting would be forever.
  */
-export function acquireLock(cwd, { pid = process.pid, now = Date.now() } = {}) {
+export function acquireLock(cwd, { pid = process.pid, now = Date.now(), force = false } = {}) {
   const path = join(cwd, LOCK_PATH)
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -113,7 +118,12 @@ export function acquireLock(cwd, { pid = process.pid, now = Date.now() } = {}) {
       } catch {
         // A crashed run can leave half a line. Treat it as stale.
       }
-      if (holder && pidAlive(holder.pid)) return { busy: holder }
+      if (holder && pidAlive(holder.pid)) {
+        // `force` breaks a live lock once. If another run takes it between the
+        // unlink and the next create, that run wins and this one reports busy;
+        // forcing again would let two runs in.
+        if (!force || attempt > 0) return { busy: holder }
+      }
       try {
         unlinkSync(path)
       } catch (err) {
@@ -545,12 +555,50 @@ export function buildPrompt(task) {
  * budget by that floor plus the time between the check and the call, and not
  * by the thirty minutes the verify used to be allowed.
  */
+/**
+ * Find the task we were working on in a freshly parsed file.
+ *
+ * A title alone is not an identity: two tasks can share one, and the ordinal
+ * among same-titled tasks shifts when a duplicate before ours is removed or
+ * renamed. Matching title + change + files is stable across edits to status
+ * and output, which are the only fields the loop writes.
+ *
+ * When more than one task still fits, there is no honest answer. Returning
+ * `null` stops the run; guessing would mark the wrong task done.
+ *
+ * @param {import("../tasks.js").TaskFile} parsed
+ * @param {import("../tasks.js").Task} task
+ * @returns {import("../tasks.js").Task | null}
+ */
+export function findTask(parsed, task) {
+  const candidates = parsed.tasks.filter((t) => t.title === task.title)
+  if (candidates.length === 0) return null
+
+  // Two same-titled tasks are told apart by what they say they change. The
+  // match is checked even when only one candidate is left: if that one has
+  // different content, it is a different task and the one we were running is
+  // gone.
+  const narrowed = candidates.filter(
+    (t) => t.change === task.change && t.files === task.files,
+  )
+  if (narrowed.length === 1) return narrowed[0]
+
+  // A bare title with no change or files is the only case where nothing else
+  // identifies the task, so a sole candidate is the best available answer.
+  if (candidates.length === 1 && !task.change && !task.files) {
+    const [only] = candidates
+    return !only.change && !only.files ? only : null
+  }
+  return null
+}
+
 export function runLoop({
   cwd = process.cwd(),
   role = "build",
   maxRounds = 20,
   budgetMinutes = 120,
   allowExtraFiles = false,
+  forceUnlock = false,
   review = false,
   runAgent = invokeAgent,
   runReviewer = invokeAgent,
@@ -572,7 +620,7 @@ export function runLoop({
 
   // One writer per task file. The lock is taken before the first read of the
   // file and released on EVERY exit, including a throw from a custom runner.
-  const lock = acquireLock(cwd)
+  const lock = acquireLock(cwd, { force: forceUnlock })
   if (lock.busy) {
     return stop(log, {
       reason: `another run is already in progress in this project (pid ${lock.busy.pid}). Wait for it, or remove ${LOCK_PATH} if it is gone.`,
@@ -607,7 +655,7 @@ export function runLoop({
       return null
     }
     const parsed = parseTasks(fresh)
-    const same = parsed.tasks.filter((t) => t.title === task.title)[task.ordinal ?? 0]
+    const same = findTask(parsed, task)
     if (!same) return null
     return { text: fresh, task: same }
   }
@@ -697,6 +745,22 @@ export function runLoop({
       if (!wrote) return changedUnderneath(task)
       return stop(log, {
         reason: `"${task.title}" has no verify command. It cannot be checked, so it cannot be run unattended. Add one, or do it yourself.`,
+        code: 2,
+        rounds,
+      })
+    }
+
+    // `verify: true` and `verify: echo ok` exit 0 whether the change landed or
+    // not. A command that cannot fail is not a check, and running it would
+    // mark the task done on no evidence at all.
+    if (isVacuousVerify(task.verify)) {
+      const wrote = writeBack(task, {
+        status: "blocked",
+        verifyOutput: `blocked by the loop: "${task.verify}" cannot fail, so it proves nothing.`,
+      })
+      if (!wrote) return changedUnderneath(task)
+      return stop(log, {
+        reason: `"${task.title}" has a verify command that cannot fail ("${task.verify}"). Replace it with a command that fails when the change is wrong.`,
         code: 2,
         rounds,
       })

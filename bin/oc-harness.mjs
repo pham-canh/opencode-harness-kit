@@ -15,7 +15,7 @@
 import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync, renameSync, unlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { createInterface } from "node:readline/promises"
 
@@ -3553,12 +3553,31 @@ async function cmdRun() {
     )
   }
 
+  // The files: scope check reads `git status`. Outside a work tree it cannot
+  // see anything, so it used to switch itself off in silence -- an unattended
+  // run believing it was fenced while it was not. The one honest place to say
+  // that is here, before the first task, and the explicit override is the same
+  // flag that already means "no scope check".
+  const allowExtraFiles = flag("--allow-extra-files")
+  if (!allowExtraFiles) {
+    const git = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    })
+    if (git.status !== 0 || String(git.stdout ?? "").trim() !== "true") {
+      fail(
+        "oc-harness run needs a git work tree, because the files: scope check reads git status. Run it inside a repository, or pass --allow-extra-files to run without the check.",
+      )
+    }
+  }
+
   const result = runLoop({
     cwd: process.cwd(),
     role,
     maxRounds,
     budgetMinutes,
-    allowExtraFiles: flag("--allow-extra-files"),
+    allowExtraFiles,
+    forceUnlock: flag("--force-unlock"),
     review: flag("--review"),
   })
 
@@ -3696,7 +3715,10 @@ try {
     --max-rounds N  stop after N tasks (default: 20)
     --budget MIN    stop after MIN minutes (default: 120)
     --allow-extra-files  let a task change files its files: line does not
-                   name. Without this, an out-of-scope edit stops the loop.
+                   name. Without this, an out-of-scope edit stops the loop,
+                   and the run needs a git work tree to see the change.
+    --force-unlock  clear a lock held by a live pid. Only for a lock left by
+                   a pid that was reused; two real runs must not overlap.
     --review       after verify, ask the reviewer lane for a schema'd verdict.
                    The run stops on fail or on any malformed verdict. The
                    verdict is written to .space/review/.

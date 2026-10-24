@@ -21,8 +21,9 @@ import {
   buildReviewPrompt,
   verdictPath,
   REVIEW_SCHEMA,
+  findTask,
 } from "../src/driver/run.mjs"
-import { parseTasks } from "../src/tasks.js"
+import { parseTasks, isVacuousVerify } from "../src/tasks.js"
 import { mkdtemp } from "./helpers.mjs"
 
 function scratch(doc) {
@@ -273,6 +274,34 @@ test("a task with no verify command is blocked rather than run", () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test("a verify command that cannot fail is blocked rather than run", () => {
+  const dir = scratch(oneTask("true"))
+  let agentCalls = 0
+  const r = runLoop({
+    cwd: dir,
+    runAgent: () => {
+      agentCalls++
+      return { ok: true }
+    },
+    runVerify: () => ({ ok: true }),
+  })
+  assert.equal(r.code, 2)
+  assert.equal(agentCalls, 0, "no evidence is not evidence")
+  assert.match(r.reason, /cannot fail/)
+  const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+  assert.equal(after.tasks[0].status, "blocked")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a no-op before a real check does not make the check vacuous", () => {
+  assert.equal(isVacuousVerify("true"), true)
+  assert.equal(isVacuousVerify(": && echo ok"), true)
+  assert.equal(isVacuousVerify("exit 0"), true)
+  assert.equal(isVacuousVerify("true && npm test"), false)
+  assert.equal(isVacuousVerify("echo ok > out.txt"), false)
+  assert.equal(isVacuousVerify("npm test"), false)
+})
+
 test("an already-blocked task stops the loop", () => {
   const dir = scratch(`# Goal
 
@@ -455,6 +484,59 @@ test("a stale lock is cleared rather than needing a manual rm", () => {
   assert.equal(r.code, 0)
   assert.equal(existsSync(lock), false, "the stale lock is still there")
   rmSync(dir, { recursive: true, force: true })
+})
+
+test("--force-unlock is the explicit way past a live lock", () => {
+  const dir = scratch(oneTask())
+  const lock = join(dir, ".space", "run.lock")
+  writeFileSync(lock, JSON.stringify({ pid: process.pid }))
+  const r = runLoop({
+    cwd: dir,
+    forceUnlock: true,
+    runAgent: () => ({ ok: true }),
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+  })
+  assert.equal(r.code, 0)
+  assert.equal(existsSync(lock), false, "the forced lock must be released too")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a task keeps its identity when a same-titled duplicate is removed", () => {
+  const doc = `# Goal
+
+## Tasks
+- [ ] fix the thing
+  - files: a.js
+  - change: first fix
+  - verify: check-a
+- [ ] fix the thing
+  - files: b.js
+  - change: second fix
+  - verify: check-b
+`
+  const before = parseTasks(doc)
+  const [first, second] = before.tasks
+  const after = parseTasks(doc.replace(/- \[ \] fix the thing\n  - files: a\.js\n  - change: first fix\n  - verify: check-a\n/, ""))
+
+  assert.equal(after.tasks.length, 1)
+  assert.equal(findTask(after, first), null, "a deleted task must not resolve to its duplicate")
+  assert.equal(findTask(after, second)?.change, "second fix")
+
+  // Identical on every field the loop uses is not an identity. Guessing here
+  // would mark the wrong task done, so the answer is "I cannot tell".
+  const twins = parseTasks(`# Goal
+
+## Tasks
+- [ ] same
+  - change: same
+  - files: x.js
+  - verify: check
+- [ ] same
+  - change: same
+  - files: x.js
+  - verify: check
+`)
+  assert.equal(findTask(twins, twins.tasks[0]), null)
 })
 
 test("the lock is released on every exit, including a stop before any task", () => {
