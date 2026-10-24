@@ -262,6 +262,12 @@ export function outOfScope(task, cwd, before) {
       return !was || was.code !== now.code || was.mtimeMs !== now.mtimeMs
     })
     .map(([path]) => path)
+    // `.space/` is the loop's own bookkeeping: the lock, the task file it
+    // writes back, the review verdicts, and the plugin's active/telemetry
+    // files. The plugin writes telemetry on every agent call, which changes
+    // the directory's mtime, so counting it would block every task that
+    // touches no code at all.
+    .filter((path) => path !== ".space" && !path.startsWith(".space/"))
   if (!moved.length) return null
 
   const allowed = named.map((path) => relative(after.root, resolve(cwd, path)).split(sep).join("/"))
@@ -544,18 +550,6 @@ export function buildPrompt(task) {
 }
 
 /**
- * Run the loop.
- *
- * Stops at the first of: nothing pending, nothing verifiable, a blocked task, a
- * failing verify, the round cap, or the time budget. Whichever it was gets
- * printed, so a run that stops early always says why.
- *
- * The budget is checked BETWEEN rounds. The agent and the verify each get the
- * time that is left, with a floor of half a minute - so a run can overrun the
- * budget by that floor plus the time between the check and the call, and not
- * by the thirty minutes the verify used to be allowed.
- */
-/**
  * Find the task we were working on in a freshly parsed file.
  *
  * A title alone is not an identity: two tasks can share one, and the ordinal
@@ -592,6 +586,18 @@ export function findTask(parsed, task) {
   return null
 }
 
+/**
+ * Run the loop.
+ *
+ * Stops at the first of: nothing pending, nothing verifiable, a blocked task, a
+ * failing verify, the round cap, or the time budget. Whichever it was gets
+ * printed, so a run that stops early always says why.
+ *
+ * The budget is checked BETWEEN rounds. The agent and the verify each get the
+ * time that is left, with a floor of half a minute - so a run can overrun the
+ * budget by that floor plus the time between the check and the call, and not
+ * by the thirty minutes the verify used to be allowed.
+ */
 export function runLoop({
   cwd = process.cwd(),
   role = "build",

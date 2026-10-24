@@ -47,6 +47,11 @@ and the read-only lanes no longer have a write-capable shell.
   second silently switched off the `files:` scope check. Both are now
   refused before the lock is taken, the second unless `--allow-extra-files`
   is passed.
+- **The scope check counted the loop's own bookkeeping as an out-of-scope
+  edit.** The plugin writes `.space/telemetry.jsonl` on every agent call, so
+  a task that touched only the files it named was still blocked for changing
+  `.space/`. Loop state is excluded now; a real edit outside `files:` is
+  still caught.
 
 ### Added
 

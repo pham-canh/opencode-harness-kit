@@ -572,6 +572,19 @@ test("an edit outside the named files is reported", () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test("the loop's own .space state is not an out-of-scope edit", () => {
+  const dir = repo()
+  const before = gitChanges(dir)
+  // The plugin writes telemetry into .space on every agent call, and the
+  // lock and tasks.md live there too. None of it is the deliverable.
+  mkdirSync(join(dir, ".space"), { recursive: true })
+  writeFileSync(join(dir, ".space", "telemetry.jsonl"), "{}\n")
+  writeFileSync(join(dir, ".space", "active"), "fleet-safe\n")
+  const scope = outOfScope({ files: "src/a.js" }, dir, before)
+  assert.equal(scope, null)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test("a named directory covers new files inside it", () => {
   const dir = repo()
   const before = gitChanges(dir)
