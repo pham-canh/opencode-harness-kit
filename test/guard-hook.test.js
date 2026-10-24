@@ -341,3 +341,65 @@ test("a command that is not on the list is not blocked", () => {
     assert.equal(checkDenied(command), null, `the guard blocked this: ${command}`)
   }
 })
+
+test("the session budget blocks tool calls once it is spent", async () => {
+  // The provider's window is shared and opencode never shows a number for
+  // it. The guard counts the input tokens each step reports, and at the stop
+  // threshold it refuses tool calls - so the session fails with an
+  // explanation instead of a model that looks broken.
+  const dir = workspace()
+  const prevWarn = process.env.OC_HARNESS_BUDGET_WARN
+  const prevStop = process.env.OC_HARNESS_BUDGET_STOP
+  process.env.OC_HARNESS_BUDGET_WARN = "1000"
+  process.env.OC_HARNESS_BUDGET_STOP = "2000"
+  try {
+    const hooks = await guard(dir)
+    const step = (id, input) => ({
+      type: "message.part.updated",
+      properties: { part: { type: "step-finish", sessionID: "ses", id, tokens: { input } } },
+    })
+    await hooks.event({ event: step("p1", 1500) })
+    assert.equal(
+      await blocks(hooks, "read", { filePath: "src/a.ts" }),
+      null,
+      "a tool call was blocked before the stop threshold",
+    )
+    await hooks.event({ event: step("p2", 600) })
+    const msg = await blocks(hooks, "read", { filePath: "src/a.ts" })
+    assert.ok(msg, "the budget was spent and the tool call still ran")
+    assert.match(msg, /token budget/)
+    assert.match(msg, /2,100/)
+  } finally {
+    if (prevWarn === undefined) delete process.env.OC_HARNESS_BUDGET_WARN
+    else process.env.OC_HARNESS_BUDGET_WARN = prevWarn
+    if (prevStop === undefined) delete process.env.OC_HARNESS_BUDGET_STOP
+    else process.env.OC_HARNESS_BUDGET_STOP = prevStop
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a repeated step part is counted once", async () => {
+  const dir = workspace()
+  const prevWarn = process.env.OC_HARNESS_BUDGET_WARN
+  const prevStop = process.env.OC_HARNESS_BUDGET_STOP
+  process.env.OC_HARNESS_BUDGET_WARN = "1000"
+  process.env.OC_HARNESS_BUDGET_STOP = "2000"
+  try {
+    const hooks = await guard(dir)
+    const event = {
+      type: "message.part.updated",
+      properties: { part: { type: "step-finish", sessionID: "ses", id: "same", tokens: { input: 1200 } } },
+    }
+    // An update to the same part is not a second request. Counting it twice
+    // would spend the budget at half the real usage.
+    await hooks.event({ event })
+    await hooks.event({ event })
+    assert.equal(await blocks(hooks, "read", { filePath: "src/a.ts" }), null)
+  } finally {
+    if (prevWarn === undefined) delete process.env.OC_HARNESS_BUDGET_WARN
+    else process.env.OC_HARNESS_BUDGET_WARN = prevWarn
+    if (prevStop === undefined) delete process.env.OC_HARNESS_BUDGET_STOP
+    else process.env.OC_HARNESS_BUDGET_STOP = prevStop
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

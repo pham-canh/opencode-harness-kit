@@ -372,7 +372,7 @@ function userBashRules(base) {
 /**
  * @param {Profile} p
  * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string>,
- *          configDir?: string, kitRoot?: string }} [opts]
+ *          configDir?: string, kitRoot?: string, skills?: boolean }} [opts]
  * @returns {string}
  */
 export function generateConfig(p, opts = {}) {
@@ -414,6 +414,16 @@ export function generateConfig(p, opts = {}) {
           ...(existing.permission ?? {}),
           ...lane.permission,
         }
+      }
+      // The skill list is the largest fixed cost in the prompt. opencode
+      // writes every discovered skill's name and description into the system
+      // message, so a machine with a large skill collection pays it on every
+      // request, before a word of the conversation - and a long chat pays it
+      // hundreds of times. The lanes carry their instructions in prompts/, so
+      // `--no-skills` omits the block for them; `skills: true` on a lane keeps
+      // it for that lane, and nothing changes when the flag is not passed.
+      if (opts.skills === false && lane.skills !== true) {
+        existing.tools = { ...(existing.tools ?? {}), skill: false }
       }
     }
 
@@ -625,6 +635,7 @@ export function generateConfig(p, opts = {}) {
     dropped: own.dropped,
     removedLanes,
     skillsDropped: skillPaths.dropped,
+    skills: opts.skills,
   })
 }
 
@@ -632,7 +643,8 @@ export function generateConfig(p, opts = {}) {
  * @param {Record<string, any>} cfg
  * @param {Profile} p
  * @param {{ comments: boolean, instructionsPath?: string, unhealthy?: Set<string>,
- *          dropped?: string[], removedLanes?: string[], skillsDropped?: string[] }} opts
+ *          dropped?: string[], removedLanes?: string[], skillsDropped?: string[],
+ *          skills?: boolean }} opts
  * @returns {string}
  */
 function render(cfg, p, opts) {
@@ -682,6 +694,12 @@ function render(cfg, p, opts) {
     `${c}output cap   ${p.limits.output.toLocaleString("en-US")} tokens`,
     `${c}reasoning    ${levels.length ? levels.join(" < ") : "(not tunable)"}`,
     `${c}retention    ${effective.retention}${effective.retention === "may-train" ? "  <-- prompts may train a model" : ""}`,
+    ...(opts.skills === false
+      ? [
+          `${c}skills       off (--no-skills): the skill list is not in the prompt`,
+          `${c}             (every skill's name and description, on every request)`,
+        ]
+      : []),
     ...(effective.retention !== p.retention
       ? [
           `${c}             base ${p.provider}/${p.model} is ${p.retention}, but ${effective.worst} makes the whole file ${effective.retention}`,

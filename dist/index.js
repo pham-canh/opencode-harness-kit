@@ -234,12 +234,12 @@ function pipeStages(command) {
   return split(command, "pipe");
 }
 function tokenize(segment) {
-  const tokens = [];
+  const tokens2 = [];
   let cur = "";
   let quote = null;
   let started = false;
   const flush = () => {
-    if (cur || started) tokens.push(cur);
+    if (cur || started) tokens2.push(cur);
     cur = "";
     started = false;
   };
@@ -274,7 +274,7 @@ function tokenize(segment) {
     cur += ch;
   }
   flush();
-  return tokens;
+  return tokens2;
 }
 var ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 var WRAPPERS = {
@@ -404,66 +404,66 @@ function baseName(word) {
   const slash = Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\"));
   return slash === -1 ? word : word.slice(slash + 1);
 }
-function skipWrapperArgs(tokens, i, name) {
+function skipWrapperArgs(tokens2, i, name) {
   const valueFlags = WRAPPER_TABLE[name] ?? WRAPPER_VALUE_FLAGS;
-  while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
-    const flag = tokens[i];
+  while (i < tokens2.length && tokens2[i].startsWith("-") && tokens2[i] !== "-") {
+    const flag = tokens2[i];
     i++;
-    if (valueFlags.has(flag) && !flag.includes("=") && i < tokens.length) i++;
+    if (valueFlags.has(flag) && !flag.includes("=") && i < tokens2.length) i++;
   }
-  if (name === "timeout" && i < tokens.length && DURATION.test(tokens[i])) i++;
-  if (name === "chroot" && i < tokens.length && !tokens[i].startsWith("-")) i++;
+  if (name === "timeout" && i < tokens2.length && DURATION.test(tokens2[i])) i++;
+  if (name === "chroot" && i < tokens2.length && !tokens2[i].startsWith("-")) i++;
   return i;
 }
-function skipPrefixes(tokens) {
+function skipPrefixes(tokens2) {
   let i = 0;
   for (; ; ) {
-    const word = tokens[i];
-    if (word === void 0) return tokens.length;
+    const word = tokens2[i];
+    if (word === void 0) return tokens2.length;
     if (ENV_ASSIGN.test(word)) {
       i++;
       continue;
     }
     const name = baseName(word);
     if (name in WRAPPER_TABLE) {
-      i = skipWrapperArgs(tokens, i + 1, name);
+      i = skipWrapperArgs(tokens2, i + 1, name);
       continue;
     }
     return i;
   }
 }
 function stripPrefixes(segment) {
-  const tokens = tokenize(segment);
-  const i = skipPrefixes(tokens);
-  if (i >= tokens.length) return "";
-  const rest = tokens.slice(i);
+  const tokens2 = tokenize(segment);
+  const i = skipPrefixes(tokens2);
+  if (i >= tokens2.length) return "";
+  const rest = tokens2.slice(i);
   rest[0] = baseName(rest[0]);
   return rest.join(" ");
 }
 function stripToolFlags(command) {
-  const tokens = tokenize(command);
-  if (!tokens.length) return command;
-  const flags = TOOL_VALUE_FLAGS[baseName(tokens[0]).toLowerCase()];
+  const tokens2 = tokenize(command);
+  if (!tokens2.length) return command;
+  const flags = TOOL_VALUE_FLAGS[baseName(tokens2[0]).toLowerCase()];
   if (!flags) return command;
   const out = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
+  for (let i = 0; i < tokens2.length; i++) {
+    const token = tokens2[i];
     if (!flags.has(token.split("=")[0])) {
       out.push(token);
       continue;
     }
-    if (!token.includes("=") && i + 1 < tokens.length) i++;
+    if (!token.includes("=") && i + 1 < tokens2.length) i++;
   }
   return out.join(" ");
 }
 function gitSubcommand(segment) {
-  const tokens = tokenize(segment);
-  let i = skipPrefixes(tokens);
-  if (i >= tokens.length) return null;
-  if (!/(^|[\\/])git(\.exe)?$/i.test(tokens[i])) return null;
+  const tokens2 = tokenize(segment);
+  let i = skipPrefixes(tokens2);
+  if (i >= tokens2.length) return null;
+  if (!/(^|[\\/])git(\.exe)?$/i.test(tokens2[i])) return null;
   i++;
-  while (i < tokens.length) {
-    const flag = tokens[i];
+  while (i < tokens2.length) {
+    const flag = tokens2[i];
     if (flag.length > 2 && !flag.startsWith("--") && (flag.startsWith("-C") || flag.startsWith("-c"))) {
       i++;
       continue;
@@ -478,32 +478,32 @@ function gitSubcommand(segment) {
     }
     break;
   }
-  return tokens[i] ?? null;
+  return tokens2[i] ?? null;
 }
 var MAX_SHELL_DEPTH = 2;
-function shellCommandString(tokens, from) {
-  for (let n = from + 1; n < tokens.length; n++) {
-    const token = tokens[n];
+function shellCommandString(tokens2, from) {
+  for (let n = from + 1; n < tokens2.length; n++) {
+    const token = tokens2[n];
     if (!token.startsWith("-") || token === "-") continue;
     const m = /^-([a-zA-Z]*)c/.exec(token);
     if (!m) continue;
     const after = token.slice(m[0].length);
     if (after && !/^[a-zA-Z]+$/.test(after)) return after.trim();
-    return tokens.slice(n + 1).join(" ") || null;
+    return tokens2.slice(n + 1).join(" ") || null;
   }
   return null;
 }
-function envSplitPayload(tokens) {
-  for (let i = 0; i < tokens.length; i++) {
-    const word = tokens[i];
+function envSplitPayload(tokens2) {
+  for (let i = 0; i < tokens2.length; i++) {
+    const word = tokens2[i];
     if (word === void 0) return null;
     if (ENV_ASSIGN.test(word)) continue;
     const name = baseName(word);
     if (name === "env") {
-      for (let j = i + 1; j < tokens.length; j++) {
-        const token = tokens[j];
+      for (let j = i + 1; j < tokens2.length; j++) {
+        const token = tokens2[j];
         if (token === "-S" || token === "--split-string") {
-          return tokens[j + 1] ?? null;
+          return tokens2[j + 1] ?? null;
         }
         if (token.startsWith("--split-string=")) {
           return token.slice("--split-string=".length) || null;
@@ -517,20 +517,20 @@ function envSplitPayload(tokens) {
       return null;
     }
     if (!(name in WRAPPER_TABLE)) return null;
-    i = skipWrapperArgs(tokens, i + 1, name) - 1;
+    i = skipWrapperArgs(tokens2, i + 1, name) - 1;
   }
   return null;
 }
 function shellPayload(segment) {
-  const tokens = tokenize(segment);
-  if (tokens.length < 2) return null;
-  const split2 = envSplitPayload(tokens);
+  const tokens2 = tokenize(segment);
+  if (tokens2.length < 2) return null;
+  const split2 = envSplitPayload(tokens2);
   if (split2) return split2;
-  const i = skipPrefixes(tokens);
-  if (i >= tokens.length) return null;
-  if (tokens[i] === "eval") return tokens.slice(i + 1).join(" ") || null;
-  if (!SHELL_NAMES.test(baseName(tokens[i]))) return null;
-  return shellCommandString(tokens, i);
+  const i = skipPrefixes(tokens2);
+  if (i >= tokens2.length) return null;
+  if (tokens2[i] === "eval") return tokens2.slice(i + 1).join(" ") || null;
+  if (!SHELL_NAMES.test(baseName(tokens2[i]))) return null;
+  return shellCommandString(tokens2, i);
 }
 var GROUP_OPEN = /^[({[]+/;
 var GROUP_END = /[;)&,}\]]+$/;
@@ -539,14 +539,14 @@ function commandName(word) {
 }
 function runsScript(stage) {
   for (const command of segments(stage)) {
-    const tokens = tokenize(command);
-    let i = skipPrefixes(tokens);
-    if (i >= tokens.length) continue;
-    let name = commandName(tokens[i]);
+    const tokens2 = tokenize(command);
+    let i = skipPrefixes(tokens2);
+    if (i >= tokens2.length) continue;
+    let name = commandName(tokens2[i]);
     if (!name) {
       i++;
-      if (i >= tokens.length) continue;
-      name = commandName(tokens[i]);
+      if (i >= tokens2.length) continue;
+      name = commandName(tokens2[i]);
     }
     if (SHELL_NAMES.test(name) || SCRIPT_RUNNERS.test(name)) return true;
   }
@@ -568,15 +568,15 @@ function isDestructiveRmFlag(token) {
   return /^-[a-zA-Z]*[rf]/i.test(token);
 }
 function isRecursiveDelete(text) {
-  const tokens = tokenize(text);
-  if (tokens.length < 2) return false;
-  if (baseName(tokens[0]).toLowerCase() !== "rm") return false;
+  const tokens2 = tokenize(text);
+  if (tokens2.length < 2) return false;
+  if (baseName(tokens2[0]).toLowerCase() !== "rm") return false;
   let destructive = false;
   let hasPath = false;
-  for (let i = 1; i < tokens.length; i++) {
-    const token = tokens[i];
+  for (let i = 1; i < tokens2.length; i++) {
+    const token = tokens2[i];
     if (token === "--") {
-      hasPath = tokens.length > i + 1;
+      hasPath = tokens2.length > i + 1;
       break;
     }
     if (!token.startsWith("-")) {
@@ -589,11 +589,11 @@ function isRecursiveDelete(text) {
 }
 var CHMOD_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--reference"]);
 function chmodMode(text) {
-  const tokens = tokenize(text);
-  if (tokens.length < 2) return null;
-  if (baseName(tokens[0]).toLowerCase() !== "chmod") return null;
-  for (let i = 1; i < tokens.length; i++) {
-    const token = tokens[i];
+  const tokens2 = tokenize(text);
+  if (tokens2.length < 2) return null;
+  if (baseName(tokens2[0]).toLowerCase() !== "chmod") return null;
+  for (let i = 1; i < tokens2.length; i++) {
+    const token = tokens2[i];
     if (token === "--") continue;
     if (token.startsWith("--")) {
       if (!token.includes("=") && CHMOD_VALUE_OPTIONS.has(token)) i++;
@@ -612,16 +612,16 @@ function opensPermissions(text) {
 }
 var ASK_GATED = [/^\s*git\s+push\b/];
 function downloadTarget(segment) {
-  const tokens = tokenize(segment);
-  const i = skipPrefixes(tokens);
-  if (i >= tokens.length) return null;
-  const name = baseName(tokens[i]).toLowerCase();
+  const tokens2 = tokenize(segment);
+  const i = skipPrefixes(tokens2);
+  if (i >= tokens2.length) return null;
+  const name = baseName(tokens2[i]).toLowerCase();
   if (name !== "curl" && name !== "wget") return null;
-  for (let j = i + 1; j < tokens.length; j++) {
-    const token = tokens[j];
+  for (let j = i + 1; j < tokens2.length; j++) {
+    const token = tokens2[j];
     if (token === "--") break;
     if (token === "-o" || token === "--output" || token === "-O" || token === "--output-document") {
-      const value = tokens[j + 1];
+      const value = tokens2[j + 1];
       return value && !value.startsWith("-") ? value : null;
     }
     if (token.startsWith("--output=") || token.startsWith("--output-document=")) {
@@ -639,15 +639,15 @@ function sameFile(a, b) {
   return false;
 }
 function runsFile(segment, file) {
-  const tokens = tokenize(segment);
-  const i = skipPrefixes(tokens);
-  if (i >= tokens.length) return false;
-  if (sameFile(tokens[i], file)) return true;
-  const name = baseName(tokens[i]);
+  const tokens2 = tokenize(segment);
+  const i = skipPrefixes(tokens2);
+  if (i >= tokens2.length) return false;
+  if (sameFile(tokens2[i], file)) return true;
+  const name = baseName(tokens2[i]);
   const runner = SHELL_NAMES.test(name) || SCRIPT_RUNNERS.test(name) || name === "source" || name === ".";
   if (!runner) return false;
-  for (let j = i + 1; j < tokens.length; j++) {
-    if (sameFile(tokens[j], file)) return true;
+  for (let j = i + 1; j < tokens2.length; j++) {
+    if (sameFile(tokens2[j], file)) return true;
   }
   return false;
 }
@@ -902,6 +902,63 @@ function checkWrite(target, rules = WRITE_RULES, root = "") {
   return null;
 }
 
+// src/budget.js
+var DEFAULT_WARN_TOKENS = 2e6;
+var DEFAULT_STOP_TOKENS = 5e6;
+function count(raw, fallback) {
+  if (raw === void 0 || raw === null || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return Math.floor(n);
+}
+function budgetLimits(env = process.env) {
+  const warnAt = count(env?.OC_HARNESS_BUDGET_WARN, DEFAULT_WARN_TOKENS);
+  const stopAt = count(env?.OC_HARNESS_BUDGET_STOP, DEFAULT_STOP_TOKENS);
+  return {
+    warnAt: stopAt > 0 && warnAt > stopAt ? stopAt : warnAt,
+    stopAt
+  };
+}
+function createBudget({ warnAt = DEFAULT_WARN_TOKENS, stopAt = DEFAULT_STOP_TOKENS } = {}) {
+  let total = 0;
+  let warned = false;
+  let stopped = false;
+  return {
+    /**
+     * @param {any} input tokens this request cost
+     * @returns {{ warn: boolean, stop: boolean }}
+     */
+    add(input) {
+      const n = Number(input);
+      if (!Number.isFinite(n) || n <= 0) return { warn: false, stop: false };
+      total += Math.floor(n);
+      let warn = false;
+      let stop = false;
+      if (!warned && warnAt > 0 && total >= warnAt) {
+        warned = true;
+        warn = true;
+      }
+      if (!stopped && stopAt > 0 && total >= stopAt) {
+        stopped = true;
+        stop = true;
+      }
+      return { warn, stop };
+    },
+    get total() {
+      return total;
+    },
+    get warned() {
+      return warned;
+    },
+    get stopped() {
+      return stopped;
+    }
+  };
+}
+function tokens(n) {
+  return Math.floor(n).toLocaleString("en-US");
+}
+
 // src/telemetry-store.ts
 import { appendFileSync, existsSync, mkdirSync, rmSync, statSync, renameSync } from "node:fs";
 import { join as join2 } from "node:path";
@@ -1045,16 +1102,69 @@ function truncate(s, n = 200) {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > n ? `${one.slice(0, n)}...` : one;
 }
-var GuardPlugin = async ({ worktree, directory }) => {
+var GuardPlugin = async ({ worktree, directory, client }) => {
   const project = projectRoot(directory, worktree);
   const telemetryDir = join4(project, ".space");
   const refuse = (tool, rule, why, detail) => {
     write(telemetryDir, { kind: "guard", tool, rule });
     deny(why, detail);
   };
+  const limits = budgetLimits();
+  const budgets = /* @__PURE__ */ new Map();
+  const counted = /* @__PURE__ */ new Set();
+  const budgetFor = (sessionID) => {
+    let b = budgets.get(sessionID);
+    if (!b) {
+      b = createBudget(limits);
+      budgets.set(sessionID, b);
+    }
+    return b;
+  };
+  const toast = async (message, variant) => {
+    try {
+      await client?.tui?.showToast({ body: { message, variant, duration: 12e3 } });
+    } catch {
+    }
+  };
   return {
+    // The tokens are reported on the `step-finish` part, once per request.
+    // `message.updated` was the other candidate, but its `tokens.input` grows
+    // while the request streams and would have to be diffed per message; the
+    // step part is already the final cost of that request.
+    event: async ({ event }) => {
+      if (event?.type !== "message.part.updated") return;
+      const part = event.properties?.part;
+      if (!part || part.type !== "step-finish" || !part.sessionID) return;
+      if (part.id) {
+        if (counted.has(part.id)) return;
+        counted.add(part.id);
+      }
+      const b = budgetFor(part.sessionID);
+      const crossed = b.add(part.tokens?.input ?? 0);
+      if (crossed.warn) {
+        await toast(
+          `This session has used ${tokens(b.total)} input tokens (warn at ${tokens(limits.warnAt)}). Start a new session before the provider's window runs out.`,
+          "warning"
+        );
+      }
+      if (crossed.stop) {
+        await toast(
+          `This session hit its ${tokens(limits.stopAt)}-token budget: tool calls are now blocked. Start a new session, or raise OC_HARNESS_BUDGET_STOP.`,
+          "error"
+        );
+      }
+    },
     "tool.execute.before": async (input, output) => {
       try {
+        const budget = input.sessionID ? budgets.get(input.sessionID) : void 0;
+        if (budget?.stopped) {
+          refuse(
+            input.tool,
+            "session token budget",
+            "the session hit its token budget",
+            `it has used ${tokens(budget.total)} input tokens, and the stop threshold is ${tokens(limits.stopAt)}. Start a new session, or raise OC_HARNESS_BUDGET_STOP.`
+          );
+        }
         if (input.tool === "bash") {
           const raw = output.args?.workdir;
           if (typeof raw === "string" && raw.trim()) {
@@ -2439,9 +2549,9 @@ function laneOf(event, requests) {
   const completed = typeof time.completed === "number" ? time.completed : void 0;
   const ms = created !== void 0 && completed !== void 0 ? completed - created : void 0;
   if (!id || !agent) return null;
-  const tokens = info.tokens ?? {};
-  const ctx = typeof tokens.input === "number" ? tokens.input + (typeof tokens.cache?.read === "number" ? tokens.cache.read : 0) : void 0;
-  const reasoning = typeof tokens.reasoning === "number" ? tokens.reasoning : void 0;
+  const tokens2 = info.tokens ?? {};
+  const ctx = typeof tokens2.input === "number" ? tokens2.input + (typeof tokens2.cache?.read === "number" ? tokens2.cache.read : 0) : void 0;
+  const reasoning = typeof tokens2.reasoning === "number" ? tokens2.reasoning : void 0;
   return {
     id,
     agent,

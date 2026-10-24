@@ -86,6 +86,20 @@ and the read-only lanes no longer have a write-capable shell.
 
 ### Added
 
+- **A per-session token budget, counted by the guard.** The free tier is one
+  shared window and opencode shows no number for it, so a long session spends
+  it silently - one made 599 requests and 12,025,980 input tokens, and the
+  first sign was the provider refusing the next request. The guard sums the
+  input tokens each `step-finish` part reports, warns once at
+  `OC_HARNESS_BUDGET_WARN` (default 2M) and refuses tool calls at
+  `OC_HARNESS_BUDGET_STOP` (default 5M) with the number and the fix. `0`
+  disables either. The count is per session, so a subagent is not charged to
+  the conversation that started it.
+- **`oc-harness use --no-skills`.** opencode writes every discovered skill's
+  name and description into the system message, so a large skill collection
+  is a fixed cost on every request. The flag turns the skill tool off for the
+  lanes, which carry their instructions in `prompts/`, and the config header
+  says so. Off by default.
 - `oc-harness run --review`: after verify passes, ask the reviewer lane for
   a schema'd verdict, `oc-harness/review@1`. A fail, prose, a malformed
   object or a crashed reviewer stops the run with exit 5 and marks the task

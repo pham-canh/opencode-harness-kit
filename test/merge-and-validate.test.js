@@ -640,3 +640,48 @@ test("a profile whose id does not match its file name is refused", () => {
     else process.env.OPENCODE_HARNESS_PROFILES = prev
   }
 })
+
+// --- the skill list is a fixed cost, and --no-skills removes it --------------
+
+test("--no-skills turns the skill tool off for every lane that did not ask to keep it", () => {
+  // The skill list is the largest fixed cost in the prompt: opencode writes
+  // every discovered skill's name and description into the system message,
+  // before a word of the conversation. On a machine with a large skill
+  // collection that is tens of thousands of tokens per request, and a long
+  // chat pays it hundreds of times - which is how one session spent
+  // 12,025,980 input tokens. The lanes carry their instructions in prompts/,
+  // so the list is pure overhead for them.
+  const out = parseGenerated(
+    generateConfig(loadProfile("fleet-safe"), { skills: false }),
+  )
+  for (const role of ["plan", "build", "reviewer", "verify"]) {
+    assert.equal(
+      out.agent[role]?.tools?.skill,
+      false,
+      `${role} still carries the skill tool`,
+    )
+  }
+})
+
+test("without --no-skills the skill tool is untouched", () => {
+  // The flag is the only thing that changes this. A config generated the
+  // ordinary way must not lose the skill tool: that would be the kit deciding
+  // a capability the user did not ask it to remove.
+  const out = parseGenerated(generateConfig(loadProfile("fleet-safe")))
+  for (const role of ["plan", "build", "reviewer", "verify"]) {
+    assert.notEqual(out.agent[role]?.tools?.skill, false, `${role} lost the skill tool`)
+  }
+})
+
+test("--no-skills wins over a tools.skill the user had written", () => {
+  // A flag is an instruction for this install, and it must not be quietly
+  // undone by a hand-edit the compiler is asked to merge over - the same rule
+  // the pinned model follows.
+  const out = parseGenerated(
+    generateConfig(loadProfile("fleet-safe"), {
+      skills: false,
+      base: { agent: { build: { tools: { skill: true } } } },
+    }),
+  )
+  assert.equal(out.agent.build.tools.skill, false)
+})

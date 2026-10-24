@@ -560,6 +560,7 @@ oc-harness auto       refresh + install + use + verify, asking nothing
 oc-harness auto --json   the same reconcile, as a report a script can read
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness use <id> --dryrun   print a summary of what would be written, write nothing
+oc-harness use <id> --no-skills   leave the skill list out of the lanes' prompt
 oc-harness refresh <id> re-derive a profile against the live model list
 oc-harness install    symlink the plugin, prompts, skills and GLOBAL.md into the config dir
                       (from `npx`, they link into a package copy it makes first - see Install)
@@ -1146,6 +1147,45 @@ a claim.
 Whether it is worth it depends on whether the work is long. A repository of
 one-file lookups should not install this. The full table is in
 [eval/RESULTS.md](eval/RESULTS.md).
+
+## The token budget
+
+A free tier is one shared window: every request in every session draws on it,
+and when it runs out the provider answers with a limit error instead of
+tokens. opencode never shows a number for it. One real chat session made 599
+requests and 12,025,980 input tokens; the first sign of trouble was the next
+request being refused, which reads as a broken model rather than a spent
+budget.
+
+The guard counts it. Each `step-finish` part reports the input tokens that
+request cost, the guard sums them per session, and at two thresholds it acts:
+
+| | default | what happens |
+|---|---|---|
+| `OC_HARNESS_BUDGET_WARN` | 2,000,000 | one toast: this session has used N tokens |
+| `OC_HARNESS_BUDGET_STOP` | 5,000,000 | tool calls are refused, with the number and the fix |
+
+```bash
+OC_HARNESS_BUDGET_STOP=2000000 opencode    # a smaller window for a long task
+OC_HARNESS_BUDGET_WARN=0 OC_HARNESS_BUDGET_STOP=0 opencode   # off
+```
+
+The stop is a refusal with an explanation, not a crash: the model gets the
+message that the session hit its budget and that a new session is the fix. A
+subagent gets its own session and its own count, so its tokens are not
+charged to the conversation that started it.
+
+The other half is the fixed cost. opencode writes every discovered skill's
+name and description into the system message, so a machine with a large skill
+collection pays tens of thousands of tokens on every request, before the
+conversation starts. The lanes carry their instructions in `prompts/`, so:
+
+```bash
+oc-harness use fleet-safe --no-skills
+```
+
+omits the skill list from the lanes' prompt and says so in the config header.
+It is off by default: removing a capability is the user's call, not the kit's.
 
 ## Known limits
 

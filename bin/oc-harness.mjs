@@ -1630,7 +1630,7 @@ async function cmdUse(id, catalog = null, sink = {}) {
     }
     fail(msg, wantJson)
   }
-  if (!id) fail("usage: oc-harness use <profile> [--print] [--yes]")
+  if (!id) fail("usage: oc-harness use <profile> [--print] [--yes] [--no-skills]")
   let p = null
   try {
     p = loadProfile(id)
@@ -1772,7 +1772,12 @@ async function cmdUse(id, catalog = null, sink = {}) {
   // Relative skills paths resolve against the same directory the file lives
   // in - the one OpenCode reads them against. The toolkit default assumes
   // the standard config dir; the CLI knows where it actually wrote this one.
-  const out = generateConfig(p, { base: effectiveBase, comments: true, configDir: CONFIG_DIR })
+  const out = generateConfig(p, {
+    base: effectiveBase,
+    comments: true,
+    configDir: CONFIG_DIR,
+    skills: !flag("--no-skills"),
+  })
   if (flag("--print")) {
     process.stdout.write(out)
     return
@@ -3689,6 +3694,7 @@ try {
     auto      refresh + install + use + verify, asking nothing - the
               unattended reconcile, for an agent or a job
     use <id>  compile a profile into ${CONFIG_FILE}
+              --no-skills omits the skill list from the lanes' prompt
     show <id> print the resolved lane plan and derived numbers
     refresh <id>  update capability fields from models.dev
     install   symlink the plugin, prompts, skills and GLOBAL.md into the config dir

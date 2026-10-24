@@ -10,6 +10,7 @@ import type { Plugin } from "./plugin.js"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { checkBash, checkDenied, checkWrite, insideRoot } from "./rules.js"
+import { budgetLimits, createBudget, tokens } from "./budget.js"
 
 import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
@@ -224,7 +225,7 @@ function truncate(s: string, n = 200): string {
   return one.length > n ? `${one.slice(0, n)}...` : one
 }
 
-export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
+export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
   // The project root, not the worktree: the worktree is the filesystem root
   // in a project that is not a git repository, so the scope check was against
   // "/" - which contains every path - and the denial log went nowhere.
@@ -245,9 +246,79 @@ export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
     deny(why, detail)
   }
 
+  // The free tier is a shared window and opencode never shows a number for
+  // it. One session made 599 requests and 12,025,980 input tokens; the first
+  // sign of trouble was the provider refusing the next one, which reads as a
+  // broken model rather than a spent budget. This counts the window and says
+  // so while there is still room to act.
+  //
+  // Per session, because a subagent gets its own session and its own prompt:
+  // charging its tokens to the parent would warn the wrong conversation.
+  const limits = budgetLimits()
+  const budgets = new Map<string, ReturnType<typeof createBudget>>()
+  /** `step-finish` parts already counted, so an update is not a second step. */
+  const counted = new Set<string>()
+
+  const budgetFor = (sessionID: string) => {
+    let b = budgets.get(sessionID)
+    if (!b) {
+      b = createBudget(limits)
+      budgets.set(sessionID, b)
+    }
+    return b
+  }
+
+  /** A toast is a courtesy, never a reason to fail a turn. */
+  const toast = async (message: string, variant: "info" | "warning" | "error") => {
+    try {
+      await client?.tui?.showToast({ body: { message, variant, duration: 12_000 } })
+    } catch {
+      // A client that cannot show a toast still gets the block below.
+    }
+  }
+
   return {
+    // The tokens are reported on the `step-finish` part, once per request.
+    // `message.updated` was the other candidate, but its `tokens.input` grows
+    // while the request streams and would have to be diffed per message; the
+    // step part is already the final cost of that request.
+    event: async ({ event }: any) => {
+      if (event?.type !== "message.part.updated") return
+      const part = event.properties?.part
+      if (!part || part.type !== "step-finish" || !part.sessionID) return
+      if (part.id) {
+        if (counted.has(part.id)) return
+        counted.add(part.id)
+      }
+      const b = budgetFor(part.sessionID)
+      const crossed = b.add(part.tokens?.input ?? 0)
+      if (crossed.warn) {
+        await toast(
+          `This session has used ${tokens(b.total)} input tokens (warn at ${tokens(limits.warnAt)}). ` +
+            `Start a new session before the provider's window runs out.`,
+          "warning",
+        )
+      }
+      if (crossed.stop) {
+        await toast(
+          `This session hit its ${tokens(limits.stopAt)}-token budget: tool calls are now blocked. ` +
+            `Start a new session, or raise OC_HARNESS_BUDGET_STOP.`,
+          "error",
+        )
+      }
+    },
     "tool.execute.before": async (input: any, output: any) => {
       try {
+        const budget = input.sessionID ? budgets.get(input.sessionID) : undefined
+        if (budget?.stopped) {
+          refuse(
+            input.tool,
+            "session token budget",
+            "the session hit its token budget",
+            `it has used ${tokens(budget.total)} input tokens, and the stop threshold is ${tokens(limits.stopAt)}. ` +
+              `Start a new session, or raise OC_HARNESS_BUDGET_STOP.`,
+          )
+        }
         if (input.tool === "bash") {
           // The bash tool takes a `workdir`, and it becomes the command's
           // working directory. A command run from outside the project is

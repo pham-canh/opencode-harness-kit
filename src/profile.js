@@ -57,7 +57,7 @@ export const ROOT = findRoot(resolve(HERE, ".."))
  * @typedef {"zero-retention" | "retained" | "may-train" | "unknown"} Retention
  * @typedef {string | null} EffortRequest
  * @typedef {{ model: string, levels?: string[], chain?: string[] }} RoleModel
- * @typedef {{ description: string, mode?: string, steps?: number, permission?: Record<string, any>, prompt: string }} Lane
+ * @typedef {{ description: string, mode?: string, steps?: number, permission?: Record<string, any>, prompt: string, skills?: boolean }} Lane
  * @typedef {object} Profile
  * @property {string} id
  * @property {string} [title]

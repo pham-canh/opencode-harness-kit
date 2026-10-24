@@ -152,7 +152,7 @@ export { BASH_DENYLIST } from "./denylist.js";
 /**
  * @param {Profile} p
  * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string>,
- *          configDir?: string, kitRoot?: string }} [opts]
+ *          configDir?: string, kitRoot?: string, skills?: boolean }} [opts]
  * @returns {string}
  */
 export declare function generateConfig(p: Profile, opts?: {
@@ -161,4 +161,5 @@ export declare function generateConfig(p: Profile, opts?: {
     unhealthy?: Set<string>;
     configDir?: string;
     kitRoot?: string;
+    skills?: boolean;
 }): string;
