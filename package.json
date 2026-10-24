@@ -105,6 +105,10 @@
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   },
+  "overrides": {
+    "zod": "4.6.7",
+    "toml": "5.0.1"
+  },
   "publishConfig": {
     "access": "public"
   },
