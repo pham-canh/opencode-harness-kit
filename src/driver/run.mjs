@@ -851,6 +851,29 @@ export function runLoop({
       })
     }
 
+    // Exit 0 with nothing at all on stdout is not an agent that chose to do
+    // nothing: it is the shape of a route that never answered. A spent free
+    // route makes `opencode run` print the provider's reason on stderr (only
+    // with --print-logs) and exit 0, so without this the loop runs the verify
+    // against an untouched tree and blocks the task for a change the model
+    // never attempted. `stdout` is checked rather than `steps` because a
+    // custom runner in a test has no event stream to count.
+    if (agent.ok && typeof agent.stdout === "string" && agent.stdout.trim() === "") {
+      const why = agent.stderr || agent.error || "(nothing on stderr either)"
+      const wrote = writeBack(task, {
+        status: "blocked",
+        verifyOutput: `blocked by the loop: the ${role} agent exited 0 without producing a word.\n${tail(why)}`,
+      })
+      if (!wrote) return changedUnderneath(task)
+      return stop(log, {
+        reason:
+          `the ${role} agent answered nothing on "${task.title}". The model route is probably spent or unreachable; ` +
+          `run \`opencode run --print-logs -m <model> hi\` to see the provider's reason. Nothing was verified, so no task was scored.`,
+        code: 3,
+        rounds,
+      })
+    }
+
     // A task names the files it may touch. An agent that edits outside that
     // list has gone beyond the plan, and an unattended loop that lets that
     // pass is an unattended loop that can rewrite the repository one task at

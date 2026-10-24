@@ -121,6 +121,45 @@ test("a failing verify stops the loop and blocks the task", () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test("an agent that exits 0 with no output is a dead route, not a failed change", () => {
+  const dir = scratch(oneTask())
+  let verifyCalls = 0
+  const r = runLoop({
+    cwd: dir,
+    // What `opencode run` does on a spent free route: exit 0, no events, the
+    // provider's reason on stderr and only with --print-logs.
+    runAgent: () => ({
+      ok: true,
+      status: 0,
+      stdout: "",
+      stderr: "AI_APICallError: Free usage limit reached.",
+    }),
+    runVerify: () => {
+      verifyCalls++
+      return { ok: false, status: 1, output: "", seconds: 0 }
+    },
+  })
+  assert.equal(r.code, 3)
+  assert.match(r.reason, /answered nothing/)
+  assert.match(r.reason, /print-logs/)
+  assert.equal(verifyCalls, 0, "an untouched tree is not a failed verify")
+  const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+  assert.equal(after.tasks[0].status, "blocked")
+  assert.match(after.tasks[0].output, /Free usage limit reached/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a custom runner with no stdout field is not mistaken for a dead route", () => {
+  const dir = scratch(oneTask())
+  const r = runLoop({
+    cwd: dir,
+    runAgent: () => ({ ok: true, status: 0, output: "done" }),
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 1 }),
+  })
+  assert.equal(r.code, 0)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test("a verify that failed after the step cap says so, instead of hiding the cap", () => {
   const dir = scratch(oneTask())
   const r = runLoop({
