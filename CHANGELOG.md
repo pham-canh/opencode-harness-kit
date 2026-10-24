@@ -12,6 +12,61 @@ is not happening.
 
 ---
 
+## [Unreleased]
+
+`oc-harness run` now stops for the reasons it already claimed to stop for,
+and the read-only lanes no longer have a write-capable shell.
+
+### Fixed
+
+- **An empty plan reported success.** A plan with no tasks printed
+  "every task is done (0/0)" and exited 0. Nothing was done, so it now stops
+  with exit 2 and says the plan has no tasks.
+- **A blocked task did not stop the tasks after it.** The loop marked the
+  blocker and carried on, then reported it at the end. It now runs in file
+  order and stops at the first blocked task, so pending work before the
+  blocker still lands and work after it no longer builds on a failure.
+- **The task file was written back from the copy read at the start.** A
+  human edit or an agent deletion made mid-run was overwritten, and a deleted
+  task file was recreated. Write-back re-reads the file, refuses to write a
+  stale copy, and goes through `rename` so a reader never sees half a plan.
+- **A task was matched by title and position only.** With two same-titled
+  tasks, removing or renaming the first made the loop mark the second one
+  done. Matching now uses title + `change` + `files`, and an ambiguous match
+  stops the run instead of guessing.
+- **`verify: true` and `verify: echo ok` were treated as checks.** Both exit
+  0 whatever the agent did. A verify line made only of no-ops now blocks the
+  task before the agent runs; a no-op before a real command
+  (`true && npm test`) is still accepted.
+- **`doc` and `verify` opened their bash maps with `"*": "allow"`.** The
+  read-only lanes could write through `sed -i`, `awk` or `python3 -c`
+  regardless of their `edit: "deny"`. `doc` now defaults to deny and `verify`
+  defaults to ask, each with the commands its job actually needs.
+- **`run` started without `opencode`, and outside a git work tree.** The
+  first was reported as a failed agent that blocked the first task; the
+  second silently switched off the `files:` scope check. Both are now
+  refused before the lock is taken, the second unless `--allow-extra-files`
+  is passed.
+
+### Added
+
+- `oc-harness run --review`: after verify passes, ask the reviewer lane for
+  a schema'd verdict, `oc-harness/review@1`. A fail, prose, a malformed
+  object or a crashed reviewer stops the run with exit 5 and marks the task
+  blocked. The verdict is kept at `.space/review/<round>-<slug>.json`; the
+  contract is in `docs/REVIEW-VERDICT.md`.
+- `.space/run.lock`: one writer per task file. A lock whose pid is gone is
+  cleared; a live one is not. `--force-unlock` breaks one explicitly.
+- `run --allow-extra-files`: documented escape hatch for the scope check.
+
+### Changed
+
+- The README and `docs/EXIT-CODES.md` describe `run` as build + verify, not
+  plan → build → review → finish. It never planned, committed or pushed.
+- Exit code 5 is now used, and documented.
+
+---
+
 ## [0.6.4] — 2026-10-23
 
 Fixed, each one found by re-reading what 0.6.3 published, not by running

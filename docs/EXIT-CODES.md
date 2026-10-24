@@ -18,7 +18,7 @@ passes.
 |---|---|
 | 0 | Every task is done. |
 | 1 | There is no task file. The loop needs a plan to walk. |
-| 2 | Stopped early and a person is needed: a task is blocked, a task has no verify command, a task file with no tasks in it, the agent changed files the task did not name, another run holds the lock, the round cap was reached, or the time budget ran out. |
+| 2 | Stopped early and a person is needed: a task is blocked, a task has no verify command or one that cannot fail (`true`, `echo ok`), a task file with no tasks in it, the agent changed files the task did not name, another run holds the lock, the round cap was reached, or the time budget ran out. |
 | 3 | The agent itself failed. The reason is the agent's own last words, and the task is marked blocked with them. |
 | 4 | The verify command failed. The task is marked blocked and the real output is in `.space/tasks.md` - not in the exit code, which is no place for a stack trace. |
 | 5 | The review did not pass: the reviewer failed, returned prose instead of a schema'd verdict, or returned `fail`. The task is marked blocked with the blockers and the verdict file is in `.space/review/`. |
@@ -29,7 +29,12 @@ bug, and the reason is printed. Codes 3, 4 and 5 mean the work did not land.
 A task's `files:` line is a scope, not a hint. When the agent changes a file
 the line does not name, the loop marks the task blocked and stops rather than
 letting the next task build on an unplanned edit. `--allow-extra-files` is
-the deliberate way to say the task may go wider.
+the deliberate way to say the task may go wider; it is also the only way to
+run outside a git work tree, where the check has nothing to read.
+
+A live lock is not cleared automatically. `--force-unlock` breaks one
+explicitly, for the case where the recorded pid now belongs to an unrelated
+process. Do not use it to start a second run alongside a real one.
 
 ## `oc-harness doctor`
 

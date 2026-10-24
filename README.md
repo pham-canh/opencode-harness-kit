@@ -1059,8 +1059,12 @@ whole loop. It hands one task at a time to an agent, re-runs that task's own
 `verify:` command, and writes the real output back into `.space/tasks.md`. It
 does not plan, commit or push: those stay with `space-plan`, `space-finish`
 and the human. A task with no `verify:` is refused rather than assumed done,
-and a task that edits files outside its `files:` line stops the run unless
-`--allow-extra-files` says otherwise.
+and so is one whose whole verify line is a command that cannot fail (`true`,
+`echo ok`). A task that edits files outside its `files:` line stops the run
+unless `--allow-extra-files` says otherwise. Because that check reads
+`git status`, `run` itself needs a work tree; outside one it refuses to start
+rather than run unfenced. `--force-unlock` clears a lock held by a live pid
+that has been reused by something else.
 
 `--review` closes the review gap without pretending a sentence is a verdict:
 after verify passes, the `reviewer` lane is asked for one JSON object matching
