@@ -1040,6 +1040,14 @@ failed after the cap says "the agent used its whole 120-step allowance" instead
 of looking like an ordinary failure. The number quoted is the one in the
 installed config for the role being run.
 
+A spent model route is the other way a run looks like a failure and is not
+one. It shows up as an empty transcript - some providers exit 0 with it, others
+hang until the ceiling kills them. In the first shape `run` stops with exit 3
+and "the agent answered nothing" rather than verifying an untouched tree; in
+the second it names the route and the limit it waited out. Either way the
+advice is `opencode run --print-logs -m <model> hi`, and a smaller `--budget`
+fails sooner.
+
 ## The skill loop
 
 The lanes above are the *who*. The skills are the *order*, and they load by

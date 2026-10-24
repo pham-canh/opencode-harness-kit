@@ -121,6 +121,29 @@ test("a failing verify stops the loop and blocks the task", () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test("an agent killed by the ceiling says the route did not answer, not that the edit failed", () => {
+  const dir = scratch(oneTask())
+  const r = runLoop({
+    cwd: dir,
+    budgetMinutes: 1,
+    runAgent: () => ({
+      ok: false,
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: "spawnSync opencode ETIMEDOUT",
+    }),
+    runVerify: () => ({ ok: true, status: 0, output: "", seconds: 0 }),
+  })
+  assert.equal(r.code, 3)
+  assert.match(r.reason, /timed out/)
+  assert.match(r.reason, /spent or unreachable model route/)
+  assert.match(r.reason, /print-logs/)
+  const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+  assert.match(after.tasks[0].output, /did not answer within/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test("an agent that exits 0 with no output is a dead route, not a failed change", () => {
   const dir = scratch(oneTask())
   let verifyCalls = 0

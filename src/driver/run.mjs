@@ -833,19 +833,36 @@ export function runLoop({
     // blame the agent for someone else's changes.
     const beforeAgent = allowExtraFiles ? null : gitChanges(cwd)
 
+    const agentTimeoutMs = remaining()
     const agent = runAgent(role, buildPrompt(task), {
       cwd,
-      timeoutMs: remaining(),
+      timeoutMs: agentTimeoutMs,
     })
     if (!agent.ok) {
       const why = agent.error || agent.output || `exit ${agent.status}`
+      // A route that never answers is a timeout, not a failed edit: it hangs
+      // until the ceiling kills it. The ceiling is the budget, so at the
+      // default that is two hours spent on one task with nothing to show for
+      // it, and the stop message is the only place that says why.
+      const timedOut = /ETIMEDOUT|timed out/i.test(String(agent.error ?? ""))
+      const limit =
+        agentTimeoutMs >= 60_000
+          ? `${Math.round(agentTimeoutMs / 60_000)} min`
+          : `${Math.round(agentTimeoutMs / 1000)}s`
+      const capNote = timedOut
+        ? `The agent did not answer within the ${limit} the budget allowed. ` +
+          `That is what a spent or unreachable model route looks like: check it with \`opencode run --print-logs -m <model> hi\`, ` +
+          `and lower --budget if you would rather fail sooner.`
+        : ""
       const wrote = writeBack(task, {
         status: "blocked",
-        verifyOutput: `blocked by the loop: the ${role} agent failed.\n${tail(why)}`,
+        verifyOutput: `blocked by the loop: the ${role} agent failed.\n${tail(why)}${capNote ? `\n\n${capNote}` : ""}`,
       })
       if (!wrote) return changedUnderneath(task)
       return stop(log, {
-        reason: `the ${role} agent failed on "${task.title}": ${tail(why, 3).split("\n")[0]}`,
+        reason: timedOut
+          ? `the ${role} agent timed out on "${task.title}". ${capNote}`
+          : `the ${role} agent failed on "${task.title}": ${tail(why, 3).split("\n")[0]}`,
         code: 3,
         rounds,
       })

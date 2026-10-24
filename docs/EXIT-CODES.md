@@ -19,7 +19,7 @@ passes.
 | 0 | Every task is done. |
 | 1 | There is no task file. The loop needs a plan to walk. |
 | 2 | Stopped early and a person is needed: a task is blocked, a task has no verify command or one that cannot fail (`true`, `echo ok`), a task file with no tasks in it, the agent changed files the task did not name, another run holds the lock, the round cap was reached, or the time budget ran out. |
-| 3 | The agent itself failed. The reason is the agent's own last words, and the task is marked blocked with them. |
+| 3 | The agent itself failed. The reason is the agent's own last words, and the task is marked blocked with them. This includes the agent exiting 0 with an empty transcript: that is a spent or unreachable model route, not a change worth verifying, so no verify runs. |
 | 4 | The verify command failed. The task is marked blocked and the real output is in `.space/tasks.md` - not in the exit code, which is no place for a stack trace. |
 | 5 | The review did not pass: the reviewer failed, returned prose instead of a schema'd verdict, or returned `fail`. The task is marked blocked with the blockers and the verdict file is in `.space/review/`. |
 

@@ -48,6 +48,16 @@ and the read-only lanes no longer have a write-capable shell.
   counts `step_finish` events in the transcript and, when the count reaches
   the role's configured cap, says so in the stop message and in the task's
   recorded output, with the setting to raise.
+- **An agent that answered nothing was reported as a failed change.** A spent
+  model route shows up in one of two shapes. Some providers exit 0 with an
+  empty stdout and the reason on stderr: the loop then ran the verify against
+  an untouched tree and blocked the task for work the model never attempted.
+  Others hang until the ceiling kills them, which at the default budget is two
+  hours spent on one task with nothing to show for it.
+  `run` now stops with exit 3 when stdout is empty without running the verify,
+  and a timeout names the route and the limit instead of saying the agent
+  "failed". The task is marked blocked either way, with the stderr and the
+  advice in its output.
 - **`run` started without `opencode`, and outside a git work tree.** The
   first was reported as a failed agent that blocked the first task; the
   second silently switched off the `files:` scope check. Both are now
