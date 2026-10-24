@@ -69,6 +69,11 @@ and the read-only lanes no longer have a write-capable shell.
   plain command in a fresh copy of the subject, so an Aider or SWE-agent
   number is comparable with the kit's own. A command that is not installed is
   reported as unusable, not as a 0% pass rate.
+- `eval/ab.mjs --fail-fast <n>` (default 2): stop when `n` runs in a row produce
+  no tool call and no text. A spent free route hangs and times out rather than
+  failing, which looked like a benchmark that "stopped after a few minutes"
+  when it was really waiting out one dead run at a time. The raw streams are
+  kept for `--rescore`.
 
 ### Changed
 

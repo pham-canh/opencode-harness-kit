@@ -1203,6 +1203,12 @@ node eval/ab.mjs --target <printed path> --suite eval/tasks.json --reps 2 --sani
 node eval/ab.mjs --rescore <saved stream dir>   # re-grade without spawning agents
 ```
 
+`--fail-fast <n>` (default 2) stops the suite when `n` runs in a row produce
+no tool call and no text. That is what a spent free route looks like: the run
+hangs until the per-run ceiling and is recorded as a timeout, so without this
+a 36-run suite spends hours measuring the provider's quota. The raw streams
+are kept either way, so `--rescore <dir>` can still grade them later.
+
 `eval/ab.mjs` knows how to read opencode's event stream, so it can only compare
 the kit with opencode. `eval/compare.mjs` grades any CLI the same way: it runs
 the command in a fresh copy of the subject, treats stdout as the answer, and

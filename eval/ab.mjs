@@ -93,16 +93,31 @@ const agent = flag("--agent")
 // spawnSync.
 let runTimeoutMs
 try {
-  const minutes = numberFlag("--timeout") ?? 600
-  if (minutes <= 0) throw new Error("--timeout must be more than 0, or the ceiling is removed")
-  runTimeoutMs = minutes * 1000
+  const seconds = numberFlag("--timeout") ?? 600
+  if (seconds <= 0) throw new Error("--timeout must be more than 0, or the ceiling is removed")
+  runTimeoutMs = seconds * 1000
+} catch (err) {
+  console.error(String(errorMessage(err)))
+  process.exit(1)
+}
+
+// A spent free route does not fail: it hangs, then the per-run ceiling kills
+// it, and the run is recorded as a timeout with no tool calls and no text.
+// At 600s a dead route costs ten minutes per attempt, and a 36-run suite
+// spends six hours measuring the provider's quota rather than the kit.
+//
+// Two in a row is not a slow task, it is a route that is not answering. Stop
+// and say so, with the raw streams kept so `--rescore` can run later.
+let failFast
+try {
+  failFast = countFlag("--fail-fast") ?? 2
 } catch (err) {
   console.error(String(errorMessage(err)))
   process.exit(1)
 }
 
 if (!target || (!task && !suitePath)) {
-  console.error('usage: node eval/ab.mjs --target <dir> (--task "<prompt>" | --suite <file>) [--reps 3] [--expect token]... [--timeout 600]')
+  console.error('usage: node eval/ab.mjs --target <dir> (--task "<prompt>" | --suite <file>) [--reps 3] [--expect token]... [--timeout 600] [--fail-fast 2]')
   process.exit(1)
 }
 if (!existsSync(target)) {
@@ -570,13 +585,16 @@ const before = fingerprint(target)
 console.log(`A/B: ${jobs.length} task(s) x ${reps} rep(s) per arm${rescoreDir ? ", rescored" : ", alternating"}`)
 console.log(`  target  ${target}`)
 for (const j of jobs) console.log(`  task    ${j.id}`)
-console.log(`  timeout ${runTimeoutMs / 1000}s per run`)
+console.log(`  timeout ${runTimeoutMs / 1000}s per run, giving up after ${failFast} empty run(s)`)
 console.log(`  model   ${armModel ?? "(opencode's default - NOT pinned)"}`)
 if (nokit) console.log(`  kit-off home ${nokit}`)
 console.log("")
 
 const runs = []
 const keptCopies = []
+// Consecutive runs that produced neither a tool call nor a word. See
+// --fail-fast above: this is the shape of a spent route, not of a slow task.
+let deadStreak = 0
 if (rescoreDir) {
   const byId = new Map(jobs.map((j) => [j.id, j]))
   for (const f of readdirSync(rescoreDir).filter((x) => x.endsWith(".json")).sort()) {
@@ -622,6 +640,23 @@ if (rescoreDir) {
       const r = runArmCapture(arm, nokit, job.id, i, outDir, job.task, runDir)
       const runReal = realpathSync(runDir)
       const m = parseStream(r.out, runReal)
+      if (m.steps === 0 && m.text.trim() === "") {
+        deadStreak++
+        if (deadStreak >= failFast) {
+          console.log("")
+          console.error(`FAIL: the model route is not answering.`)
+          console.error(`  ${deadStreak} runs in a row produced no tool calls and no text,`)
+          console.error(`  most recently ${job.id} ${arm}-${i} on ${armModel ?? "opencode's default model"}.`)
+          console.error(`  A spent free route looks exactly like this; the provider's reason is only`)
+          console.error(`  printed by \`opencode run --print-logs\`. Nothing was measured, so this`)
+          console.error(`  stops instead of timing out one run at a time.`)
+          console.error(`  raw streams kept: ${outDir}`)
+          console.error(`  rescore them later: node eval/ab.mjs --rescore ${outDir}, with the same --suite or --task`)
+          process.exit(2)
+        }
+      } else {
+        deadStreak = 0
+      }
       // Grade against the repository, not against a string I typed. The
       // substring grader produced three wrong numbers in RESULTS.md; this
       // resolves every citation the agent made and reads the real line.
