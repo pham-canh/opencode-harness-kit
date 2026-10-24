@@ -526,17 +526,46 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs }) {
       env: { ...process.env, PWD: cwd },
     },
   )
+  const stdout = res.stdout ?? ""
   return {
     ok: res.status === 0,
     status: res.status,
     // stdout is kept apart from stderr because `--format json` is a protocol.
     // A progress line on stderr is not a verdict, and merging the two streams
     // would make it look like one.
-    stdout: res.stdout ?? "",
+    stdout,
     stderr: res.stderr ?? "",
-    output: `${res.stdout ?? ""}${res.stderr ?? ""}`.trimEnd(),
+    output: `${stdout}${res.stderr ?? ""}`.trimEnd(),
     error: res.error ? String(res.error.message) : "",
+    steps: countSteps(stdout),
   }
+}
+
+/**
+ * How many model turns the transcript holds.
+ *
+ * `opencode run --format json` writes one JSON object per line; `step_finish`
+ * marks the end of a turn. The count is what tells a failed verify apart from
+ * a lane that spent its whole allowance and was forced to answer in text.
+ *
+ * A line that is not JSON is skipped rather than fatal: a wrapper that prints
+ * a banner on stdout must not make the count throw.
+ *
+ * @param {string} stdout
+ * @returns {number}
+ */
+export function countSteps(stdout) {
+  let steps = 0
+  for (const line of String(stdout ?? "").split("\n")) {
+    const text = line.trim()
+    if (!text) continue
+    try {
+      if (JSON.parse(text)?.type === "step_finish") steps++
+    } catch {
+      // Not an event line.
+    }
+  }
+  return steps
 }
 
 /** The agent's own instructions for one task, plus what the loop expects back. */
@@ -613,6 +642,8 @@ export function runLoop({
   budgetMinutes = 120,
   allowExtraFiles = false,
   forceUnlock = false,
+  /** The role's configured step cap, or 0 when it is unknown. */
+  stepCap = 0,
   review = false,
   runAgent = invokeAgent,
   runReviewer = invokeAgent,
@@ -849,13 +880,22 @@ export function runLoop({
     log.push({ round: rounds, task: task.title, ok: check.ok, seconds: check.seconds })
 
     if (!check.ok) {
+      // A lane at its step cap is forced into a text-only answer. opencode
+      // exits 0, so without this the run reports a plain verify failure and
+      // the actual cause - a cap nobody looked at - stays in the log.
+      const capped = stepCap > 0 && (agent.steps ?? 0) >= stepCap
+      const capNote = capped
+        ? `the agent used its whole ${stepCap}-step allowance before the check ran. Raise agent.${role}.steps, or split the task.`
+        : ""
       const wrote = writeBack(task, {
         status: "blocked",
-        verifyOutput: `verify failed (exit ${check.status}, ${check.seconds}s)\n${tail(check.output)}`,
+        verifyOutput: `verify failed (exit ${check.status}, ${check.seconds}s)\n${tail(check.output)}${capNote ? `\n\n${capNote}` : ""}`,
       })
       if (!wrote) return changedUnderneath(task)
       return stop(log, {
-        reason: `verify failed on "${task.title}". Marked blocked -- the real output is in ${TASKS_PATH}.`,
+        reason:
+          `verify failed on "${task.title}". Marked blocked -- the real output is in ${TASKS_PATH}.` +
+          (capNote ? `\n  ${capNote}` : ""),
         code: 4,
         rounds,
       })

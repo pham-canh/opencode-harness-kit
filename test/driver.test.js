@@ -22,6 +22,7 @@ import {
   verdictPath,
   REVIEW_SCHEMA,
   findTask,
+  countSteps,
 } from "../src/driver/run.mjs"
 import { parseTasks, isVacuousVerify } from "../src/tasks.js"
 import { mkdtemp } from "./helpers.mjs"
@@ -118,6 +119,49 @@ test("a failing verify stops the loop and blocks the task", () => {
   assert.equal(after.tasks[0].verify, "check-a", "the command is not corrupted")
   assert.ok(after.tasks[0].output.includes("# fail 1"), after.tasks[0].output)
   rmSync(dir, { recursive: true, force: true })
+})
+
+test("a verify that failed after the step cap says so, instead of hiding the cap", () => {
+  const dir = scratch(oneTask())
+  const r = runLoop({
+    cwd: dir,
+    stepCap: 40,
+    // opencode exits 0 at the cap: the agent answers in text and stops.
+    runAgent: () => ({ ok: true, status: 0, output: "I ran out of room to finish.", steps: 40 }),
+    runVerify: () => ({ ok: false, status: 1, output: "half the change is missing", seconds: 2 }),
+  })
+  assert.equal(r.code, 4)
+  assert.match(r.reason, /whole 40-step allowance/)
+  assert.match(r.reason, /agent\.build\.steps/)
+  const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+  assert.match(after.tasks[0].output, /whole 40-step allowance/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a verify failure below the cap is not blamed on it", () => {
+  const dir = scratch(oneTask())
+  const r = runLoop({
+    cwd: dir,
+    stepCap: 40,
+    runAgent: () => ({ ok: true, status: 0, output: "", steps: 12 }),
+    runVerify: () => ({ ok: false, status: 1, output: "broken", seconds: 1 }),
+  })
+  assert.equal(r.code, 4)
+  assert.doesNotMatch(r.reason, /step allowance/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("countSteps counts step_finish lines and ignores anything else on stdout", () => {
+  const stream = [
+    '{"type":"step_start","part":{}}',
+    '{"type":"step_finish","part":{"tokens":{}}}',
+    "a banner a wrapper printed",
+    "",
+    '{"type":"step_finish","part":{"tokens":{}}}',
+    "{not json",
+  ].join("\n")
+  assert.equal(countSteps(stream), 2)
+  assert.equal(countSteps(""), 0)
 })
 
 test("the agent's claim is not trusted: verify is re-run by the loop", () => {

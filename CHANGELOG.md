@@ -42,6 +42,12 @@ and the read-only lanes no longer have a write-capable shell.
   read-only lanes could write through `sed -i`, `awk` or `python3 -c`
   regardless of their `edit: "deny"`. `doc` now defaults to deny and `verify`
   defaults to ask, each with the commands its job actually needs.
+- **A run that hit the lane's step cap reported only "verify failed".** At the
+  cap OpenCode exits 0 with a text-only answer, so the loop saw a failed
+  check and blamed the change, while the log held the real reason. `run` now
+  counts `step_finish` events in the transcript and, when the count reaches
+  the role's configured cap, says so in the stop message and in the task's
+  recorded output, with the setting to raise.
 - **`run` started without `opencode`, and outside a git work tree.** The
   first was reported as a failed agent that blocked the first task; the
   second silently switched off the `files:` scope check. Both are now

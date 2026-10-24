@@ -1034,6 +1034,12 @@ except the lanes it may hand work to. That is the mechanism behind "hand the
 job to the lane that has it": a lane that is not allowed to spawn anything
 cannot quietly become a general-purpose agent on the most expensive tier.
 
+Reaching the cap is not an error OpenCode reports: it exits 0 with a text-only
+answer. `oc-harness run` counts the turns in the transcript, so a verify that
+failed after the cap says "the agent used its whole 120-step allowance" instead
+of looking like an ordinary failure. The number quoted is the one in the
+installed config for the role being run.
+
 ## The skill loop
 
 The lanes above are the *who*. The skills are the *order*, and they load by

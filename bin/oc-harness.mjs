@@ -3571,6 +3571,20 @@ async function cmdRun() {
     }
   }
 
+  // A lane's step cap is the other way an agent stops mid-task. When it is
+  // reached opencode exits 0 with a text-only answer, so the loop sees a
+  // failed verify and has no idea why. Reading the cap here lets the stop say
+  // "it ran out of steps" instead of leaving that to the log.
+  let stepCap = 0
+  try {
+    const cfg = existsSync(CONFIG_FILE) ? parseJsonc(readFileSync(CONFIG_FILE, "utf8")) : null
+    const configured = cfg?.agent?.[role]?.steps
+    if (Number.isInteger(configured) && configured > 0) stepCap = configured
+  } catch {
+    // An unreadable config is opencode's failure to report, and it will. A
+    // label on a stop is not worth turning into a second reason to fail.
+  }
+
   const result = runLoop({
     cwd: process.cwd(),
     role,
@@ -3579,6 +3593,7 @@ async function cmdRun() {
     allowExtraFiles,
     forceUnlock: flag("--force-unlock"),
     review: flag("--review"),
+    stepCap,
   })
 
   const s = result.summary
