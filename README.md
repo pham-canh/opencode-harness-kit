@@ -578,7 +578,7 @@ oc-harness uninstall remove the plugin, prompts, skills and GLOBAL.md again
 oc-harness cost      what the kit is doing on this project, in numbers
 oc-harness restore <file>  put one back
 oc-harness baseline   measure the current install
-oc-harness run        drive .space/tasks.md to done with the build agent
+oc-harness run        build and verify .space/tasks.md, one task at a time
 ```
 
 The measurement scripts are in `eval/`, and each one says what it measures
@@ -1053,6 +1053,21 @@ the conversation instead of the requirement.
 
 Publishing is never a loop step. `space-finish` prepares the change; a human
 decides it ships.
+
+`oc-harness run` automates the build-and-verify half of that loop, not the
+whole loop. It hands one task at a time to an agent, re-runs that task's own
+`verify:` command, and writes the real output back into `.space/tasks.md`. It
+does not plan, commit or push: those stay with `space-plan`, `space-finish`
+and the human. A task with no `verify:` is refused rather than assumed done,
+and a task that edits files outside its `files:` line stops the run unless
+`--allow-extra-files` says otherwise.
+
+`--review` closes the review gap without pretending a sentence is a verdict:
+after verify passes, the `reviewer` lane is asked for one JSON object matching
+[`docs/REVIEW-VERDICT.md`](docs/REVIEW-VERDICT.md). A pass marks the task done.
+A fail, a malformed reply or a crashed reviewer marks it blocked and stops the
+run with exit 5. The validated verdict is written to `.space/review/`, so the
+decision can be audited after the fact.
 
 ## What it costs, measured
 
