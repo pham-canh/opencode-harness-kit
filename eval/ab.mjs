@@ -23,7 +23,7 @@
 // spawning a single agent. The grader has been wrong five times in this repo and
 // every fix so far would otherwise have cost another twenty runs.
 
-import { spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, cpSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { homedir, tmpdir } from "node:os"
@@ -87,10 +87,9 @@ const agent = flag("--agent")
 // One pathological run burned 4.4 minutes once. Without a ceiling a single bad
 // arm can hold the whole suite open indefinitely.
 //
-// A timeout of zero would REMOVE the ceiling - node only applies a timeout
-// when it is above zero - which is the opposite of what the flag says. And a
-// non-numeric one was NaN, which node rejects with a RangeError out of
-// spawnSync.
+// A timeout of zero would REMOVE the ceiling - a zero-delay timer fires at
+// once - which is the opposite of what the flag says. And a non-numeric one
+// was NaN, which a setTimeout treats as zero and kills every run instantly.
 let runTimeoutMs
 try {
   const seconds = numberFlag("--timeout") ?? 600
@@ -114,6 +113,27 @@ try {
 } catch (err) {
   console.error(String(errorMessage(err)))
   process.exit(1)
+}
+
+// The free tier does not always fail the process. `opencode run --format json`
+// prints an error event on stdout, then keeps retrying or exits 0 - and the
+// A/B treated that as an empty answer, kept going, and spent the suite
+// measuring the provider. The same text can appear on stderr. Either one is
+// the provider refusing the run, so the suite stops on the first one.
+const QUOTA_RE = /Free usage limit reached|FreeUsageLimitError|HTTP 429|"statusCode"\s*:\s*429/i
+
+/**
+ * The provider's own words when a run was refused for quota, or null.
+ *
+ * @param {string} stdout
+ * @param {string} stderr
+ * @returns {string | null}
+ */
+function quotaReason(stdout, stderr) {
+  const text = `${stdout}\n${stderr}`
+  if (!QUOTA_RE.test(text)) return null
+  const line = text.split("\n").find((l) => QUOTA_RE.test(l)) ?? ""
+  return line.trim().slice(0, 240)
 }
 
 if (!target || (!task && !suitePath)) {
@@ -424,6 +444,13 @@ function liveModel() {
 // The comparison this file exists to make is "the same model, with the kit
 // and without it". The model is now pinned to make that literally true, and
 // the report prints it so a reader can check.
+//
+// The SMALL model is pinned too. `model` only covers the main loop; the title
+// agent runs on `small_model`, and an empty config leaves that at opencode's
+// default - which is a PAID model. A real A/B run made 1,073 title calls to
+// `gpt-5.4-nano` and every one came back "Insufficient account funds". It did
+// not consume the free window, but on a funded account it would have spent
+// money on titles for a benchmark that is supposed to be free.
 function makeNokitHome(model) {
   const home = mkdtempSync(join(tmpdir(), "opencode-ab-"))
   mkdirSync(join(home, ".config/opencode"), { recursive: true })
@@ -433,7 +460,10 @@ function makeNokitHome(model) {
   // not exist" off for exactly that case.
   /** @type {Record<string, string>} */
   const config = { $schema: "https://opencode.ai/config.json" }
-  if (model) config.model = model
+  if (model) {
+    config.model = model
+    config.small_model = model
+  }
   writeFileSync(join(home, ".config/opencode/opencode.json"), JSON.stringify(config, null, 2))
   const link = join(home, ".local/share/opencode")
   try {
@@ -526,51 +556,127 @@ function parseStream(file, root = TARGET_REAL) {
   }
 }
 
-function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
-  const out = join(outDir, `${id}-${arm}-${idx}.json`)
-  const env = { ...process.env }
-  if (arm === "off") {
-    env.HOME = home
-    // The kit-free home is only kit-free if the config is not found
-    // somewhere else. `OPENCODE_CONFIG_DIR` is what opencode looks at
-    // FIRST, so with it set the "off" arm loaded the kit's own config, used
-    // its rules, and used its model - and the arm was not an off arm at all.
-    delete env.OPENCODE_CONFIG_DIR
+// The child that is running right now, if any. Needed because `spawn` is
+// async: the event loop stays free, so a Ctrl-C reaches this file instead of
+// being eaten by a blocked spawnSync. The old code could not react to one -
+// the parent died, the agent was reparented to systemd and kept running
+// against the real auth store. One such run survived 2h54m.
+/** @type {import("node:child_process").ChildProcess | null} */
+let activeChild = null
+
+function killActiveChild() {
+  const child = activeChild
+  if (!child || child.killed) return
+  // The child is its own process-group leader (detached), so a negative pid
+  // reaches the helpers `opencode` starts. A plain child.kill() left those
+  // running after the parent was gone.
+  try {
+    process.kill(-child.pid, "SIGKILL")
+  } catch {
+    try {
+      child.kill("SIGKILL")
+    } catch {}
   }
-  const t0 = Date.now()
-  // --dir is not optional. Nested inside an opencode session, `opencode run`
-  // otherwise inherits the *parent* session's project directory and reads the
-  // wrong repository entirely - which it did on the first pilot.
-  // The LANE, when the suite wants one. The kit-off arm has no kit and
-  // therefore no lanes, so the flag is only for the arm that has them - which
-  // is the point: the lane is part of the kit, and measuring it means
-  // measuring the kit.
-  const argv = ["run", "--dir", runDir, "--format", "json"]
-  if (arm === "on" && agent) argv.push("--agent", agent)
-  argv.push(prompt)
-  const res = spawnSync("opencode", argv, {
-    cwd: runDir, env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024,
-    timeout: runTimeoutMs, killSignal: "SIGKILL",
+}
+
+for (const [sig, code] of /** @type {const} */ ([["SIGINT", 130], ["SIGTERM", 143]])) {
+  process.on(sig, () => {
+    killActiveChild()
+    process.exit(code)
   })
-  const stdout = res.stdout ?? ""
-  writeFileSync(out, stdout)
-  // Whether the run was killed by the ceiling.
-  //
-  // The old check was `stdout === null`, and `spawnSync` NEVER returns null
-  // for stdout - it returns the partial output and reports the kill through
-  // `error` and `signal`. So the timeout branch could never fire, every run
-  // scored as a success, and a run that hung until the ceiling was counted in
-  // the correctness ratio and in every median.
-  const timedOut =
-    /** @type {any} */ (res.error)?.code === "ETIMEDOUT" ||
-    res.signal === "SIGKILL" ||
-    (res.status === null && Date.now() - t0 >= runTimeoutMs)
-  return {
-    out,
-    code: res.status === 0 ? 0 : 1,
-    timedOut,
-    wall: elapsedSeconds(t0, Date.now()),
-  }
+}
+
+/**
+ * Run one arm and capture its stream.
+ *
+ * Async on purpose. The timeout is a timer that kills the process GROUP; the
+ * signal handlers above kill the same group on Ctrl-C. Neither is possible
+ * with spawnSync, which blocks the event loop for the whole run.
+ *
+ * @param {"on" | "off"} arm
+ * @param {string | null} home
+ * @param {string} id
+ * @param {number} idx
+ * @param {string} outDir
+ * @param {string} prompt
+ * @param {string} runDir
+ */
+function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
+  return new Promise((resolve) => {
+    const out = join(outDir, `${id}-${arm}-${idx}.json`)
+    const env = { ...process.env }
+    if (arm === "off" && home) {
+      env.HOME = home
+      // The kit-free home is only kit-free if the config is not found
+      // somewhere else. `OPENCODE_CONFIG_DIR` is what opencode looks at
+      // FIRST, so with it set the "off" arm loaded the kit's own config, used
+      // its rules, and used its model - and the arm was not an off arm at all.
+      delete env.OPENCODE_CONFIG_DIR
+    }
+    const t0 = Date.now()
+    // --dir is not optional. Nested inside an opencode session, `opencode run`
+    // otherwise inherits the *parent* session's project directory and reads the
+    // wrong repository entirely - which it did on the first pilot.
+    // The LANE, when the suite wants one. The kit-off arm has no kit and
+    // therefore no lanes, so the flag is only for the arm that has them - which
+    // is the point: the lane is part of the kit, and measuring it means
+    // measuring the kit.
+    const argv = ["run", "--dir", runDir, "--format", "json"]
+    if (arm === "on" && agent) argv.push("--agent", agent)
+    argv.push(prompt)
+    const child = spawn("opencode", argv, {
+      cwd: runDir,
+      env,
+      // A process-group leader, so the timeout and the signal handlers can
+      // take the agent's helpers with it.
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    activeChild = child
+    let stdout = ""
+    let stderr = ""
+    let timedOut = false
+    let settled = false
+    /** @type {NodeJS.Timeout | undefined} */
+    let timer
+
+    const finish = (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (activeChild === child) activeChild = null
+      // The stream is the evidence --rescore needs later, so it is written
+      // even when the run was killed or refused.
+      writeFileSync(out, stdout)
+      resolve({
+        out,
+        code: code === 0 ? 0 : 1,
+        timedOut,
+        wall: elapsedSeconds(t0, Date.now()),
+        stderr,
+        quota: quotaReason(stdout, stderr),
+      })
+    }
+
+    child.stdout?.setEncoding("utf8")
+    child.stdout?.on("data", (d) => {
+      stdout += d
+    })
+    child.stderr?.setEncoding("utf8")
+    child.stderr?.on("data", (d) => {
+      stderr += d
+    })
+    child.on("error", (err) => {
+      stderr += `\n${errorMessage(err)}`
+      finish(null)
+    })
+    child.on("close", (code) => finish(code))
+
+    timer = setTimeout(() => {
+      timedOut = true
+      killActiveChild()
+    }, runTimeoutMs)
+  })
 }
 
 const armModel = liveModel()
@@ -629,7 +735,7 @@ if (rescoreDir) {
   console.log("")
 } else for (const job of jobs) {
   for (let i = 1; i <= reps; i++) {
-    for (const arm of ["on", "off"]) {
+    for (const arm of /** @type {const} */ (["on", "off"])) {
       // Every run gets its own throwaway copy of the subject. A read-only task
       // does not need one, but sharing a tree between an editing task and
       // anything else is how a run inherits the previous run's work.
@@ -637,7 +743,20 @@ if (rescoreDir) {
       cpSync(target, runDir, { recursive: true })
       if (sanitize && leaks.length) sanitizeCopy(runDir)
       process.stdout.write(`  ${job.id} ${arm}-${i} ... `)
-      const r = runArmCapture(arm, nokit, job.id, i, outDir, job.task, runDir)
+      const r = await runArmCapture(arm, nokit, job.id, i, outDir, job.task, runDir)
+      // The provider refusing the run is not a result. It used to look like
+      // one: the error event was on stdout, the A/B read it as an empty
+      // stream, and --fail-fast needed two of them before stopping. One is
+      // enough to know the window is closed.
+      if (r.quota) {
+        console.log("")
+        console.error("FAIL: the model route is out of quota, so this measured the provider, not the kit.")
+        console.error(`  ${r.quota}`)
+        console.error("  The free tier is shared: a long chat session and this suite draw on the same window.")
+        console.error("  Nothing after this run was measured. Wait for the window to roll, or use a paid route.")
+        console.error(`  raw stream kept: ${r.out}`)
+        process.exit(2)
+      }
       const runReal = realpathSync(runDir)
       const m = parseStream(r.out, runReal)
       if (m.steps === 0 && m.text.trim() === "") {

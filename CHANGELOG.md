@@ -58,6 +58,21 @@ and the read-only lanes no longer have a write-capable shell.
   and a timeout names the route and the limit instead of saying the agent
   "failed". The task is marked blocked either way, with the stderr and the
   advice in its output.
+- **The A/B ground through a quota error as if it were an answer.** The free
+  tier can print `{"type":"error"}` with "Free usage limit reached" on stdout
+  and exit 0; the suite read that as an empty stream and needed `--fail-fast`
+  runs before stopping. It now stops on the first one with exit 2 and the
+  provider's own words, because the refusal measures the provider and not the
+  kit.
+- **The kit-off arm made paid title calls.** `makeNokitHome` pinned `model`
+  but not `small_model`, so the title agent used opencode's default paid
+  model. A real run made 1,073 title calls to `gpt-5.4-nano`; every one was
+  refused for insufficient funds. Both are pinned now.
+- **A killed A/B left the agent running.** `spawnSync` blocks the event loop,
+  so Ctrl-C killed the parent and the child was reparented to systemd - one
+  survived 2h54m against the real auth store. The capture uses `spawn`, a
+  process group, a timeout timer that kills the group, and `SIGINT`/`SIGTERM`
+  handlers that do the same.
 - **`run` started without `opencode`, and outside a git work tree.** The
   first was reported as a failed agent that blocked the first task; the
   second silently switched off the `files:` scope check. Both are now
