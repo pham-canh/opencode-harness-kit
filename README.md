@@ -590,6 +590,7 @@ node eval/measure-prune.mjs     the pruner, on real sessions
 node eval/measure-install.mjs   before and after the install
 node eval/models.mjs            every model the profiles use, one line each
 node eval/ab.mjs                the A/B: the same task with and without the kit
+node eval/compare.mjs           the same suite against any agent CLI, same grader
 ```
 
 Every flag accepts both spellings: `--profile fleet-safe` and
@@ -1201,6 +1202,23 @@ node eval/prepare.mjs --repo ~/work/lablab-harness --ref 8a674f5
 node eval/ab.mjs --target <printed path> --suite eval/tasks.json --reps 2 --sanitize
 node eval/ab.mjs --rescore <saved stream dir>   # re-grade without spawning agents
 ```
+
+`eval/ab.mjs` knows how to read opencode's event stream, so it can only compare
+the kit with opencode. `eval/compare.mjs` grades any CLI the same way: it runs
+the command in a fresh copy of the subject, treats stdout as the answer, and
+uses the same citation resolver and mutation comparison. That is what makes a
+number for Aider or SWE-agent comparable with the kit's own.
+
+```bash
+node eval/compare.mjs --target <prepared path> --suite eval/tasks-self.json \
+  --reps 3 --timeout 300 \
+  --arm 'aider=aider --yes --no-auto-commits --message "$PROMPT"' \
+  --arm 'swe=python -m sweagent run --problem "$PROMPT"'
+```
+
+The command runs through `sh -c` with `$PROMPT`, `$TASK_ID`, `$DIR`, `$REP` and
+`$ARM` in the environment. A command that is not on PATH stops the run with
+exit 2 instead of being reported as a 0% pass rate.
 
 `npm test` and `npm run typecheck` need nothing but the repo, so CI runs those.
 The rest read `~/.local/share/opencode/opencode.db` and `~/.config/opencode`,

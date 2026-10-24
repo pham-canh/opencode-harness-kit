@@ -63,6 +63,12 @@ and the read-only lanes no longer have a write-capable shell.
 - `.space/run.lock`: one writer per task file. A lock whose pid is gone is
   cleared; a live one is not. `--force-unlock` breaks one explicitly.
 - `run --allow-extra-files`: documented escape hatch for the scope check.
+- `eval/compare.mjs`: grade any agent CLI against the same suite with the same
+  citation resolver and mutation comparison. `eval/ab.mjs` can only compare
+  the kit with opencode, because it reads opencode's event stream; this runs a
+  plain command in a fresh copy of the subject, so an Aider or SWE-agent
+  number is comparable with the kit's own. A command that is not installed is
+  reported as unusable, not as a 0% pass rate.
 
 ### Changed
 
