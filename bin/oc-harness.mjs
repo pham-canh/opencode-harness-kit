@@ -3538,11 +3538,28 @@ async function cmdRun() {
     fail(`--role ${role} is not one of ${lanes.join(", ")}`)
   }
 
+  // `spawnSync("opencode", ...)` in the driver reports a missing binary as a
+  // failed agent, which marks the FIRST task blocked and blames the task. The
+  // install is the thing that is broken, so say that here, before any task is
+  // touched.
+  try {
+    execFileSync("opencode", ["--version"], { stdio: "ignore", timeout: 15_000 })
+  } catch (err) {
+    const code = err && typeof err === "object" && "code" in err ? err.code : undefined
+    fail(
+      code === "ENOENT"
+        ? "opencode is not on PATH. Install it first: https://opencode.ai/docs"
+        : "opencode --version failed. Fix the install before running the loop.",
+    )
+  }
+
   const result = runLoop({
     cwd: process.cwd(),
     role,
     maxRounds,
     budgetMinutes,
+    allowExtraFiles: flag("--allow-extra-files"),
+    review: flag("--review"),
   })
 
   const s = result.summary
@@ -3655,7 +3672,7 @@ try {
     cost      what the kit is doing on this project, in numbers
     restore <file>  put one back
     baseline  measure the current opencode install
-    run       drive .space/tasks.md to done with the build agent
+    run       build and verify .space/tasks.md one task at a time
 
   options
     --print        write the config to stdout instead of disk
@@ -3678,6 +3695,11 @@ try {
     --role <agent>  which agent does the work (default: build)
     --max-rounds N  stop after N tasks (default: 20)
     --budget MIN    stop after MIN minutes (default: 120)
+    --allow-extra-files  let a task change files its files: line does not
+                   name. Without this, an out-of-scope edit stops the loop.
+    --review       after verify, ask the reviewer lane for a schema'd verdict.
+                   The run stops on fail or on any malformed verdict. The
+                   verdict is written to .space/review/.
 `)
     // An unknown command is a typo, not a request for help. Without this
     // `oc-harness tsl` prints help and exits 0, so a script calling it never

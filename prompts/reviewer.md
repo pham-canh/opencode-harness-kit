@@ -38,5 +38,29 @@ Only if pass 1 is clean.
 Two sections, pass 1 then pass 2. If pass 1 blocked, pass 2 does not run and
 you say why.
 
+## Machine verdict
+
+When the request asks for a schema'd verdict (it names
+`oc-harness/review@1`), the two sections are replaced: your final message is
+exactly one JSON object and nothing else, with no code fence and no sentence
+around it.
+
+```json
+{
+  "schema": "oc-harness/review@1",
+  "verdict": "pass",
+  "blockers": [],
+  "notes": "short optional note"
+}
+```
+
+- `pass` means `blockers` is empty. `fail` means at least one blocker.
+- Each blocker is `{ "file": "path/from/repo", "line": 1, "issue": "...",
+  "consequence": "..." }`. A blocker without a line and a consequence is not
+  actionable and fails validation.
+- Anything that is not this object - prose, a fenced block, a missing field -
+  is treated as a failed review by the caller. When in doubt, `fail` with a
+  blocker that says what could not be checked.
+
 See also the `space-review` skill for the full plan -> build -> review -> finish
 loop and the shared task-file contract.
