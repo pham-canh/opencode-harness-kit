@@ -12,7 +12,7 @@ is not happening.
 
 ---
 
-## [Unreleased]
+## [0.7.0] — 2026-10-25
 
 `oc-harness run` now stops for the reasons it already claimed to stop for,
 the read-only lanes no longer have a write-capable shell, and the token budget
@@ -41,8 +41,9 @@ counts the context a request reads instead of only its uncached part.
 - **The bundled ECC subagents were loaded on every request.** Their
   descriptions came from `prompts/agents/*.txt`, were not lanes, and so were
   not covered by the stale-lane rule. They are removed from the generated
-  agent map when that is the prompt, and named in the config header;
-  hand-written agents are untouched.
+  agent map when that is the prompt, and named in the config header; a
+  hand-written agent that reuses that prompt path is removed like the
+  bundle's own, while any other prompt is left alone.
 - **The token budget undercounted a cached session five to forty times, so it
   never fired.** A `step-finish` part reports `input`, `cache.read`,
   `cache.write`, `output` and `reasoning`. The guard summed `input` alone -
@@ -83,7 +84,8 @@ counts the context a request reads instead of only its uncached part.
   runs learning that every kit-off arm had failed with
   `ProviderModelNotFoundError`, scored as "no output, not scored". It now
   reads the stream, and any error event stops the suite with exit 2 and the
-  provider's own message.
+  provider's own message. An exit 0 with zero steps and no text is the same
+  shape - a spent route - and is refused the same way.
 - **The kit-off arm could not resolve the model it was told to use.** opencode
   keeps its model catalogue in `~/.cache/opencode/models.json`, and the arm's
   temporary `HOME` had no cache, so a bare `model:` string was a model the
@@ -173,6 +175,12 @@ counts the context a request reads instead of only its uncached part.
   `.space/`. Loop state is excluded now; a real edit outside `files:` is
   still caught.
 
+- **The A/B's wall-time row read the stream, not the ceiling.** A run killed
+  at 180s has a stream that stops at 58s, so the report printed it as a 58s
+  run and the wall column favored whichever arm was killed sooner. Each
+  sidecar now records the harness's own timer, `--rescore` prefers it, and a
+  resumed sidecar without one falls back to the stream's last event.
+
 ### Added
 
 - **A per-session token budget, counted by the guard.** The free tier is one
@@ -197,17 +205,24 @@ counts the context a request reads instead of only its uncached part.
   and sums the entries inside `OC_HARNESS_BUDGET_WINDOW_MINUTES` (default 60),
   warning at `OC_HARNESS_BUDGET_WINDOW_WARN` (4M) and refusing tool calls at
   `OC_HARNESS_BUDGET_WINDOW_STOP` (8M) in every session, including one opened
-  after the window ran out. The file is written atomically, an unreadable file
-  reads as empty, and entries older than six hours are pruned.
+  after the window ran out. The file is written atomically; an unreadable file
+  is moved to `budget.json.corrupt` and the window starts empty (if the move
+  cannot be written, the call fails closed), and entries older than six hours
+  are pruned.
 - **`eval/ab.mjs --out <dir>`**: one stream and one result per run, and a
   rerun with the same `--out` skips the runs that already have a result. A
   suite stopped by the quota or by a reboot resumes instead of starting over.
+  The directory also gets `run-manifest.json` with the suite hash, target
+  fingerprint and model; a resume whose manifest differs stops with exit 2
+  instead of mixing two experiments, and a directory from before the manifest
+  existed is adopted with a warning.
 - **`eval/ab.mjs --budget <tokens>`**: cap the suite's input tokens. Checked
   before each run, so the run that crosses the cap is still measured; the next
   one stops the suite with exit 2.
 - **A preflight run in `eval/ab.mjs`** (on by default, `--no-preflight` to
   skip): one question to the model before the suite, exit 2 if it does not
-  answer, times out, or its stream carries an error event.
+  answer, times out, or its stream carries an error event. Answering is the
+  test: exit 0 with zero steps and no text stops the suite too.
 - `oc-harness run --review`: after verify passes, ask the reviewer lane for
   a schema'd verdict, `oc-harness/review@1`. A fail, prose, a malformed
   object or a crashed reviewer stops the run with exit 5 and marks the task
@@ -225,8 +240,10 @@ counts the context a request reads instead of only its uncached part.
 - `eval/ab.mjs --fail-fast <n>` (default 2): stop when `n` runs in a row produce
   no tool call and no text. A spent free route hangs and times out rather than
   failing, which looked like a benchmark that "stopped after a few minutes"
-  when it was really waiting out one dead run at a time. The raw streams are
-  kept for `--rescore`.
+  when it was really waiting out one dead run at a time. A timeout whose last
+  60 seconds (or a twentieth of the ceiling, whichever is smaller) are quiet
+  counts toward the streak too, because a spent route hangs before the
+  ceiling. The raw streams are kept for `--rescore`.
 
 ### Changed
 
@@ -2143,7 +2160,8 @@ silent in the worst way:
 
 ---
 
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.7...HEAD
+[0.7.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.6.4...v0.7.0
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.0...HEAD
 [0.5.7]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...v0.5.5

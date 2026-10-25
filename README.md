@@ -1213,7 +1213,9 @@ The ledger is `OC_HARNESS_BUDGET_FILE`, default
 
 The file is written atomically (write, then rename); an unreadable file is
 moved to `budget.json.corrupt` and the window starts empty instead of failing
-the session or locking it for six hours; entries older than six hours are
+the session or locking it for six hours. If the repair itself cannot be
+written - a read-only state directory, for example - the call fails closed
+rather than pretending the window is empty. Entries older than six hours are
 dropped on the next write. A crossed stop is written into the ledger as a
 marker, so a session opened after the one-hour sum rolls out is still refused.
 `OC_HARNESS_BUDGET_WINDOW_STICKY=0` turns that marker off. `0` disables either
@@ -1235,7 +1237,7 @@ oc-harness use fleet-safe --no-skills
 omits the skill list from the lanes' prompt and says so in the config header.
 It is off by default: removing a capability is the user's call, not the kit's.
 
-It covers the ten lanes. **Subagents are a separate surface**: the flag does not touch them. It does remove the bundled ECC subagents whose prompt is `prompts/agents/<name>.txt` from the generated agent map, because their descriptions were loaded on every request while their prompts were read only when one was delegated to. An agent you wrote, or a lane, is left alone, and the config header names every entry removed. The `skill` tool on a hand-written subagent is still your call, not the kit's.
+It covers the ten lanes. **Subagents are a separate surface**: `--no-skills` does not change a subagent's `skill` tool. It does remove every entry in the generated agent map whose prompt path is `prompts/agents/<name>.txt` - the bundled ECC subagents - because their descriptions were loaded on every request while their prompts were read only when one was delegated to. A lane, or an agent whose prompt is any other path, is left alone; a hand-written agent that reuses the `prompts/agents/` path is removed like the bundle's own. The config header names every entry removed, and the `skill` tool on a subagent left in place is still your call, not the kit's.
 
 ## Known limits
 
@@ -1304,8 +1306,16 @@ wants a subject it can hand each run a private copy of:
 ```bash
 node eval/prepare.mjs --repo ~/work/lablab-harness --ref 8a674f5
 node eval/ab.mjs --target <printed path> --suite eval/tasks.json --reps 2 --sanitize
-node eval/ab.mjs --rescore <saved stream dir>   # re-grade without spawning agents
+node eval/ab.mjs --target <printed path> --suite eval/tasks.json \
+  --rescore <saved stream dir>   # re-grade without spawning agents
+node eval/premises.mjs --target <printed path> --suite eval/tasks.json
 ```
+
+`premises` is the freshness check for a suite: it resolves every `file:line`
+citation the tasks make against the target and exits non-zero on the first one
+that no longer exists. Run it after a subject moves, before spending runs or
+trusting a rescore. Point it at this repository and `eval/tasks-self.json` to
+check the kit's own suite.
 
 `--fail-fast <n>` (default 2) stops the suite when `n` runs in a row produce
 no tool call and no text, or when `n` timeouts in a row went quiet well before

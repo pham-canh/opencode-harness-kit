@@ -342,11 +342,12 @@ paying for 219 skills that a lane with `tools.skill: false` could not open.
 
 It started 47 runs and then the account's free window ran out, which looks
 like `opencode run` hanging rather than like an error - see the preflight note
-in the README. 46 of the 47 finished and were scored; the 47th was cut off
-mid-run and is in no number below. The other 73 were never started. Three of
-the six tasks have runs at all, so this is a partial set and **not** the
-headline number. It is here because the direction is worth having and because
-the files it came from will not survive forever:
+in the README. 46 of the 47 produced a result: 40 were scored and six are
+listed as not scored. The 47th was cut off mid-run and is in no number below.
+The other 73 were never started. Three of the six tasks have runs at all, so
+this is a partial set and **not** the headline number. It is here because the
+direction is worth having and because the files it came from will not survive
+forever:
 
     node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json \
       --rescore <scratch>/ab-self-10
@@ -358,14 +359,20 @@ the files it came from will not survive forever:
 | `read-multi-denylist` | 6/6 | 10/10 |
 | `read-multi-gate` | 3/3 | 2/2 |
 | context tokens (median) | 62,990 | 49,374 |
+| wall seconds (median) | 30.6 | 29.3 |
 | not scored | 5 | 1 |
+
+`wall seconds` is the harness's own timer, not the last event in the stream:
+four of the on runs were killed at 180s and their streams stop earlier, so a
+stream-derived column made the killed arm look faster.
 
 Five runs hit the 180-second ceiling: four of them are `read-multi-denylist`
 on the kit, at 12, 12, 15 and 20 steps, so on that task the kit did not merely
-answer worse, it did not finish four times in ten. The fifth is one kit-off
-run that produced nothing. The context ratio here (1.3x) is much smaller than
-the 3-rep run's 6.4x and should not be read as a contradiction: the task mix
-is different, and the four unfinished runs are excluded from the median.
+answer worse, it did not finish four times in ten. The fifth is `read-multi-gate`
+off. A sixth run, `read-multi-gate` on, produced no output at all and is not
+scored either. The context ratio here (1.3x) is much smaller than the 3-rep
+run's 6.4x and should not be read as a contradiction: the task mix is
+different, and the unfinished runs are excluded from the median.
 
 Resuming is `--out` plus the same command; a finished run is read from its
 sidecar and not paid for again, and the sidecar's token count is re-read from
