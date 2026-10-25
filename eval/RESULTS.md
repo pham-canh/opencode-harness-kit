@@ -211,7 +211,7 @@ both ends.
 
 **On everything else, the kit is a cost.** It spends **5.3x the uncached input
 tokens** (the streams for this run are gone, so the context total cannot be
-re-derived; on the free route, where they survive, the same ratio is 6.9x) and
+re-derived; on the free route, where they survive, the same ratio is 6.4x) and
 takes **twice as long**, and it makes **more** tool calls.
 Those are the honest numbers.
 
@@ -280,10 +280,19 @@ ceiling (one on, two off) and are excluded rather than counted as wrong.
 **The token rows were re-read after the counter was fixed.** Until then the
 suite summed `tokens.input` - the part of the prompt that was not in the
 provider's cache - and the table called it "input tokens". The cost of a
-request is the whole context it reads, so the same streams report 270,448 and
-39,180: 6.9x, not 4.7x. The uncached row is kept because every table above it
-was written with that definition; the context row is the one to compare
-against the guard's budget.
+request is the whole context it reads. Re-running the same streams through the
+corrected reader puts the medians at 252,054 and 39,180 - **6.4x**, not 4.7x:
+
+    node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json \
+      --rescore <scratch>/ab-self-02
+
+The context row is over the 12 runs per arm that can still be re-scored: the
+six edit runs per arm cannot, because the per-run copy of the subject they
+edited is gone and re-grading them would grade nothing. The uncached row is
+over the 17 and 16 runs the live suite scored, because that is the number it
+printed; it is kept because every table above it was written with that
+definition. Neither row is comparable to the other's count, and both are
+comparable between the arms.
 
 | metric (median) | kit on | kit off |
 | --- | --- | --- |
@@ -291,12 +300,12 @@ against the guard's budget.
 | tool calls | 9 | 4 |
 | steps | 7 | 4 |
 | narrow reads | 60% | 83.4% |
-| context tokens | 270,448 | 39,180 |
-| uncached input | 44,444 | 9,527 |
+| context tokens (12 runs/arm) | 252,054 | 39,180 |
+| uncached input (17/16 runs) | 44,444 | 9,527 |
 | final context | 43,823 | 11,236 |
 | wall seconds | 53.8 | 18.6 |
 
-Same shape as the 10-rep run, and a little worse for the kit: 6.9x the context
+Same shape as the 10-rep run, and a little worse for the kit: 6.4x the context
 tokens, 2.9x the wall time, twice the tool calls, and the one task the kit
 lost outright was `read-control` (1/3 against 3/3) - the smallest task in the
 suite, where the kit's fixed overhead is the whole cost. Three reps per arm

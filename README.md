@@ -1335,6 +1335,17 @@ fails before it starts, the error event is now fatal on the spot:
   wrong answers. Its stream goes to a scratch directory, not `--out`, so
   `--rescore` does not warn about a file it cannot grade.
 
+  It earns that cost on the day the window is out. `opencode run` then retries
+  the refused request three times and does not exit - one probe sat at zero
+  bytes until a 50-second timeout killed it, and the error text only appears in
+  `--print-logs`. A suite started in that state would have written 120
+  results, every one of them a timeout, and called it a benchmark. The
+  preflight turns it into `exit 2` and no result files. The 10-rep run that
+  produced the numbers in `eval/RESULTS.md` hit this at 47 of 120 runs: the 47
+  are real, the other 73 were never started, and resuming with the same
+  `--out` skips the 47. The window is also account-wide, not per model - a second free
+  model on the same provider answered "Free usage limit reached" too.
+
 The suite also turns the kit's own budget off for its runs and points the
 ledger at the run directory. A hundred and twenty runs spend more than the
 shared window's stop, and from that run on the guard would refuse tool calls -
