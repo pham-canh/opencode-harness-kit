@@ -1308,13 +1308,16 @@ node eval/ab.mjs --rescore <saved stream dir>   # re-grade without spawning agen
 ```
 
 `--fail-fast <n>` (default 2) stops the suite when `n` runs in a row produce
-no tool call and no text. That is what a spent free route looks like: the run
-hangs until the per-run ceiling and is recorded as a timeout, so without this
-a 36-run suite spends hours measuring the provider's quota. A quota error the
+no tool call and no text, or when `n` timeouts in a row went quiet well before
+the per-run ceiling. That is what a spent free route looks like: the run hangs
+until the per-run ceiling and is recorded as a timeout, so without this a
+36-run suite spends hours measuring the provider's quota. A quota error the
 provider states outright (`Free usage limit reached`, an HTTP 429) stops the
 suite on the first run instead of waiting for two empty ones, and says so
 rather than scoring the refusal as a wrong answer. The raw streams are kept
-either way, so `--rescore <dir>` can still grade them later.
+either way, so `--rescore <dir>` can still grade them later. The wall time
+comes from the sidecar, so a run killed at the ceiling is reported at the
+ceiling, not at the timestamp of its last event.
 
 Both arms pin `small_model` as well as `model`. `model` only covers the main
 loop; the title agent runs on `small_model`, whose default is a paid model, so
@@ -1331,15 +1334,20 @@ fails before it starts, the error event is now fatal on the spot:
 
 - `--out <dir>` keeps each run's stream as `<id>-<arm>-<i>.json` next to a
   `<id>-<arm>-<i>.result.json`, and a rerun with the same `--out` skips the
-  runs that already have a result. A suite interrupted by the quota, or by a
-  reboot, continues instead of starting over.
+  runs that already have a result. A sidecar with no verdict and no step is
+  retried instead of skipped: it is a run that never started, and skipping it
+  would make the hole permanent. A suite interrupted by the quota, or by a
+  reboot, continues instead of starting over. The directory gets a
+  `run-manifest.json`; resuming it against a different target, suite or model
+  is refused rather than mixed into one result.
 - `--budget <tokens>` caps the suite's context tokens - the same number the
   guard counts, cached prefix included. It is checked before each run, so the
   run that crosses the cap is still measured and counted; the next one stops
   the suite with exit 2.
 - A preflight run (on by default, `--no-preflight` to skip) asks the model one
   question before the suite and stops with exit 2 if it does not answer, if it
-  times out, or if its stream carries an error event. It costs one request and
+  times out, if it exits cleanly with an empty stream, or if its stream carries
+  an error event. It costs one request and
   saves the eighteen that a broken arm would otherwise spend being scored as
   wrong answers. Its stream goes to a scratch directory, not `--out`, so
   `--rescore` does not warn about a file it cannot grade.

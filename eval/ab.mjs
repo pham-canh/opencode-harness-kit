@@ -774,6 +774,41 @@ const outDir = rescoreDir ?? outFlag ?? mkdtempSync(join(tmpdir(), "opencode-ab-
 if (outFlag && !rescoreDir) mkdirSync(outFlag, { recursive: true })
 const before = fingerprint(target)
 
+// A resume trusts the sidecars in `--out`, and every one of them was measured
+// against a target, a suite and a model. Two of those can change between
+// invocations without any file name changing, and the mixed run reads as one
+// arm's result. The manifest is written once, when the directory is new; a
+// directory from before the manifest existed is adopted with a warning rather
+// than refused, because the runs in it were still measured against something
+// and the warning says which.
+const suiteHash = createHash("sha256")
+  .update(suitePath ? readFileSync(suitePath) : (task ?? ""))
+  .digest("hex")
+const manifestFile = join(outDir, "run-manifest.json")
+const manifest = { v: 1, suiteHash, task: task ?? null, target: TARGET_REAL, fingerprint: before, model: armModel, reps, timeoutMs: runTimeoutMs }
+if (outFlag && !rescoreDir) {
+  if (existsSync(manifestFile)) {
+    const old = JSON.parse(readFileSync(manifestFile, "utf8"))
+    const changed = ["fingerprint", "suiteHash", "model"].filter((k) => old[k] !== manifest[k])
+    if (changed.length) {
+      console.error(`FAIL: --out ${outDir} was measured against a different ${changed.join(", ")}, so resuming it would mix two experiments.`)
+      console.error(`  manifest: ${manifestFile}`)
+      console.error(`  recorded ${changed.map((k) => `${k}=${JSON.stringify(old[k])}`).join(", ")}`)
+      console.error(`  now      ${changed.map((k) => `${k}=${JSON.stringify(manifest[k])}`).join(", ")}`)
+      console.error(`  use a new --out, or restore the target/suite/model the manifest names.`)
+      process.exit(2)
+    }
+  } else {
+    const sidecars = readdirSync(outDir).filter((f) => f.endsWith(".result.json"))
+    if (sidecars.length) {
+      console.warn(`  warn: ${outDir} has ${sidecars.length} result(s) but no run-manifest.json;`)
+      console.warn(`        adopting them as measured against this target, suite and model.`)
+      manifest.adopted = true
+    }
+    writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + "\n")
+  }
+}
+
 /**
  * The recorded verdict for one run, if `--out` was used and it is there.
  *
@@ -797,6 +832,12 @@ function resumeRun(id, arm, i) {
     // result: the id and arm have to match, and there has to be a verdict.
     if (saved?.id !== id || saved?.arm !== arm || saved?.i !== i) return null
     if (!("correct" in saved)) return null
+    // A sidecar with no verdict and no step is not a result: the route was
+    // already dead when it was written. Skipping it would make the hole
+    // permanent on every later resume - a dead window that leaves one empty
+    // sidecar per attempt never fills in. A timeout that did work is a
+    // censored result, and stays skipped.
+    if (saved.correct === null && (saved.steps ?? 0) === 0) return null
     // A sidecar written by an older version is missing fields the report
     // reads - `escaped` crashed the whole report on a resumed run, after every
     // run had already been paid for. The report treats a missing list as an
@@ -818,6 +859,12 @@ function resumeRun(id, arm, i) {
         if (m.steps > 0) {
           saved.inputTokens = m.inputTokens
           saved.contextTokens = m.contextTokens
+          // The report prints medians of these too, and a sidecar from before
+          // the counter counted the cached prefix has both at zero. Leaving
+          // them stale would make "final ctx" disagree with "context tokens"
+          // for the same run.
+          saved.finalCtx = m.finalCtx
+          saved.reasoning = m.reasoning
           // Write it back: the correction is the whole reason the stream is
           // read, and a second resume should not depend on the stream still
           // being there.
@@ -897,6 +944,20 @@ if (!rescoreDir && !args.includes("--no-preflight")) {
     console.error(`  preflight stream kept: ${probe.out}`)
     process.exit(2)
   }
+  // Exiting is not answering. A spent route can exit 0 with an empty stream -
+  // the shape the fail-fast test uses - and a preflight that reads only the
+  // exit code calls that "ok", after which the suite spends one timeout per
+  // run learning otherwise. The suite needs a step and a word.
+  const probeMetrics = parseStream(probe.out, realpathSync(probeDir))
+  if (probe.code !== 0 || probeMetrics.steps === 0 || probeMetrics.text.trim() === "") {
+    console.log("")
+    console.error("FAIL: the preflight produced no answer, so nothing was measured.")
+    console.error(`  exit code ${probe.code}, ${probeMetrics.steps} step(s), ${probeMetrics.text.trim().length} character(s) of text.`)
+    console.error("  A spent route or a broken install looks like this. Nothing was measured.")
+    console.error("  Check it by hand: opencode run --print-logs -m <model> hi")
+    console.error(`  preflight stream kept: ${probe.out}`)
+    process.exit(2)
+  }
   console.log(`ok (${probe.wall}s)`)
 }
 
@@ -905,6 +966,28 @@ const keptCopies = []
 // Consecutive runs that produced neither a tool call nor a word. See
 // --fail-fast above: this is the shape of a spent route, not of a slow task.
 let deadStreak = 0
+
+/**
+ * Stop the suite when the route, not the task, is what failed.
+ *
+ * @param {number} n
+ * @param {string} detail
+ * @param {{ id: string }} job
+ * @param {"on" | "off"} arm
+ * @param {number} i
+ */
+function stopDeadRoute(n, detail, job, arm, i) {
+  console.log("")
+  console.error(`FAIL: the model route is not answering.`)
+  console.error(`  ${n} runs in a row ${detail},`)
+  console.error(`  most recently ${job.id} ${arm}-${i} on ${armModel ?? "opencode's default model"}.`)
+  console.error(`  A spent free route looks exactly like this; the provider's reason is only`)
+  console.error(`  printed by \`opencode run --print-logs\`. Nothing was measured, so this`)
+  console.error(`  stops instead of timing out one run at a time.`)
+  console.error(`  raw streams kept: ${outDir}`)
+  console.error(`  rescore them later: node eval/ab.mjs --rescore ${outDir}, with the same --suite or --task`)
+  process.exit(2)
+}
 if (rescoreDir) {
   const byId = new Map(jobs.map((j) => [j.id, j]))
   for (const f of readdirSync(rescoreDir).filter((x) => x.endsWith(".json")).sort()) {
@@ -923,10 +1006,12 @@ if (rescoreDir) {
     // the re-score path made it - four runs that timed out at 12 steps came
     // back as four wrong answers.
     let timedOut = false
+    let sideSaved = null
     const side = join(rescoreDir, f.replace(/\.json$/, ".result.json"))
     if (existsSync(side)) {
       try {
-        timedOut = JSON.parse(readFileSync(side, "utf8")).timedOut === true
+        sideSaved = JSON.parse(readFileSync(side, "utf8"))
+        timedOut = sideSaved.timedOut === true
       } catch {
         // A sidecar that will not parse leaves the run scored on its stream.
       }
@@ -952,7 +1037,10 @@ if (rescoreDir) {
       ok = g.ok
       why = g.ok ? `cited ${g.cited}` : g.cited === 0 ? "no citation" : `cited ${g.cited}, none held`
     }
-    runs.push({ id: job.id, arm: m[2], i: Number(m[3]), ...s, wall: s.seconds, code: 0, timedOut, invalid: invalid || job.mutate, correct: ok, why })
+    // The wall time is the ceiling the run was measured against, not the
+    // span of its last event. A run killed at 180s has a stream that stops
+    // at 58s, and reading the stream alone reported it as a 58s run.
+    runs.push({ id: job.id, arm: m[2], i: Number(m[3]), ...s, wall: sideSaved?.wall ?? s.seconds, code: 0, timedOut, invalid: invalid || job.mutate, correct: ok, why })
     console.log(`  ${job.id} ${m[2]}-${m[3]} ... ${why}`)
   }
   console.log("")
@@ -967,6 +1055,12 @@ if (rescoreDir) {
         runs.push(resumed)
         console.log(`  ${job.id} ${arm}-${i} ... resumed: ${resumed.why ?? (resumed.correct ? "correct" : "wrong")}`)
         continue
+      }
+      // Say it out loud when a sidecar was there but is not a result. Silence
+      // would make the re-run look like a missing run, and the extra cost
+      // like a bug in the resume.
+      if (outFlag && !rescoreDir && existsSync(join(outDir, `${job.id}-${arm}-${i}.result.json`))) {
+        console.log(`  ${job.id} ${arm}-${i} ... retrying (previous run was not scored)`)
       }
       // A ceiling on the suite's own spend, checked before each run rather
       // than after: the point is not to buy the last run, it is to stop with
@@ -1024,19 +1118,24 @@ if (rescoreDir) {
         }
         deadStreak++
         if (deadStreak >= failFast) {
-          console.log("")
-          console.error(`FAIL: the model route is not answering.`)
-          console.error(`  ${deadStreak} runs in a row produced no tool calls and no text,`)
-          console.error(`  most recently ${job.id} ${arm}-${i} on ${armModel ?? "opencode's default model"}.`)
-          console.error(`  A spent free route looks exactly like this; the provider's reason is only`)
-          console.error(`  printed by \`opencode run --print-logs\`. Nothing was measured, so this`)
-          console.error(`  stops instead of timing out one run at a time.`)
-          console.error(`  raw streams kept: ${outDir}`)
-          console.error(`  rescore them later: node eval/ab.mjs --rescore ${outDir}, with the same --suite or --task`)
-          process.exit(2)
+          stopDeadRoute(deadStreak, "produced no tool calls and no text", job, arm, i)
         }
       } else {
-        deadStreak = 0
+        // A timeout that kept emitting events is a slow task. A timeout that
+        // went quiet well before the ceiling is a route that stopped
+        // answering after one step - the 10-rep run had four of those at
+        // 58-164s against a 180s ceiling, and resetting the streak on each
+        // one measured the rest of the suite at 180s per run.
+        const quietS = m.seconds === null ? r.wall : r.wall - m.seconds
+        const stalled = r.timedOut && quietS >= Math.min(60, runTimeoutMs / 2000)
+        if (stalled) {
+          deadStreak++
+          if (deadStreak >= failFast) {
+            stopDeadRoute(deadStreak, "stalled before the ceiling", job, arm, i)
+          }
+        } else if (!r.timedOut) {
+          deadStreak = 0
+        }
       }
       // Grade against the repository, not against a string I typed. The
       // substring grader produced three wrong numbers in RESULTS.md; this
@@ -1132,11 +1231,14 @@ if (rescoreDir) {
 
 const after = fingerprint(target)
 // Median, never mean. See median() in ./metrics.js for the run that proves why.
-// Invalid runs are excluded everywhere: a process that emitted nothing has no
-// tools, no tokens and no answer, and including its zeros would drag every
-// median toward looking as though the agent did nothing at all.
+// Invalid runs are excluded from the work metrics: a process that emitted
+// nothing has no tools, no tokens and no answer, and including its zeros would
+// drag every median toward looking as though the agent did nothing at all.
+// Wall time is the exception. A run that timed out still spent its ceiling,
+// and hiding it would report a suite that cost less time than it did.
 const scored = runs.filter((r) => !r.invalid)
 const stat = (arm, key) => median(scored.filter((r) => r.arm === arm).map((r) => r[key]))
+const wallStat = (arm) => median(runs.filter((r) => r.arm === arm).map((r) => r.wall))
 const scoreOf = (arm) => {
   const rs = scored.filter((r) => r.arm === arm)
   return `${rs.filter((r) => r.correct).length}/${rs.length}`
@@ -1157,7 +1259,7 @@ const rows = [
   ["context tokens", stat("on", "contextTokens"), stat("off", "contextTokens")],
   ["uncached input", stat("on", "inputTokens"), stat("off", "inputTokens")],
   ["final ctx", stat("on", "finalCtx"), stat("off", "finalCtx")],
-  ["wall seconds", stat("on", "wall"), stat("off", "wall")],
+  ["wall seconds", wallStat("on"), wallStat("off")],
   ["not scored", runs.filter((r) => r.arm === "on" && r.invalid).length, runs.filter((r) => r.arm === "off" && r.invalid).length],
   // The escape check compares against a per-run copy that no longer exists when
   // rescoring, so it would report every path as an escape. Report nothing rather
