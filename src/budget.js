@@ -12,7 +12,7 @@
 // number the provider's window is spent on, and it is NOT `tokens.input`:
 // with prompt caching the uncached part is a few hundred tokens against tens
 // of thousands of `cache.read`, so a counter built on `input` alone undercounts
-// a real session by about ten times and never fires. Output is capped by the
+// a real session by five to forty times and never fires. Output is capped by the
 // model and is a small fraction of the bill, so it is not counted.
 //
 // The limits are environment variables, not config keys: the guard runs

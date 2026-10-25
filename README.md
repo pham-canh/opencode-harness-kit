@@ -1169,7 +1169,7 @@ The guard counts it. Each `step-finish` part reports what that request cost:
 The count is the whole context, not `input`. Counting `input` alone looks
 right and is not: with prompt caching, one measured stream reported 844, 1,289
 and 391 uncached tokens against 36,480, 7,808 and 9,088 cached ones. A budget
-built on the first column needed about ten times the real spend to fire, and
+built on the first column needed five to forty times the real spend to fire, and
 the window ran out first - which is exactly what happened. The guard sums the
 context per session, and at two thresholds it acts:
 
@@ -1340,10 +1340,10 @@ ledger at the run directory. A hundred and twenty runs spend more than the
 shared window's stop, and from that run on the guard would refuse tool calls -
 so the runs after it would be scored as wrong answers for a reason the suite
 is not measuring. The suite has its own cap, and the account's real window is
-not charged by a benchmark. The cap counts context, not uncached input: the
-first 48 runs of one 10-rep attempt reported 1,284,594 uncached input tokens
-while the same streams carried 7,130,164 context tokens, so a cap set against
-the first number let the suite walk into the provider's wall.
+not charged by a benchmark. The cap counts context, not uncached input: 47
+runs of one 10-rep attempt reported 1,284,594 uncached input tokens while the
+same streams carried 7,130,164 context tokens, so a cap set against the first
+number let the suite walk into the provider's wall.
 
 `eval/ab.mjs` knows how to read opencode's event stream, so it can only compare
 the kit with opencode. `eval/compare.mjs` grades any CLI the same way: it runs

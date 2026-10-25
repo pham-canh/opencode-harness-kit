@@ -94,7 +94,8 @@ const outFlag = flag("--out")
 // number the guard counts. The free tier is one shared window and the suite is
 // the biggest single consumer of it; a cap is the difference between "the
 // suite stopped" and "the account is out until the window rolls". Counting
-// uncached input here made the cap about ten times too generous.
+// uncached input here made the cap 5.6 times too generous on the measured
+// streams, and 43 times on a single fully cached step.
 let suiteBudget = 0
 try {
   const n = numberFlag("--budget")
@@ -594,7 +595,7 @@ function parseStream(file, root = TARGET_REAL) {
       // every table before this one reported, and comparing against those
       // numbers needs the same definition. `contextTokens` is the cost: the
       // same step reports a few hundred uncached against tens of thousands
-      // cached, so a suite budget built on `inputTokens` was about ten times
+      // cached, so a suite budget built on `inputTokens` was 5.6 times
       // too generous.
       inputTokens += t.input ?? 0
       contextTokens += requestTokens(t)
@@ -798,7 +799,7 @@ function resumeRun(id, arm, i) {
     if (!("correct" in saved)) return null
     // The sidecar holds the verdict, the stream holds the cost. A sidecar
     // written before the counter counted cached context would otherwise resume
-    // with a number about ten times too small, and the suite's own cap would
+    // with a number 5.6 times too small, and the suite's own cap would
     // read as unspent. Only the token fields are taken: `escaped` is relative
     // to a run copy that is gone, and re-deriving it here would report every
     // path as an escape.

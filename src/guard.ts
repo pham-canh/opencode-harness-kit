@@ -326,7 +326,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
     // The cost is the whole context, not `tokens.input`: with prompt caching
     // the uncached part is a few hundred tokens against tens of thousands of
     // `cache.read`, so counting `input` alone made every threshold here about
-    // ten times too high. See `requestTokens` in ./budget.js.
+    // five to forty times too high. See `requestTokens` in ./budget.js.
     event: async ({ event }: any) => {
       if (event?.type !== "message.part.updated") return
       const part = event.properties?.part
