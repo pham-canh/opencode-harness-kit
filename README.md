@@ -1228,6 +1228,18 @@ oc-harness use fleet-safe --no-skills
 omits the skill list from the lanes' prompt and says so in the config header.
 It is off by default: removing a capability is the user's call, not the kit's.
 
+It covers the ten lanes. **Subagents are a separate surface** and a separate
+decision: the flag does not touch them, because the kit does not generate them
+and a subagent's prompt is where a skill is usually named. On this machine
+thirty-three subagents came from the ECC bundle with the tool enabled, and the
+rule applied to them was mechanical rather than uniform: the tool is turned
+off where the prompt never says `skill:`, and left on where it does - six
+Java/Kotlin/PHP/Python/C++ agents tell themselves to read `springboot-patterns`,
+`kotlin-patterns` and the like, so removing the tool would have made their
+instructions unrunnable. Twenty-six of the thirty-three were off. The list is
+per-machine config, not a kit default; a reinstall of the bundle can reset it,
+and `oc-harness verify` does not check it.
+
 ## Known limits
 
 Read [docs/KNOWN-LIMITS.md](docs/KNOWN-LIMITS.md) before relying on failover.
