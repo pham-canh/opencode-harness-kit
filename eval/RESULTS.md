@@ -340,12 +340,13 @@ paying for 219 skills that a lane with `tools.skill: false` could not open.
     node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json \
       --reps 10 --timeout 180 --out <scratch>/ab-self-10 --budget 12000000
 
-It reached 47 runs and then the account's free window ran out, which looks
+It started 47 runs and then the account's free window ran out, which looks
 like `opencode run` hanging rather than like an error - see the preflight note
-in the README. The 47 are real; the other 73 were never started. Three of the
-six tasks have runs at all, so this is a partial set and **not** the headline
-number. It is here because the direction is worth having and because the files
-it came from will not survive forever:
+in the README. 46 of the 47 finished and were scored; the 47th was cut off
+mid-run and is in no number below. The other 73 were never started. Three of
+the six tasks have runs at all, so this is a partial set and **not** the
+headline number. It is here because the direction is worth having and because
+the files it came from will not survive forever:
 
     node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json \
       --rescore <scratch>/ab-self-10
