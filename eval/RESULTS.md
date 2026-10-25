@@ -312,6 +312,29 @@ suite, where the kit's fixed overhead is the whole cost. Three reps per arm
 is not enough to call a correctness difference; it is enough to say the cost
 reproduces.
 
+### What the skill list cost
+
+The first request of a run is the clean place to measure fixed overhead: the
+prompt, the tool schemas, and the task, before any conversation. It is also
+nearly constant run to run, which makes a median over 20 runs meaningful to the
+token.
+
+| first request | kit on | kit off |
+| --- | --- | --- |
+| skills on (3-rep run) | 36,016 | 7,856 |
+| skills off (10-rep run) | 10,865 | 7,867 |
+
+`oc-harness use fleet-safe --no-skills` removed **25,151 tokens** from every
+kit-on request - 70% of its fixed cost, and more than the whole off arm. The
+spread across runs is ±20 tokens, so this is not sampling noise; the off arm
+did not move because the flag only changes the lanes' prompt.
+
+    node -e 'for (const f of <dir>/*-on-*.json) { first step_finish }'
+
+The residual 10,865 is the lane prompt, `GLOBAL.md` and the tool schemas. The
+skill list was the single largest line item in the kit's overhead, and it was
+paying for 219 skills that a lane with `tools.skill: false` could not open.
+
 ### The 10-rep run: 47 of 120, stopped by the window
 
     node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json \

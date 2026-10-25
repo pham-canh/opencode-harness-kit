@@ -66,7 +66,10 @@ function count(raw, fallback) {
  * 37,324 tokens was recorded as 844.
  *
  * `cache.write` is charged once, on the request that stored it, so summing it
- * here is not double counting the reads that follow.
+ * here is not double counting the reads that follow. Nor does it overlap
+ * `input`: across 605 measured steps the reported `total` was exactly
+ * `input + cache.read + cache.write + output + reasoning` every time, so the
+ * parts are disjoint and the three that are counted are the whole context.
  *
  * A value that is not a number contributes zero: a missing field must not turn
  * the whole count into NaN, because a NaN comparison never fires a threshold.
