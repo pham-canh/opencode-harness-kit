@@ -141,9 +141,17 @@ test("a rotated telemetry file is still read", () => {
 })
 
 test("a project with no telemetry reports no calls rather than failing", () => {
+  // The lookup walks up towards the project root, so the test needs a tree
+  // where no ancestor has telemetry. A plain temp directory does not give
+  // one: running `opencode run` in /tmp writes /tmp/.space/telemetry.jsonl,
+  // which made this test fail on a machine where that had happened, for a
+  // reason that is not the code's. Twelve levels down is past the walk-up's
+  // twelve-step ceiling, so nothing above the tree is ever looked at.
   const dir = mkdtemp("ock-lanes-empty-")
+  const deep = join(dir, ...Array.from({ length: 12 }, (_, i) => `d${i}`))
+  mkdirSync(deep, { recursive: true })
   try {
-    assert.equal(findTelemetryFile(dir), null)
+    assert.equal(findTelemetryFile(deep), null)
     const { lanes, records, requests } = readLaneUsage(null)
     assert.deepEqual(lanes, {})
     assert.equal(records, 0)

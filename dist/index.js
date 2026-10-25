@@ -1,10 +1,10 @@
 // src/index.ts
-import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join10 } from "node:path";
+import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join11 } from "node:path";
 
 // src/guard.ts
-import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
-import { join as join4, resolve as resolve2 } from "node:path";
+import { homedir as homedir3, tmpdir as tmpdir2 } from "node:os";
+import { join as join5, resolve as resolve2 } from "node:path";
 
 // src/rules.js
 import { homedir, tmpdir } from "node:os";
@@ -903,8 +903,14 @@ function checkWrite(target, rules = WRITE_RULES, root = "") {
 }
 
 // src/budget.js
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname2, join as join2 } from "node:path";
 var DEFAULT_WARN_TOKENS = 2e6;
 var DEFAULT_STOP_TOKENS = 5e6;
+var DEFAULT_WINDOW_MINUTES = 60;
+var DEFAULT_WINDOW_WARN_TOKENS = 4e6;
+var DEFAULT_WINDOW_STOP_TOKENS = 8e6;
 function count(raw, fallback) {
   if (raw === void 0 || raw === null || raw === "") return fallback;
   const n = Number(raw);
@@ -958,28 +964,80 @@ function createBudget({ warnAt = DEFAULT_WARN_TOKENS, stopAt = DEFAULT_STOP_TOKE
 function tokens(n) {
   return Math.floor(n).toLocaleString("en-US");
 }
+var KEEP_MS = 6 * 60 * 60 * 1e3;
+function ledgerPath(env = process.env) {
+  const override = env?.OC_HARNESS_BUDGET_FILE;
+  if (override) return override;
+  const state = env?.XDG_STATE_HOME || join2(env?.HOME || homedir2(), ".local", "state");
+  return join2(state, "opencode-harness-kit", "budget.json");
+}
+function readSpend(path) {
+  try {
+    if (!existsSync(path)) return [];
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e) => e && Number.isFinite(e.t) && Number.isFinite(e.n) && e.n > 0
+    );
+  } catch {
+    return [];
+  }
+}
+function pruneSpend(entries, now) {
+  const floor = now - KEEP_MS;
+  return entries.filter((e) => e.t >= floor).sort((a, b) => a.t - b.t);
+}
+function writeSpend(path, entries) {
+  const tmp = `${path}.${process.pid}.tmp`;
+  mkdirSync(dirname2(path), { recursive: true });
+  writeFileSync(tmp, JSON.stringify(entries));
+  renameSync(tmp, path);
+}
+function recordSpend(path, n, now = Date.now()) {
+  const entries = pruneSpend(readSpend(path), now);
+  if (Number.isFinite(n) && n > 0) entries.push({ t: now, n: Math.floor(n) });
+  writeSpend(path, entries);
+  return entries;
+}
+function windowSpend(entries, now, windowMs) {
+  const floor = now - windowMs;
+  let total = 0;
+  for (const e of entries) if (e.t >= floor) total += e.n;
+  return total;
+}
+function windowLimits(env = process.env) {
+  const rawMinutes = Number(env?.OC_HARNESS_BUDGET_WINDOW_MINUTES);
+  const minutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? Math.floor(rawMinutes) : DEFAULT_WINDOW_MINUTES;
+  const warnAt = count(env?.OC_HARNESS_BUDGET_WINDOW_WARN, DEFAULT_WINDOW_WARN_TOKENS);
+  const stopAt = count(env?.OC_HARNESS_BUDGET_WINDOW_STOP, DEFAULT_WINDOW_STOP_TOKENS);
+  return {
+    windowMs: minutes * 6e4,
+    warnAt: stopAt > 0 && warnAt > stopAt ? stopAt : warnAt,
+    stopAt
+  };
+}
 
 // src/telemetry-store.ts
-import { appendFileSync, existsSync, mkdirSync, rmSync, statSync, renameSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, rmSync, statSync, renameSync as renameSync2 } from "node:fs";
+import { join as join3 } from "node:path";
 var MAX_BYTES = 4 * 1024 * 1024;
 function logPath(dir) {
-  return join2(dir, "telemetry.jsonl");
+  return join3(dir, "telemetry.jsonl");
 }
 function rotate(file, maxBytes = MAX_BYTES) {
   try {
-    if (existsSync(file) && statSync(file).size > maxBytes) {
+    if (existsSync2(file) && statSync(file).size > maxBytes) {
       const oldest = `${file}.2`;
-      if (existsSync(oldest)) rmSync(oldest, { force: true });
-      if (existsSync(`${file}.1`)) renameSync(`${file}.1`, oldest);
-      renameSync(file, `${file}.1`);
+      if (existsSync2(oldest)) rmSync(oldest, { force: true });
+      if (existsSync2(`${file}.1`)) renameSync2(`${file}.1`, oldest);
+      renameSync2(file, `${file}.1`);
     }
   } catch {
   }
 }
 function write(dir, record) {
   try {
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    if (!existsSync2(dir)) mkdirSync2(dir, { recursive: true });
     const file = logPath(dir);
     rotate(file);
     appendFileSync(file, JSON.stringify({ t: (/* @__PURE__ */ new Date()).toISOString(), ...record }) + "\n");
@@ -988,14 +1046,14 @@ function write(dir, record) {
 }
 
 // src/project.js
-import { existsSync as existsSync2 } from "node:fs";
-import { dirname as dirname2, join as join3, resolve } from "node:path";
+import { existsSync as existsSync3 } from "node:fs";
+import { dirname as dirname3, join as join4, resolve } from "node:path";
 function projectRoot(directory, worktree) {
   const start = resolve(directory || worktree || ".");
   let dir = start;
   for (let i = 0; i < 64; i++) {
-    if (existsSync2(join3(dir, ".git"))) return dir;
-    const parent = dirname2(dir);
+    if (existsSync3(join4(dir, ".git"))) return dir;
+    const parent = dirname3(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -1104,7 +1162,7 @@ function truncate(s, n = 200) {
 }
 var GuardPlugin = async ({ worktree, directory, client }) => {
   const project = projectRoot(directory, worktree);
-  const telemetryDir = join4(project, ".space");
+  const telemetryDir = join5(project, ".space");
   const refuse = (tool, rule, why, detail) => {
     write(telemetryDir, { kind: "guard", tool, rule });
     deny(why, detail);
@@ -1112,6 +1170,10 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
   const limits = budgetLimits();
   const budgets = /* @__PURE__ */ new Map();
   const counted = /* @__PURE__ */ new Set();
+  const window = windowLimits();
+  const ledger = ledgerPath();
+  let windowWarned = false;
+  let windowSpent = false;
   const budgetFor = (sessionID) => {
     let b = budgets.get(sessionID);
     if (!b) {
@@ -1119,6 +1181,18 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
       budgets.set(sessionID, b);
     }
     return b;
+  };
+  const sharedWindowSpent = () => {
+    if (windowSpent) return true;
+    if (window.stopAt <= 0) return false;
+    try {
+      if (windowSpend(readSpend(ledger), Date.now(), window.windowMs) >= window.stopAt) {
+        windowSpent = true;
+        return true;
+      }
+    } catch {
+    }
+    return false;
   };
   const toast = async (message, variant) => {
     try {
@@ -1140,7 +1214,29 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
         counted.add(part.id);
       }
       const b = budgetFor(part.sessionID);
-      const crossed = b.add(part.tokens?.input ?? 0);
+      const spent = part.tokens?.input ?? 0;
+      const crossed = b.add(spent);
+      let recent = 0;
+      if (spent > 0) {
+        try {
+          recent = windowSpend(recordSpend(ledger, spent), Date.now(), window.windowMs);
+        } catch {
+        }
+        if (!windowWarned && window.warnAt > 0 && recent >= window.warnAt) {
+          windowWarned = true;
+          await toast(
+            `All sessions have used ${tokens(recent)} input tokens in the last ${Math.round(window.windowMs / 6e4)} min (warn at ${tokens(window.warnAt)}). The provider's window is shared, so a new session does not reset it.`,
+            "warning"
+          );
+        }
+        if (!windowSpent && window.stopAt > 0 && recent >= window.stopAt) {
+          windowSpent = true;
+          await toast(
+            `The shared window hit ${tokens(window.stopAt)} input tokens in ${Math.round(window.windowMs / 6e4)} min: tool calls are now blocked in every session. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
+            "error"
+          );
+        }
+      }
       if (crossed.warn) {
         await toast(
           `This session has used ${tokens(b.total)} input tokens (warn at ${tokens(limits.warnAt)}). Start a new session before the provider's window runs out.`,
@@ -1165,10 +1261,18 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
             `it has used ${tokens(budget.total)} input tokens, and the stop threshold is ${tokens(limits.stopAt)}. Start a new session, or raise OC_HARNESS_BUDGET_STOP.`
           );
         }
+        if (sharedWindowSpent()) {
+          refuse(
+            input.tool,
+            "shared token window",
+            "the shared token window is spent",
+            `all sessions have used ${tokens(window.stopAt)} input tokens in the last ${Math.round(window.windowMs / 6e4)} min. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`
+          );
+        }
         if (input.tool === "bash") {
           const raw = output.args?.workdir;
           if (typeof raw === "string" && raw.trim()) {
-            const target = raw.startsWith("~") ? join4(homedir2(), raw.slice(1)) : resolve2(project, raw);
+            const target = raw.startsWith("~") ? join5(homedir3(), raw.slice(1)) : resolve2(project, raw);
             if (!insideRoot(target, project) && !insideRoot(target, tmpdir2())) {
               refuse(
                 input.tool,
@@ -1230,16 +1334,16 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
 };
 
 // src/profile.js
-import { readFileSync, existsSync as existsSync3, readdirSync } from "node:fs";
-import { dirname as dirname3, join as join5, resolve as resolve3 } from "node:path";
-import { homedir as homedir3 } from "node:os";
+import { readFileSync as readFileSync2, existsSync as existsSync4, readdirSync } from "node:fs";
+import { dirname as dirname4, join as join6, resolve as resolve3 } from "node:path";
+import { homedir as homedir4 } from "node:os";
 import { fileURLToPath } from "node:url";
-var HERE = dirname3(fileURLToPath(import.meta.url));
+var HERE = dirname4(fileURLToPath(import.meta.url));
 function findRoot(start) {
   let dir = start;
   for (let i = 0; i < 12; i++) {
-    if (existsSync3(join5(dir, "profiles"))) return dir;
-    const parent = dirname3(dir);
+    if (existsSync4(join6(dir, "profiles"))) return dir;
+    const parent = dirname4(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -1268,12 +1372,12 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [process.env.OPENCODE_HARNESS_PROFILES ?? join5(ROOT, "profiles")];
+  return [process.env.OPENCODE_HARNESS_PROFILES ?? join6(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
-    const full = join5(dir, `${id}.json`);
-    if (existsSync3(full)) return full;
+    const full = join6(dir, `${id}.json`);
+    if (existsSync4(full)) return full;
   }
   return null;
 }
@@ -1284,7 +1388,7 @@ function loadProfile(id) {
   }
   let raw;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8"));
+    raw = JSON.parse(readFileSync2(path, "utf8"));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new ProfileError(`cannot read ${path}: ${msg}`);
@@ -1323,11 +1427,11 @@ function normalize(p) {
 var laneCache = null;
 function loadLanes() {
   if (laneCache) return laneCache;
-  const file = join5(ROOT, "lanes.json");
-  if (!existsSync3(file)) {
+  const file = join6(ROOT, "lanes.json");
+  if (!existsSync4(file)) {
     throw new ProfileError(`lane table missing: ${file}`);
   }
-  const parsed = JSON.parse(readFileSync(file, "utf8"));
+  const parsed = JSON.parse(readFileSync2(file, "utf8"));
   const lanes = parsed.lanes ?? {};
   for (const [name, lane] of Object.entries(lanes)) {
     if (!lane.description) {
@@ -1346,8 +1450,8 @@ function laneMeta(name) {
 var retentionCache = null;
 function loadRetention() {
   if (retentionCache) return retentionCache;
-  const file = join5(ROOT, "retention.yml");
-  if (!existsSync3(file)) {
+  const file = join6(ROOT, "retention.yml");
+  if (!existsSync4(file)) {
     retentionCache = { models: {}, defaults: {} };
     return retentionCache;
   }
@@ -1359,7 +1463,7 @@ function loadRetention() {
     /** @type {Record<string, string>} */
     {}
   );
-  const lines = readFileSync(file, "utf8").split("\n");
+  const lines = readFileSync2(file, "utf8").split("\n");
   let current = null;
   let inDefaults = false;
   let i = 0;
@@ -1766,10 +1870,10 @@ function worstRetention(ids) {
   return { retention, worst };
 }
 function configDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join5(homedir3(), ".config", "opencode");
+  return process.env.OPENCODE_CONFIG_DIR ?? join6(homedir4(), ".config", "opencode");
 }
 function configFilePath() {
-  return join5(configDir(), "opencode.jsonc");
+  return join6(configDir(), "opencode.jsonc");
 }
 function parseJsonc(text) {
   let out = "";
@@ -1844,9 +1948,9 @@ function profileIdFromConfig() {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv) return fromEnv.trim() || null;
   const file = configFilePath();
-  if (!existsSync3(file)) return null;
+  if (!existsSync4(file)) return null;
   try {
-    const parsed = parseJsonc(readFileSync(file, "utf8"));
+    const parsed = parseJsonc(readFileSync2(file, "utf8"));
     const harness = parsed?.harness;
     const id = harness && typeof harness === "object" ? (
       /** @type {{profile?: unknown}} */
@@ -1859,17 +1963,17 @@ function profileIdFromConfig() {
 }
 
 // src/prune.ts
-import { readFileSync as readFileSync2, existsSync as existsSync4 } from "node:fs";
-import { join as join6 } from "node:path";
+import { readFileSync as readFileSync3, existsSync as existsSync5 } from "node:fs";
+import { join as join7 } from "node:path";
 function activeProfileId(worktree) {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  const candidates = [join6(worktree, ".space", "active")];
+  const candidates = [join7(worktree, ".space", "active")];
   for (const f of candidates) {
     if (!f) continue;
     try {
-      if (existsSync4(f)) {
-        const v = readFileSync2(f, "utf8").trim();
+      if (existsSync5(f)) {
+        const v = readFileSync3(f, "utf8").trim();
         if (v) return v;
       }
     } catch {
@@ -2101,13 +2205,13 @@ var PrunePlugin = async ({ worktree, directory }) => {
   };
 };
 async function logPrune(worktree, profileId, stats, maxBytes = MAX_BYTES) {
-  const dir = join6(worktree, ".space");
+  const dir = join7(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
-    rotate(join6(dir, "prune.jsonl"), maxBytes);
+    rotate(join7(dir, "prune.jsonl"), maxBytes);
     await appendFile(
-      join6(dir, "prune.jsonl"),
+      join7(dir, "prune.jsonl"),
       JSON.stringify({
         t: (/* @__PURE__ */ new Date()).toISOString(),
         profile: profileId,
@@ -2135,9 +2239,9 @@ function safeStringify(value) {
 }
 
 // src/config.js
-import { join as join7, resolve as resolve4 } from "node:path";
-import { homedir as homedir4 } from "node:os";
-var DEFAULT_CONFIG_DIR = join7(homedir4(), ".config/opencode");
+import { join as join8, resolve as resolve4 } from "node:path";
+import { homedir as homedir5 } from "node:os";
+var DEFAULT_CONFIG_DIR = join8(homedir5(), ".config/opencode");
 function utilityModel(p) {
   const u = p?.utility;
   if (!u || typeof u.model !== "string" || !u.model) return null;
@@ -2145,8 +2249,8 @@ function utilityModel(p) {
 }
 
 // src/health.js
-import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
-import { join as join8 } from "node:path";
+import { existsSync as existsSync6, mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync3, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join9 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
@@ -2188,12 +2292,12 @@ function liveUnhealthy(health, now = Date.now()) {
   return out;
 }
 function healthPath(dir) {
-  return join8(dir, ".space", "health.json");
+  return join9(dir, ".space", "health.json");
 }
 function readHealth(dir) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync3(healthPath(dir), "utf8"));
+    parsed = JSON.parse(readFileSync4(healthPath(dir), "utf8"));
   } catch {
     return { unhealthy: {} };
   }
@@ -2208,14 +2312,14 @@ function readHealth(dir) {
 }
 function writeHealth(dir, health) {
   try {
-    const spaceDir = join8(dir, ".space");
-    if (!existsSync5(spaceDir)) mkdirSync2(spaceDir, { recursive: true });
+    const spaceDir = join9(dir, ".space");
+    if (!existsSync6(spaceDir)) mkdirSync3(spaceDir, { recursive: true });
     const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
     const file = healthPath(dir);
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {
-      writeFileSync(tmp, JSON.stringify(pruned, null, 2));
-      renameSync2(tmp, file);
+      writeFileSync2(tmp, JSON.stringify(pruned, null, 2));
+      renameSync3(tmp, file);
     } catch (err) {
       try {
         unlinkSync(tmp);
@@ -2476,9 +2580,9 @@ function applySessionModel(cfg, profile, opts = {}) {
 }
 
 // src/telemetry.ts
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 var TelemetryPlugin = async ({ worktree, directory }) => {
-  const dir = join9(projectRoot(directory, worktree), ".space");
+  const dir = join10(projectRoot(directory, worktree), ".space");
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
@@ -2664,9 +2768,9 @@ var HarnessPlugin = async (ctx, options) => {
     } catch {
     }
     try {
-      const dir = join10(project, ".space");
-      mkdirSync3(dir, { recursive: true });
-      writeFileSync2(join10(dir, "active"), `${id}
+      const dir = join11(project, ".space");
+      mkdirSync4(dir, { recursive: true });
+      writeFileSync3(join11(dir, "active"), `${id}
 `);
     } catch {
     }

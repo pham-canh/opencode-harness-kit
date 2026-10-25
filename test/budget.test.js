@@ -91,3 +91,109 @@ test("tokens() is a readable count", () => {
   assert.equal(tokens(12_025_980), "12,025,980")
   assert.equal(tokens(0), "0")
 })
+
+// --- the shared window ------------------------------------------------------
+
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync as readRaw,
+  rmSync,
+  writeFileSync as writeRaw,
+} from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
+import {
+  ledgerPath,
+  pruneSpend,
+  readSpend,
+  recordSpend,
+  windowLimits,
+  windowSpend,
+} from "../src/budget.js"
+
+test("the ledger path follows XDG state, and the override wins", () => {
+  assert.equal(
+    ledgerPath({ XDG_STATE_HOME: "/state", HOME: "/home/x" }),
+    join("/state", "opencode-harness-kit", "budget.json"),
+  )
+  assert.equal(
+    ledgerPath({ HOME: "/home/x" }),
+    join("/home/x", ".local", "state", "opencode-harness-kit", "budget.json"),
+  )
+  assert.equal(ledgerPath({ OC_HARNESS_BUDGET_FILE: "/tmp/l.json", HOME: "/home/x" }), "/tmp/l.json")
+})
+
+test("a spend is recorded and summed inside the window only", () => {
+  const dir = mkdtempSync(join(tmpdir(), "budget-ledger-"))
+  const path = join(dir, "budget.json")
+  const now = 1_000_000_000
+
+  recordSpend(path, 1000, now - 90 * 60_000) // outside an hour
+  recordSpend(path, 2000, now - 10 * 60_000)
+  recordSpend(path, 3000, now - 1 * 60_000)
+
+  const entries = readSpend(path)
+  assert.equal(windowSpend(entries, now, 60 * 60_000), 5000)
+  assert.equal(windowSpend(entries, now, 3 * 60 * 60_000), 6000)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("old entries are pruned so the file does not grow forever", () => {
+  const now = 1_000_000_000
+  const kept = pruneSpend(
+    [
+      { t: now - 7 * 60 * 60_000, n: 1 },
+      { t: now - 5 * 60 * 60_000, n: 2 },
+      { t: now - 1 * 60 * 60_000, n: 3 },
+    ],
+    now,
+  )
+  assert.deepEqual(kept.map((e) => e.n), [2, 3])
+})
+
+test("a corrupt ledger reads as empty instead of throwing", () => {
+  // The guard runs inside opencode: a half-written file must not stop the
+  // editor. The next write replaces it.
+  const dir = mkdtempSync(join(tmpdir(), "budget-corrupt-"))
+  const path = join(dir, "budget.json")
+  writeRaw(path, "{not json")
+  assert.deepEqual(readSpend(path), [])
+  writeRaw(path, JSON.stringify({ entries: [] }))
+  assert.deepEqual(readSpend(path), [])
+  writeRaw(path, JSON.stringify([{ t: 1, n: 5 }, { t: 2, n: "x" }, null]))
+  assert.deepEqual(readSpend(path), [{ t: 1, n: 5 }])
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a write leaves no temporary file behind", () => {
+  const dir = mkdtempSync(join(tmpdir(), "budget-atomic-"))
+  const path = join(dir, "budget.json")
+  recordSpend(path, 10, 1000)
+  recordSpend(path, 20, 2000)
+  assert.deepEqual(readdirSync(dir), ["budget.json"])
+  assert.deepEqual(JSON.parse(readRaw(path, "utf8")), [
+    { t: 1000, n: 10 },
+    { t: 2000, n: 20 },
+  ])
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("the window limits default to an hour and clamp a warn above the stop", () => {
+  assert.deepEqual(windowLimits({}), {
+    windowMs: 60 * 60_000,
+    warnAt: 4_000_000,
+    stopAt: 8_000_000,
+  })
+  assert.deepEqual(
+    windowLimits({ OC_HARNESS_BUDGET_WINDOW_MINUTES: "30", OC_HARNESS_BUDGET_WINDOW_WARN: "9", OC_HARNESS_BUDGET_WINDOW_STOP: "5" }),
+    { windowMs: 30 * 60_000, warnAt: 5, stopAt: 5 },
+  )
+  // Zero minutes would sum nothing and silently disable the tripwire.
+  assert.equal(windowLimits({ OC_HARNESS_BUDGET_WINDOW_MINUTES: "0" }).windowMs, 60 * 60_000)
+  assert.equal(windowLimits({ OC_HARNESS_BUDGET_WINDOW_MINUTES: "abc" }).windowMs, 60 * 60_000)
+})

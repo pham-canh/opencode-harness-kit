@@ -403,3 +403,73 @@ test("a repeated step part is counted once", async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("a second session is blocked by the window the first one spent", async () => {
+  // The provider's window is per account, not per session. Before this, the
+  // only count was per session, so "open another session" was a way to spend
+  // the same window again - which is exactly what happened: the chat spent
+  // 12M tokens and the fix looked like a fresh session.
+  const dir = workspace()
+  const ledger = join(dir, "budget.json")
+  const saved = { ...process.env }
+  process.env.OC_HARNESS_BUDGET_FILE = ledger
+  process.env.OC_HARNESS_BUDGET_WINDOW_MINUTES = "60"
+  process.env.OC_HARNESS_BUDGET_WINDOW_WARN = "500"
+  process.env.OC_HARNESS_BUDGET_WINDOW_STOP = "1000"
+  process.env.OC_HARNESS_BUDGET_WARN = "0"
+  process.env.OC_HARNESS_BUDGET_STOP = "0"
+  try {
+    // Session A spends the window.
+    const a = await guard(dir)
+    await a.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "step-finish", sessionID: "ses-A", id: "a1", tokens: { input: 1200 } },
+        },
+      },
+    })
+    // The window is spent, so the session that spent it is blocked too: the
+    // stop is not a punishment for the others, it is the same wall.
+    assert.match(await blocks(a, "read", { filePath: "src/a.ts" }), /shared token window/)
+
+    // Session B is a different process in reality, and a fresh plugin here.
+    // Its own budget is empty, so only the shared ledger can stop it - and it
+    // must, or "open another session" is a way to spend the window twice.
+    const b = await guard(dir)
+    const msg = await blocks(b, "read", { filePath: "src/a.ts" })
+    assert.ok(msg, "a new session spent the same window again")
+    assert.match(msg, /shared token window/)
+    assert.match(msg, /raise OC_HARNESS_BUDGET_WINDOW_STOP/)
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
+    Object.assign(process.env, saved)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a window under the stop does not block the next session", async () => {
+  const dir = workspace()
+  const saved = { ...process.env }
+  process.env.OC_HARNESS_BUDGET_FILE = join(dir, "budget.json")
+  process.env.OC_HARNESS_BUDGET_WINDOW_STOP = "1000"
+  process.env.OC_HARNESS_BUDGET_WARN = "0"
+  process.env.OC_HARNESS_BUDGET_STOP = "0"
+  try {
+    const a = await guard(dir)
+    await a.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "step-finish", sessionID: "ses-A", id: "a1", tokens: { input: 400 } },
+        },
+      },
+    })
+    const b = await guard(dir)
+    assert.equal(await blocks(b, "read", { filePath: "src/a.ts" }), null)
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
+    Object.assign(process.env, saved)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

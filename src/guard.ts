@@ -10,7 +10,16 @@ import type { Plugin } from "./plugin.js"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { checkBash, checkDenied, checkWrite, insideRoot } from "./rules.js"
-import { budgetLimits, createBudget, tokens } from "./budget.js"
+import {
+  budgetLimits,
+  createBudget,
+  ledgerPath,
+  readSpend,
+  recordSpend,
+  tokens,
+  windowLimits,
+  windowSpend,
+} from "./budget.js"
 
 import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
@@ -259,6 +268,15 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
   /** `step-finish` parts already counted, so an update is not a second step. */
   const counted = new Set<string>()
 
+  // The window is shared, so the count cannot live in this process: two
+  // sessions open at once are two processes, and the one that has to warn is
+  // often not the one that spent. Every step is appended to a ledger file and
+  // the last hour is summed from it.
+  const window = windowLimits()
+  const ledger = ledgerPath()
+  let windowWarned = false
+  let windowSpent = false
+
   const budgetFor = (sessionID: string) => {
     let b = budgets.get(sessionID)
     if (!b) {
@@ -266,6 +284,27 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
       budgets.set(sessionID, b)
     }
     return b
+  }
+
+  /**
+   * Whether the shared window is already spent.
+   *
+   * Checked against the ledger, not only the cached flag: a session that opens
+   * after the window ran out has seen no step of its own, so the flag would
+   * still be false and its first tool call would go through.
+   */
+  const sharedWindowSpent = () => {
+    if (windowSpent) return true
+    if (window.stopAt <= 0) return false
+    try {
+      if (windowSpend(readSpend(ledger), Date.now(), window.windowMs) >= window.stopAt) {
+        windowSpent = true
+        return true
+      }
+    } catch {
+      // Same rule as the record: an unreadable ledger does not block work.
+    }
+    return false
   }
 
   /** A toast is a courtesy, never a reason to fail a turn. */
@@ -291,7 +330,36 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
         counted.add(part.id)
       }
       const b = budgetFor(part.sessionID)
-      const crossed = b.add(part.tokens?.input ?? 0)
+      const spent = part.tokens?.input ?? 0
+      const crossed = b.add(spent)
+
+      // The shared window, from the ledger every session writes to.
+      let recent = 0
+      if (spent > 0) {
+        try {
+          recent = windowSpend(recordSpend(ledger, spent), Date.now(), window.windowMs)
+        } catch {
+          // An unwritable state directory must not break the session. The
+          // per-session budget above still applies.
+        }
+        if (!windowWarned && window.warnAt > 0 && recent >= window.warnAt) {
+          windowWarned = true
+          await toast(
+            `All sessions have used ${tokens(recent)} input tokens in the last ${Math.round(window.windowMs / 60_000)} min ` +
+              `(warn at ${tokens(window.warnAt)}). The provider's window is shared, so a new session does not reset it.`,
+            "warning",
+          )
+        }
+        if (!windowSpent && window.stopAt > 0 && recent >= window.stopAt) {
+          windowSpent = true
+          await toast(
+            `The shared window hit ${tokens(window.stopAt)} input tokens in ${Math.round(window.windowMs / 60_000)} min: ` +
+              `tool calls are now blocked in every session. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
+            "error",
+          )
+        }
+      }
+
       if (crossed.warn) {
         await toast(
           `This session has used ${tokens(b.total)} input tokens (warn at ${tokens(limits.warnAt)}). ` +
@@ -317,6 +385,18 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
             "the session hit its token budget",
             `it has used ${tokens(budget.total)} input tokens, and the stop threshold is ${tokens(limits.stopAt)}. ` +
               `Start a new session, or raise OC_HARNESS_BUDGET_STOP.`,
+          )
+        }
+        // A new session does not reset the provider's window, so the shared
+        // stop has to hold across sessions - otherwise the fix for a spent
+        // session is "open another one", which spends the same window again.
+        if (sharedWindowSpent()) {
+          refuse(
+            input.tool,
+            "shared token window",
+            "the shared token window is spent",
+            `all sessions have used ${tokens(window.stopAt)} input tokens in the last ` +
+              `${Math.round(window.windowMs / 60_000)} min. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
           )
         }
         if (input.tool === "bash") {
