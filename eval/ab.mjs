@@ -797,6 +797,14 @@ function resumeRun(id, arm, i) {
     // result: the id and arm have to match, and there has to be a verdict.
     if (saved?.id !== id || saved?.arm !== arm || saved?.i !== i) return null
     if (!("correct" in saved)) return null
+    // A sidecar written by an older version is missing fields the report
+    // reads - `escaped` crashed the whole report on a resumed run, after every
+    // run had already been paid for. The report treats a missing list as an
+    // empty one; a resume must not turn a finished suite into a stack trace.
+    if (!Array.isArray(saved.escaped)) saved.escaped = []
+    if (!Array.isArray(saved.tools)) saved.tools = []
+    if (typeof saved.text !== "string") saved.text = ""
+    if (typeof saved.steps !== "number") saved.steps = 0
     // The sidecar holds the verdict, the stream holds the cost. A sidecar
     // written before the counter counted cached context would otherwise resume
     // with a number 5.6 times too small, and the suite's own cap would
@@ -810,6 +818,10 @@ function resumeRun(id, arm, i) {
         if (m.steps > 0) {
           saved.inputTokens = m.inputTokens
           saved.contextTokens = m.contextTokens
+          // Write it back: the correction is the whole reason the stream is
+          // read, and a second resume should not depend on the stream still
+          // being there.
+          saveRun(saved)
         }
       } catch {
         // An unreadable stream is not a reason to throw away a scored run.

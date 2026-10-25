@@ -244,6 +244,64 @@ exit 0
   rmSync(dir, { recursive: true, force: true })
 })
 
+test("a resumed sidecar takes its tokens from the stream, not from its own old copy", () => {
+  // The 10-rep run stopped at 47 of 120 and has to be resumed with the same
+  // `--out`. Its sidecars were written before the counter counted the cached
+  // prefix, so they hold a number five times too small. Resuming must re-read
+  // the stream - it is still on disk - or the suite's own cap reads as
+  // unspent and the resumed run walks into the provider's wall again.
+  const dir = mkdtempSync(join(tmpdir(), "ab-resume-tokens-"))
+  const bin = join(dir, "bin")
+  const target = join(dir, "subject")
+  const out = join(dir, "out")
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(target, { recursive: true })
+  mkdirSync(out, { recursive: true })
+  writeFileSync(join(target, "a.ts"), "export const answer = 42\n")
+
+  // One finished run, and a sidecar in the old shape: `inputTokens` only.
+  writeFileSync(
+    join(out, "single-off-1.json"),
+    '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":100,"cache":{"read":1900,"write":0}}}}\n' +
+      '{"type":"text","timestamp":2,"part":{"text":"a.ts:1"}}\n',
+  )
+  writeFileSync(
+    join(out, "single-off-1.result.json"),
+    JSON.stringify({ id: "single", arm: "off", i: 1, correct: true, why: "correct", inputTokens: 100, steps: 1, seconds: 1 }),
+  )
+
+  const fake = join(bin, "opencode")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+printf '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":100,"cache":{"read":1900,"write":0}}}}\n'
+printf '{"type":"text","timestamp":2,"part":{"text":"a.ts:1"}}\n'
+exit 0
+`,
+  )
+  chmodSync(fake, 0o755)
+
+  const r = spawnSync(
+    process.execPath,
+    [AB, "--target", target, "--task", "where is answer", "--reps", "1", "--timeout", "10",
+     "--out", out, "--no-preflight"],
+    { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+  )
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /single off-1 \.\.\. resumed/)
+
+  // 2,000 per run, not 100: the median the report prints is the stream's.
+  assert.match(r.stdout, /context tokens\s+2000\s+2000/)
+
+  // And the sidecar is written back corrected, so a second resume does not
+  // have to find the stream again.
+  const saved = JSON.parse(readFileSync(join(out, "single-off-1.result.json"), "utf8"))
+  assert.equal(saved.contextTokens, 2_000)
+  assert.equal(saved.inputTokens, 100)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test("--budget stops the suite with room left, and the stop is resumable", () => {
   const dir = mkdtempSync(join(tmpdir(), "ab-budget-"))
   const bin = join(dir, "bin")
