@@ -34,6 +34,7 @@ import { countFlag, numberFlag } from "./flags.mjs"
 import { gradeAnswer, gradeMutation, gradeMutationMany } from "./verify.mjs"
 import { checkPremises } from "./premises.mjs"
 import { parseJsonc, configDir } from "../src/profile.js"
+import { requestTokens } from "../src/budget.js"
 
 /**
  * The message of a caught value, whatever it turned out to be.
@@ -89,10 +90,11 @@ const rescoreDir = flag("--rescore")
 // its stream, and a later invocation with the same `--out` skips what is
 // already there.
 const outFlag = flag("--out")
-// A ceiling on what the whole suite may spend, in input tokens. The free tier
-// is one shared window and the suite is the biggest single consumer of it; a
-// cap is the difference between "the suite stopped" and "the account is out
-// until the window rolls".
+// A ceiling on what the whole suite may spend, in context tokens - the same
+// number the guard counts. The free tier is one shared window and the suite is
+// the biggest single consumer of it; a cap is the difference between "the
+// suite stopped" and "the account is out until the window rolls". Counting
+// uncached input here made the cap about ten times too generous.
 let suiteBudget = 0
 try {
   const n = numberFlag("--budget")
@@ -553,7 +555,7 @@ function fingerprint(dir) {
 
 function parseStream(file, root = TARGET_REAL) {
   const reads = [], searches = [], others = [], escaped = new Set(), readOutside = new Set()
-  let steps = 0, inputTokens = 0, reasoning = 0, finalCtx = 0, text = "", first = null, last = null
+  let steps = 0, inputTokens = 0, contextTokens = 0, reasoning = 0, finalCtx = 0, text = "", first = null, last = null
   for (const line of readFileSync(file, "utf8").split("\n")) {
     const s = line.trim()
     if (!s) continue
@@ -588,7 +590,14 @@ function parseStream(file, root = TARGET_REAL) {
     } else if (d.type === "step_finish") {
       const t = d.part?.tokens ?? {}
       steps++
+      // `inputTokens` is the uncached part only. It is kept because it is what
+      // every table before this one reported, and comparing against those
+      // numbers needs the same definition. `contextTokens` is the cost: the
+      // same step reports a few hundred uncached against tens of thousands
+      // cached, so a suite budget built on `inputTokens` was about ten times
+      // too generous.
       inputTokens += t.input ?? 0
+      contextTokens += requestTokens(t)
       reasoning += t.reasoning ?? 0
       finalCtx = (t.input ?? 0) + (t.cache?.read ?? 0)
     } else if (d.type === "text") {
@@ -605,6 +614,7 @@ function parseStream(file, root = TARGET_REAL) {
     searches: searches.length,
     other: others.reduce((a, t) => (a[t] = (a[t] ?? 0) + 1, a), {}),
     inputTokens,
+    contextTokens,
     reasoning,
     finalCtx,
     seconds: first !== null && last !== null ? elapsedSeconds(first, last) : null,
@@ -786,6 +796,24 @@ function resumeRun(id, arm, i) {
     // result: the id and arm have to match, and there has to be a verdict.
     if (saved?.id !== id || saved?.arm !== arm || saved?.i !== i) return null
     if (!("correct" in saved)) return null
+    // The sidecar holds the verdict, the stream holds the cost. A sidecar
+    // written before the counter counted cached context would otherwise resume
+    // with a number about ten times too small, and the suite's own cap would
+    // read as unspent. Only the token fields are taken: `escaped` is relative
+    // to a run copy that is gone, and re-deriving it here would report every
+    // path as an escape.
+    const stream = join(outDir, `${id}-${arm}-${i}.json`)
+    if (existsSync(stream)) {
+      try {
+        const m = parseStream(stream, TARGET_REAL)
+        if (m.steps > 0) {
+          saved.inputTokens = m.inputTokens
+          saved.contextTokens = m.contextTokens
+        }
+      } catch {
+        // An unreadable stream is not a reason to throw away a scored run.
+      }
+    }
     return saved
   } catch {
     return null
@@ -912,10 +940,13 @@ if (rescoreDir) {
       // than after: the point is not to buy the last run, it is to stop with
       // room left in the window.
       if (suiteBudget > 0) {
-        const spent = runs.reduce((n, r) => n + (r.inputTokens ?? 0), 0)
+        // An older sidecar has no `contextTokens`; fall back to the uncached
+        // count rather than to zero, and let resumeRun() fill the real number
+        // in from the stream when the stream is still there.
+        const spent = runs.reduce((n, r) => n + (r.contextTokens ?? r.inputTokens ?? 0), 0)
         if (spent >= suiteBudget) {
           console.log("")
-          console.error(`STOP: the suite has spent ${spent.toLocaleString("en-US")} input tokens, its --budget is ${suiteBudget.toLocaleString("en-US")}.`)
+          console.error(`STOP: the suite has spent ${spent.toLocaleString("en-US")} context tokens, its --budget is ${suiteBudget.toLocaleString("en-US")}.`)
           console.error(`  ${runs.length} run(s) measured, the rest were not started. A run's cost is only`)
           console.error(`  known after it finishes, so the cap stops the run after the one that crossed it.`)
           console.error(`  resume later with the same --out: node eval/ab.mjs ... --out ${outDir}`)
@@ -1091,7 +1122,8 @@ const rows = [
   ["narrow %", stat("on", "narrow_pct"), stat("off", "narrow_pct")],
   ["grep/glob", stat("on", "searches"), stat("off", "searches")],
   ["steps", stat("on", "steps"), stat("off", "steps")],
-  ["input tokens", stat("on", "inputTokens"), stat("off", "inputTokens")],
+  ["context tokens", stat("on", "contextTokens"), stat("off", "contextTokens")],
+  ["uncached input", stat("on", "inputTokens"), stat("off", "inputTokens")],
   ["final ctx", stat("on", "finalCtx"), stat("off", "finalCtx")],
   ["wall seconds", stat("on", "wall"), stat("off", "wall")],
   ["not scored", runs.filter((r) => r.arm === "on" && r.invalid).length, runs.filter((r) => r.arm === "off" && r.invalid).length],

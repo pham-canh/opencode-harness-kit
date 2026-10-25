@@ -1153,16 +1153,29 @@ one-file lookups should not install this. The full table is in
 A free tier is one shared window: every request in every session draws on it,
 and when it runs out the provider answers with a limit error instead of
 tokens. opencode never shows a number for it. One real chat session made 599
-requests and 12,025,980 input tokens; the first sign of trouble was the next
-request being refused, which reads as a broken model rather than a spent
-budget.
+requests and 12,025,980 uncached input tokens; the first sign of trouble was
+the next request being refused, which reads as a broken model rather than a
+spent budget.
 
-The guard counts it. Each `step-finish` part reports the input tokens that
-request cost, the guard sums them per session, and at two thresholds it acts:
+The guard counts it. Each `step-finish` part reports what that request cost:
+
+| field | what it is | counted |
+|---|---|---|
+| `input` | the part of the prompt that was not in the provider's cache | yes |
+| `cache.read` | the cached prefix the model still had to read | yes |
+| `cache.write` | the prefix stored for the next request | yes |
+| `output`, `reasoning` | what the model wrote | no |
+
+The count is the whole context, not `input`. Counting `input` alone looks
+right and is not: with prompt caching, one measured stream reported 844, 1,289
+and 391 uncached tokens against 36,480, 7,808 and 9,088 cached ones. A budget
+built on the first column needed about ten times the real spend to fire, and
+the window ran out first - which is exactly what happened. The guard sums the
+context per session, and at two thresholds it acts:
 
 | | default | what happens |
 |---|---|---|
-| `OC_HARNESS_BUDGET_WARN` | 2,000,000 | one toast: this session has used N tokens |
+| `OC_HARNESS_BUDGET_WARN` | 2,000,000 | one toast: this session has used N context tokens |
 | `OC_HARNESS_BUDGET_STOP` | 5,000,000 | tool calls are refused, with the number and the fix |
 
 ```bash
@@ -1311,9 +1324,10 @@ fails before it starts, the error event is now fatal on the spot:
   `<id>-<arm>-<i>.result.json`, and a rerun with the same `--out` skips the
   runs that already have a result. A suite interrupted by the quota, or by a
   reboot, continues instead of starting over.
-- `--budget <tokens>` caps the suite's input tokens. It is checked before each
-  run, so the run that crosses the cap is still measured and counted; the next
-  one stops the suite with exit 2.
+- `--budget <tokens>` caps the suite's context tokens - the same number the
+  guard counts, cached prefix included. It is checked before each run, so the
+  run that crosses the cap is still measured and counted; the next one stops
+  the suite with exit 2.
 - A preflight run (on by default, `--no-preflight` to skip) asks the model one
   question before the suite and stops with exit 2 if it does not answer, if it
   times out, or if its stream carries an error event. It costs one request and
@@ -1326,7 +1340,10 @@ ledger at the run directory. A hundred and twenty runs spend more than the
 shared window's stop, and from that run on the guard would refuse tool calls -
 so the runs after it would be scored as wrong answers for a reason the suite
 is not measuring. The suite has its own cap, and the account's real window is
-not charged by a benchmark.
+not charged by a benchmark. The cap counts context, not uncached input: the
+first 48 runs of one 10-rep attempt reported 1,284,594 uncached input tokens
+while the same streams carried 7,130,164 context tokens, so a cap set against
+the first number let the suite walk into the provider's wall.
 
 `eval/ab.mjs` knows how to read opencode's event stream, so it can only compare
 the kit with opencode. `eval/compare.mjs` grades any CLI the same way: it runs

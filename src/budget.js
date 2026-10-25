@@ -7,16 +7,19 @@
 // and 12,025,980 input tokens, and the first sign of trouble was the provider
 // refusing the next one.
 //
-// This is the counter. It counts INPUT tokens, because input is the whole
-// conversation re-sent on every request: output is capped by the model and is
-// a small fraction of the bill. A step's `tokens.input` is the exact cost of
-// that request, so summing the steps is the exact cost of the session.
+// This is the counter. It counts the context a request re-sent: the uncached
+// input, plus the prompt cache it read, plus the cache it wrote. That is the
+// number the provider's window is spent on, and it is NOT `tokens.input`:
+// with prompt caching the uncached part is a few hundred tokens against tens
+// of thousands of `cache.read`, so a counter built on `input` alone undercounts
+// a real session by about ten times and never fires. Output is capped by the
+// model and is a small fraction of the bill, so it is not counted.
 //
 // The limits are environment variables, not config keys: the guard runs
 // inside opencode, and the environment is the one thing that reaches it
 // without a round trip through the config file.
 //
-//   OC_HARNESS_BUDGET_WARN   warn once at this many input tokens (default 2M)
+//   OC_HARNESS_BUDGET_WARN   warn once at this many context tokens (default 2M)
 //   OC_HARNESS_BUDGET_STOP   block tool calls at this many (default 5M)
 //
 // Zero disables that threshold. A stop below the warn is not a warn: the warn
@@ -50,6 +53,34 @@ function count(raw, fallback) {
   const n = Number(raw)
   if (!Number.isFinite(n) || n < 0) return fallback
   return Math.floor(n)
+}
+
+/**
+ * What one request cost, in context tokens.
+ *
+ * A `step-finish` part reports four separate numbers: `input` is the part of
+ * the prompt that was not cached, `cache.read` is the cached prefix the model
+ * still had to read, `cache.write` is the prefix stored for the next request,
+ * and `output`/`reasoning` are what the model wrote. The first three are the
+ * context; only the first was counted before, which is why a step that cost
+ * 37,324 tokens was recorded as 844.
+ *
+ * `cache.write` is charged once, on the request that stored it, so summing it
+ * here is not double counting the reads that follow.
+ *
+ * A value that is not a number contributes zero: a missing field must not turn
+ * the whole count into NaN, because a NaN comparison never fires a threshold.
+ *
+ * @param {any} tokens a `step-finish` part's `tokens`
+ * @returns {number}
+ */
+export function requestTokens(tokens) {
+  /** @param {unknown} raw @returns {number} */
+  const n = (raw) => {
+    const x = Number(raw)
+    return Number.isFinite(x) && x > 0 ? Math.floor(x) : 0
+  }
+  return n(tokens?.input) + n(tokens?.cache?.read) + n(tokens?.cache?.write)
 }
 
 /**

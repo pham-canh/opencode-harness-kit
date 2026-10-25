@@ -4,6 +4,26 @@ export declare const DEFAULT_WINDOW_MINUTES = 60;
 export declare const DEFAULT_WINDOW_WARN_TOKENS = 4000000;
 export declare const DEFAULT_WINDOW_STOP_TOKENS = 8000000;
 /**
+ * What one request cost, in context tokens.
+ *
+ * A `step-finish` part reports four separate numbers: `input` is the part of
+ * the prompt that was not cached, `cache.read` is the cached prefix the model
+ * still had to read, `cache.write` is the prefix stored for the next request,
+ * and `output`/`reasoning` are what the model wrote. The first three are the
+ * context; only the first was counted before, which is why a step that cost
+ * 37,324 tokens was recorded as 844.
+ *
+ * `cache.write` is charged once, on the request that stored it, so summing it
+ * here is not double counting the reads that follow.
+ *
+ * A value that is not a number contributes zero: a missing field must not turn
+ * the whole count into NaN, because a NaN comparison never fires a threshold.
+ *
+ * @param {any} tokens a `step-finish` part's `tokens`
+ * @returns {number}
+ */
+export declare function requestTokens(tokens: any): number;
+/**
  * The limits this process should use.
  *
  * @param {Record<string, string | undefined>} [env]

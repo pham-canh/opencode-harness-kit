@@ -276,10 +276,49 @@ exit 0
   // measured - its cost is not known until it finishes - and the next one is
   // not started.
   assert.equal(r.status, 2, r.stdout + r.stderr)
-  assert.match(r.stderr, /STOP: the suite has spent 3,000 input tokens/)
+  assert.match(r.stderr, /STOP: the suite has spent 3,000 context tokens/)
   assert.match(r.stderr, /stops the run after the one that crossed it/)
   assert.match(r.stderr, /resume later with the same --out/)
   assert.equal(readdirSync(out).filter((f) => f.endsWith(".result.json")).length, 3)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("--budget counts the cached context, not just the uncached input", () => {
+  // The free window is spent on the whole context a request reads. A run that
+  // reports 100 fresh tokens against 1,900 cached ones costs 2,000, and a cap
+  // that only added the 100 would let the suite run ten times past it - which
+  // is how a 120-run suite walked into the provider's wall.
+  const dir = mkdtempSync(join(tmpdir(), "ab-budget-cache-"))
+  const bin = join(dir, "bin")
+  const target = join(dir, "subject")
+  const out = join(dir, "out")
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(target, { recursive: true })
+  writeFileSync(join(target, "a.ts"), "export const answer = 42\n")
+
+  const fake = join(bin, "opencode")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+printf '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":100,"cache":{"read":1900,"write":0}}}}\n'
+printf '{"type":"text","timestamp":2,"part":{"text":"a.ts:1"}}\n'
+exit 0
+`,
+  )
+  chmodSync(fake, 0o755)
+
+  const r = spawnSync(
+    process.execPath,
+    [AB, "--target", target, "--task", "where is answer", "--reps", "5", "--timeout", "10",
+     "--out", out, "--no-preflight", "--budget", "2500"],
+    { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+  )
+
+  // 2,000 per run against a 2,500 cap: two runs fit, the third is not started.
+  assert.equal(r.status, 2, r.stdout + r.stderr)
+  assert.match(r.stderr, /STOP: the suite has spent 4,000 context tokens/)
+  assert.equal(readdirSync(out).filter((f) => f.endsWith(".result.json")).length, 2)
 
   rmSync(dir, { recursive: true, force: true })
 })

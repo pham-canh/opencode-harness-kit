@@ -15,10 +15,34 @@ is not happening.
 ## [Unreleased]
 
 `oc-harness run` now stops for the reasons it already claimed to stop for,
-and the read-only lanes no longer have a write-capable shell.
+the read-only lanes no longer have a write-capable shell, and the token budget
+counts the context a request reads instead of only its uncached part.
 
 ### Fixed
 
+- **The token budget undercounted a cached session about ten times, so it
+  never fired.** A `step-finish` part reports `input`, `cache.read`,
+  `cache.write`, `output` and `reasoning`. The guard summed `input` alone -
+  the part of the prompt that was not cached - while the cached prefix, which
+  is what a long conversation actually re-reads, was ignored. One measured
+  stream reported 844 uncached tokens against 36,480 cached ones on the same
+  step, then 391 against 9,088. The 2M warn and 5M stop were therefore about
+  ten times the real spend, and the provider's window ran out before either
+  fired. `requestTokens()` in `src/budget.js` now counts `input + cache.read +
+  cache.write` for both the session total and the shared-window ledger; the
+  toasts and refusals say "context tokens" because that is what they count.
+- **The A/B's `--budget` had the same undercount.** The suite cap summed
+  `inputTokens`, so 120 runs reported about 1.3M of spend while their streams
+  carried 7.1M. `parseStream` now also returns `contextTokens`, the cap and the
+  report use it, and `--rescore` re-reads the old streams to put the corrected
+  number on them. `inputTokens` is still recorded so a table can be compared
+  with the ones written before this.
+- **The test suite wrote to the real window ledger.** `guard-hook.test.js`
+  exercised the guard with the default `OC_HARNESS_BUDGET_FILE`, so every test
+  run added its 1,500 and 600 tokens to
+  `~/.local/state/opencode-harness-kit/budget.json` - the live ledger showed
+  twelve test entries and nothing else. The tests now point the ledger at
+  their own temporary directory.
 - **The A/B's preflight said "ok" to a run that had failed.** It checked only
   the timeout and the quota, so a run that reported an error event and exited
   in three seconds passed. The first suite with that preflight spent eighteen

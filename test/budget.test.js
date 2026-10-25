@@ -12,6 +12,7 @@ import assert from "node:assert/strict"
 import {
   budgetLimits,
   createBudget,
+  requestTokens,
   tokens,
   DEFAULT_WARN_TOKENS,
   DEFAULT_STOP_TOKENS,
@@ -90,6 +91,41 @@ test("a disabled threshold never fires", () => {
 test("tokens() is a readable count", () => {
   assert.equal(tokens(12_025_980), "12,025,980")
   assert.equal(tokens(0), "0")
+})
+
+// --- what one request costs ------------------------------------------------
+
+test("a cached request is counted at its whole context, not its uncached part", () => {
+  // A real step from the A/B stream: 844 tokens of fresh input against 36,480
+  // of cached context. Counting `input` alone made this a 844-token step, and
+  // a 5M stop that never fires is not a stop.
+  assert.equal(
+    requestTokens({ input: 844, output: 35, reasoning: 246, cache: { read: 36_480, write: 0 } }),
+    37_324,
+  )
+  // The same step later in the run: almost nothing fresh, almost everything
+  // cached. This is the shape that used to look free.
+  assert.equal(requestTokens({ input: 391, cache: { read: 9_088 } }), 9_479)
+})
+
+test("a cache write is charged once, on the request that stored it", () => {
+  assert.equal(requestTokens({ input: 100, cache: { read: 0, write: 5_000 } }), 5_100)
+  assert.equal(requestTokens({ input: 100, cache: { read: 5_000, write: 0 } }), 5_100)
+})
+
+test("output and reasoning are not context", () => {
+  // `tokens.total` includes them. Summing the fields explicitly means a step
+  // cannot be counted twice by adding `total` on top of its components.
+  assert.equal(requestTokens({ total: 9_999, input: 10, output: 1_000, reasoning: 500 }), 10)
+})
+
+test("a missing or unusable field contributes zero instead of NaN", () => {
+  // NaN would compare false against every threshold, which is a budget that
+  // silently stops working.
+  assert.equal(requestTokens(undefined), 0)
+  assert.equal(requestTokens({}), 0)
+  assert.equal(requestTokens({ input: "abc", cache: { read: -5, write: null } }), 0)
+  assert.equal(requestTokens({ input: 12.7, cache: { read: 3 } }), 15)
 })
 
 // --- the shared window ------------------------------------------------------

@@ -344,14 +344,19 @@ test("a command that is not on the list is not blocked", () => {
 
 test("the session budget blocks tool calls once it is spent", async () => {
   // The provider's window is shared and opencode never shows a number for
-  // it. The guard counts the input tokens each step reports, and at the stop
+  // it. The guard counts the context each step reports, and at the stop
   // threshold it refuses tool calls - so the session fails with an
   // explanation instead of a model that looks broken.
   const dir = workspace()
   const prevWarn = process.env.OC_HARNESS_BUDGET_WARN
   const prevStop = process.env.OC_HARNESS_BUDGET_STOP
+  const prevFile = process.env.OC_HARNESS_BUDGET_FILE
   process.env.OC_HARNESS_BUDGET_WARN = "1000"
   process.env.OC_HARNESS_BUDGET_STOP = "2000"
+  // The ledger is a real file in the user's state directory. A test that
+  // leaves its 2,100 tokens there spends a window that a later session will
+  // be refused from - and did: the live ledger held twelve test entries.
+  process.env.OC_HARNESS_BUDGET_FILE = join(dir, "budget.json")
   try {
     const hooks = await guard(dir)
     const step = (id, input) => ({
@@ -374,6 +379,45 @@ test("the session budget blocks tool calls once it is spent", async () => {
     else process.env.OC_HARNESS_BUDGET_WARN = prevWarn
     if (prevStop === undefined) delete process.env.OC_HARNESS_BUDGET_STOP
     else process.env.OC_HARNESS_BUDGET_STOP = prevStop
+    if (prevFile === undefined) delete process.env.OC_HARNESS_BUDGET_FILE
+    else process.env.OC_HARNESS_BUDGET_FILE = prevFile
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a cached step spends its whole context, not just the uncached input", async () => {
+  // The bug this covers: `tokens.input` is the part of the prompt that was not
+  // in the provider's cache. A long conversation reports a few hundred there
+  // and tens of thousands in `cache.read`, so a budget that counted only
+  // `input` needed about ten times the real spend to fire - and the free
+  // window ran out first. 2,000 context tokens here used to read as 400.
+  const dir = workspace()
+  const saved = { ...process.env }
+  process.env.OC_HARNESS_BUDGET_FILE = join(dir, "budget.json")
+  process.env.OC_HARNESS_BUDGET_WARN = "0"
+  process.env.OC_HARNESS_BUDGET_STOP = "2000"
+  process.env.OC_HARNESS_BUDGET_WINDOW_STOP = "0"
+  try {
+    const hooks = await guard(dir)
+    await hooks.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "step-finish",
+            sessionID: "ses",
+            id: "p1",
+            tokens: { input: 400, output: 20, reasoning: 0, cache: { read: 1_600, write: 0 } },
+          },
+        },
+      },
+    })
+    const msg = await blocks(hooks, "read", { filePath: "src/a.ts" })
+    assert.ok(msg, "2,000 context tokens was read as 400 and the budget did not fire")
+    assert.match(msg, /2,000 context tokens/)
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
+    Object.assign(process.env, saved)
     rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -382,8 +426,10 @@ test("a repeated step part is counted once", async () => {
   const dir = workspace()
   const prevWarn = process.env.OC_HARNESS_BUDGET_WARN
   const prevStop = process.env.OC_HARNESS_BUDGET_STOP
+  const prevFile = process.env.OC_HARNESS_BUDGET_FILE
   process.env.OC_HARNESS_BUDGET_WARN = "1000"
   process.env.OC_HARNESS_BUDGET_STOP = "2000"
+  process.env.OC_HARNESS_BUDGET_FILE = join(dir, "budget.json")
   try {
     const hooks = await guard(dir)
     const event = {
@@ -400,6 +446,8 @@ test("a repeated step part is counted once", async () => {
     else process.env.OC_HARNESS_BUDGET_WARN = prevWarn
     if (prevStop === undefined) delete process.env.OC_HARNESS_BUDGET_STOP
     else process.env.OC_HARNESS_BUDGET_STOP = prevStop
+    if (prevFile === undefined) delete process.env.OC_HARNESS_BUDGET_FILE
+    else process.env.OC_HARNESS_BUDGET_FILE = prevFile
     rmSync(dir, { recursive: true, force: true })
   }
 })

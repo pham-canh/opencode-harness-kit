@@ -16,6 +16,7 @@ import {
   ledgerPath,
   readSpend,
   recordSpend,
+  requestTokens,
   tokens,
   windowLimits,
   windowSpend,
@@ -256,10 +257,10 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
   }
 
   // The free tier is a shared window and opencode never shows a number for
-  // it. One session made 599 requests and 12,025,980 input tokens; the first
-  // sign of trouble was the provider refusing the next one, which reads as a
-  // broken model rather than a spent budget. This counts the window and says
-  // so while there is still room to act.
+  // it. One session made 599 requests and 12,025,980 uncached input tokens;
+  // the first sign of trouble was the provider refusing the next one, which
+  // reads as a broken model rather than a spent budget. This counts the window
+  // and says so while there is still room to act.
   //
   // Per session, because a subagent gets its own session and its own prompt:
   // charging its tokens to the parent would warn the wrong conversation.
@@ -318,9 +319,14 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
 
   return {
     // The tokens are reported on the `step-finish` part, once per request.
-    // `message.updated` was the other candidate, but its `tokens.input` grows
+    // `message.updated` was the other candidate, but its token count grows
     // while the request streams and would have to be diffed per message; the
     // step part is already the final cost of that request.
+    //
+    // The cost is the whole context, not `tokens.input`: with prompt caching
+    // the uncached part is a few hundred tokens against tens of thousands of
+    // `cache.read`, so counting `input` alone made every threshold here about
+    // ten times too high. See `requestTokens` in ./budget.js.
     event: async ({ event }: any) => {
       if (event?.type !== "message.part.updated") return
       const part = event.properties?.part
@@ -330,7 +336,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
         counted.add(part.id)
       }
       const b = budgetFor(part.sessionID)
-      const spent = part.tokens?.input ?? 0
+      const spent = requestTokens(part.tokens)
       const crossed = b.add(spent)
 
       // The shared window, from the ledger every session writes to.
@@ -345,7 +351,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
         if (!windowWarned && window.warnAt > 0 && recent >= window.warnAt) {
           windowWarned = true
           await toast(
-            `All sessions have used ${tokens(recent)} input tokens in the last ${Math.round(window.windowMs / 60_000)} min ` +
+            `All sessions have used ${tokens(recent)} context tokens in the last ${Math.round(window.windowMs / 60_000)} min ` +
               `(warn at ${tokens(window.warnAt)}). The provider's window is shared, so a new session does not reset it.`,
             "warning",
           )
@@ -353,7 +359,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
         if (!windowSpent && window.stopAt > 0 && recent >= window.stopAt) {
           windowSpent = true
           await toast(
-            `The shared window hit ${tokens(window.stopAt)} input tokens in ${Math.round(window.windowMs / 60_000)} min: ` +
+            `The shared window hit ${tokens(window.stopAt)} context tokens in ${Math.round(window.windowMs / 60_000)} min: ` +
               `tool calls are now blocked in every session. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
             "error",
           )
@@ -362,7 +368,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
 
       if (crossed.warn) {
         await toast(
-          `This session has used ${tokens(b.total)} input tokens (warn at ${tokens(limits.warnAt)}). ` +
+          `This session has used ${tokens(b.total)} context tokens (warn at ${tokens(limits.warnAt)}). ` +
             `Start a new session before the provider's window runs out.`,
           "warning",
         )
@@ -383,7 +389,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
             input.tool,
             "session token budget",
             "the session hit its token budget",
-            `it has used ${tokens(budget.total)} input tokens, and the stop threshold is ${tokens(limits.stopAt)}. ` +
+            `it has used ${tokens(budget.total)} context tokens, and the stop threshold is ${tokens(limits.stopAt)}. ` +
               `Start a new session, or raise OC_HARNESS_BUDGET_STOP.`,
           )
         }
@@ -395,7 +401,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
             input.tool,
             "shared token window",
             "the shared token window is spent",
-            `all sessions have used ${tokens(window.stopAt)} input tokens in the last ` +
+            `all sessions have used ${tokens(window.stopAt)} context tokens in the last ` +
               `${Math.round(window.windowMs / 60_000)} min. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
           )
         }

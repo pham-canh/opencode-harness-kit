@@ -125,6 +125,23 @@ test("a hallucinated citation resolves to nothing", () => {
   assert.equal(resolveInTarget(root, "../../../etc/passwd"), null)
 })
 
+test("a citation into a deleted run copy resolves against the snapshot", () => {
+  // Every A/B run gets its own copy of the subject, and an agent that prints
+  // the absolute path it saw names the copy. The live run resolves that while
+  // the copy exists; `--rescore` runs after the copy is gone and has only the
+  // snapshot, so it has to map the path back or report "cited 0" for an
+  // answer that was right - which it did, on 5 of 33 runs.
+  const { root } = fixture()
+  assert.equal(
+    resolveInTarget(root, "/tmp/opencode-ab-run-read-control-n4UQnh/agent/score.py"),
+    join(root, "agent/score.py"),
+  )
+  // Still bounded by the snapshot: a copy path that names nothing there is a
+  // hallucination like any other.
+  assert.equal(resolveInTarget(root, "/tmp/opencode-ab-run-x/agent/nope.py"), null)
+  assert.equal(resolveInTarget(root, "/tmp/opencode-ab-run-x/../../../etc/passwd"), null)
+})
+
 test("gradeAnswer accepts a citation whose line holds the answer", () => {
   const { root, passLine } = fixture()
   const r = gradeAnswer(root, `The field is set at agent/score.py:${passLine}.`, "total >= 55")

@@ -161,6 +161,15 @@ export function resolveInTarget(target, ref) {
     const rel = target.replace(/^\/private/, "")
     if (ref.startsWith(rel)) candidates.push(`/private${ref}`)
     if (ref.startsWith(`/private${rel}`)) candidates.push(ref.replace(/^\/private/, ""))
+    // A run copy is a byte copy of the snapshot, so a path inside one names
+    // the same file relative to the snapshot. This is what makes `--rescore`
+    // grade an answer that cited `/tmp/opencode-ab-run-<id>/src/a.ts` after
+    // the copy is gone: the live run resolved it against the copy, the
+    // re-score has only the snapshot, and without this the same answer reads
+    // as "cited 0" - which is how a re-score reported 10/12 where the run it
+    // was re-scoring had scored 15/17.
+    const copy = /\/opencode-ab-run-[^/]+\/(.+)$/.exec(ref)
+    if (copy) candidates.push(join(target, copy[1]))
   } else {
     candidates.push(join(target, ref))
   }

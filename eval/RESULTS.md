@@ -265,17 +265,26 @@ Run after the budget work, on the route this install actually uses,
 resume rather than restart. 36 runs, 33 scored: three hit the 180-second
 ceiling (one on, two off) and are excluded rather than counted as wrong.
 
+**The token rows were re-read after the counter was fixed.** Until then the
+suite summed `tokens.input` - the part of the prompt that was not in the
+provider's cache - and the table called it "input tokens". The cost of a
+request is the whole context it reads, so the same streams report 270,448 and
+39,180: 6.9x, not 4.7x. The uncached row is kept because every table above it
+was written with that definition; the context row is the one to compare
+against the guard's budget.
+
 | metric (median) | kit on | kit off |
 | --- | --- | --- |
 | **correct** | **15/17** | **16/16** |
 | tool calls | 9 | 4 |
 | steps | 7 | 4 |
 | narrow reads | 60% | 83.4% |
-| input tokens | 44,444 | 9,527 |
+| context tokens | 270,448 | 39,180 |
+| uncached input | 44,444 | 9,527 |
 | final context | 43,823 | 11,236 |
 | wall seconds | 53.8 | 18.6 |
 
-Same shape as the 10-rep run, and a little worse for the kit: 4.7x the input
+Same shape as the 10-rep run, and a little worse for the kit: 6.9x the context
 tokens, 2.9x the wall time, twice the tool calls, and the one task the kit
 lost outright was `read-control` (1/3 against 3/3) - the smallest task in the
 suite, where the kit's fixed overhead is the whole cost. Three reps per arm
