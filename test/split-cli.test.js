@@ -226,7 +226,7 @@ test("`use` keeps hand-tuned keys through a comment + trailing comma edit", () =
     run(box, ["use", "beam-free", "--yes"])
 
     const after = parseJsonc(readFileSync(box.config, "utf8"))
-    assert.deepEqual(after.experimental, { batch_tool: true, continue_loop_on_deny: true, foo: true })
+    assert.deepEqual(after.experimental, { batch_tool: true, continue_loop_on_deny: false, foo: true })
     assert.equal(after.harness.profile, "beam-free")
   } finally {
     box.cleanup()

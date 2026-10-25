@@ -18,7 +18,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { tmpdir } from "node:os"
@@ -488,7 +488,79 @@ test("a second session is blocked by the window the first one spent", async () =
     const msg = await blocks(b, "read", { filePath: "src/a.ts" })
     assert.ok(msg, "a new session spent the same window again")
     assert.match(msg, /shared token window/)
-    assert.match(msg, /raise OC_HARNESS_BUDGET_WINDOW_STOP/)
+    assert.match(msg, /Raise OC_HARNESS_BUDGET_WINDOW_STOP/)
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
+    Object.assign(process.env, saved)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a single request over the turn stop blocks, and says not to retry", async () => {
+  // The measured loop: a denied tool call was fed back, the model retried, and
+  // each retry re-sent the whole 50,000-token prompt. The per-session stop is
+  // too large to see this until the window is gone; the per-turn stop is the
+  // count that does, and the message has to say the retry is the problem.
+  const dir = workspace()
+  const saved = { ...process.env }
+  process.env.OC_HARNESS_BUDGET_FILE = join(dir, "budget.json")
+  process.env.OC_HARNESS_BUDGET_WARN = "0"
+  process.env.OC_HARNESS_BUDGET_STOP = "0"
+  process.env.OC_HARNESS_BUDGET_WINDOW_STOP = "0"
+  process.env.OC_HARNESS_TURN_STOP = "1000"
+  try {
+    const hooks = await guard(dir)
+    await hooks.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "step-finish", sessionID: "ses", id: "p1", tokens: { input: 1200 } },
+        },
+      },
+    })
+    const msg = await blocks(hooks, "read", { filePath: "src/a.ts" })
+    assert.ok(msg, "one request re-sent 1,200 tokens against a 1,000 turn stop and was allowed")
+    assert.match(msg, /a single request in this session re-sent too much context/)
+    assert.match(msg, /do not retry/)
+    assert.match(msg, /1,200 tokens/)
+
+    // It is a property of that session, not of the machine: a different
+    // session may still start with a smaller task.
+    const other = await guard(dir)
+    assert.equal(
+      await blocks(other, "read", { filePath: "src/a.ts" }),
+      null,
+      "the turn stop leaked into a different session",
+    )
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
+    Object.assign(process.env, saved)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a corrupt shared ledger is repaired instead of locking the window", async () => {
+  // Failing closed was right for one call and wrong for the machine: the only
+  // exit was deleting a file the user had never heard of. The broken file is
+  // kept as evidence, the window starts empty, and the tool call runs.
+  const dir = workspace()
+  const ledger = join(dir, "budget.json")
+  const saved = { ...process.env }
+  process.env.OC_HARNESS_BUDGET_FILE = ledger
+  process.env.OC_HARNESS_BUDGET_WARN = "0"
+  process.env.OC_HARNESS_BUDGET_STOP = "0"
+  process.env.OC_HARNESS_BUDGET_WINDOW_STOP = "1000"
+  try {
+    writeFileSync(ledger, "{half a write")
+    const hooks = await guard(dir)
+    assert.equal(
+      await blocks(hooks, "read", { filePath: "src/a.ts" }),
+      null,
+      "a corrupt ledger locked the shared window",
+    )
+    assert.ok(existsSync(`${ledger}.corrupt`), "the broken ledger was deleted instead of kept")
+    assert.equal(readFileSync(`${ledger}.corrupt`, "utf8"), "{half a write")
+    assert.deepEqual(JSON.parse(readFileSync(ledger, "utf8")), [])
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
     Object.assign(process.env, saved)

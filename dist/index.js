@@ -908,6 +908,7 @@ import { homedir as homedir2 } from "node:os";
 import { dirname as dirname2, join as join2 } from "node:path";
 var DEFAULT_WARN_TOKENS = 2e6;
 var DEFAULT_STOP_TOKENS = 5e6;
+var DEFAULT_TURN_STOP_TOKENS = 3e5;
 var DEFAULT_WINDOW_MINUTES = 60;
 var DEFAULT_WINDOW_WARN_TOKENS = 4e6;
 var DEFAULT_WINDOW_STOP_TOKENS = 8e6;
@@ -927,9 +928,11 @@ function requestTokens(tokens2) {
 function budgetLimits(env = process.env) {
   const warnAt = count(env?.OC_HARNESS_BUDGET_WARN, DEFAULT_WARN_TOKENS);
   const stopAt = count(env?.OC_HARNESS_BUDGET_STOP, DEFAULT_STOP_TOKENS);
+  const turnStopAt = count(env?.OC_HARNESS_TURN_STOP, DEFAULT_TURN_STOP_TOKENS);
   return {
     warnAt: stopAt > 0 && warnAt > stopAt ? stopAt : warnAt,
-    stopAt
+    stopAt,
+    turnStopAt
   };
 }
 function createBudget({ warnAt = DEFAULT_WARN_TOKENS, stopAt = DEFAULT_STOP_TOKENS } = {}) {
@@ -979,20 +982,36 @@ function ledgerPath(env = process.env) {
   return join2(state, "opencode-harness-kit", "budget.json");
 }
 function readSpend(path) {
+  let raw;
   try {
     if (!existsSync(path)) return [];
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (e) => e && Number.isFinite(e.t) && Number.isFinite(e.n) && e.n > 0
-    );
+    raw = readFileSync(path, "utf8");
   } catch {
-    return [];
+    return null;
   }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  return parsed.filter(
+    (e) => e && Number.isFinite(e.t) && Number.isFinite(e.n) && (e.n > 0 || e.stop === true && e.n === 0)
+  );
 }
 function pruneSpend(entries, now) {
   const floor = now - KEEP_MS;
   return entries.filter((e) => e.t >= floor).sort((a, b) => a.t - b.t);
+}
+function repairSpend(path) {
+  try {
+    if (existsSync(path)) renameSync(path, `${path}.corrupt`);
+    writeSpend(path, []);
+    return true;
+  } catch {
+    return false;
+  }
 }
 function writeSpend(path, entries) {
   const tmp = `${path}.${process.pid}.tmp`;
@@ -1001,10 +1020,24 @@ function writeSpend(path, entries) {
   renameSync(tmp, path);
 }
 function recordSpend(path, n, now = Date.now()) {
-  const entries = pruneSpend(readSpend(path), now);
+  const previous = readSpend(path);
+  if (previous === null) repairSpend(path);
+  const entries = pruneSpend(previous ?? [], now);
   if (Number.isFinite(n) && n > 0) entries.push({ t: now, n: Math.floor(n) });
   writeSpend(path, entries);
   return entries;
+}
+function recordStop(path, now = Date.now()) {
+  const previous = readSpend(path);
+  if (previous === null) repairSpend(path);
+  const entries = pruneSpend(previous ?? [], now);
+  entries.push({ t: now, n: 0, stop: true });
+  writeSpend(path, entries);
+  return entries;
+}
+function stopRecorded(entries, now) {
+  const floor = now - KEEP_MS;
+  return entries.some((e) => e.stop === true && e.t >= floor);
 }
 function windowSpend(entries, now, windowMs) {
   const floor = now - windowMs;
@@ -1020,7 +1053,8 @@ function windowLimits(env = process.env) {
   return {
     windowMs: minutes * 6e4,
     warnAt: stopAt > 0 && warnAt > stopAt ? stopAt : warnAt,
-    stopAt
+    stopAt,
+    sticky: env?.OC_HARNESS_BUDGET_WINDOW_STICKY !== "0"
   };
 }
 
@@ -1177,10 +1211,13 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
   const limits = budgetLimits();
   const budgets = /* @__PURE__ */ new Map();
   const counted = /* @__PURE__ */ new Set();
+  const turnStops = /* @__PURE__ */ new Map();
   const window = windowLimits();
   const ledger = ledgerPath();
   let windowWarned = false;
   let windowSpent = false;
+  let windowWhy = "";
+  const sumWhy = () => `all sessions have used ${tokens(window.stopAt)} context tokens in the last ${Math.round(window.windowMs / 6e4)} min. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`;
   const budgetFor = (sessionID) => {
     let b = budgets.get(sessionID);
     if (!b) {
@@ -1190,16 +1227,34 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
     return b;
   };
   const sharedWindowSpent = () => {
-    if (windowSpent) return true;
-    if (window.stopAt <= 0) return false;
-    try {
-      if (windowSpend(readSpend(ledger), Date.now(), window.windowMs) >= window.stopAt) {
-        windowSpent = true;
-        return true;
+    if (windowSpent) return windowWhy;
+    if (window.stopAt <= 0) return null;
+    const entries = readSpend(ledger);
+    if (entries === null) {
+      if (repairSpend(ledger)) {
+        write(telemetryDir, { kind: "budget repair", tool: "ledger", rule: "corrupt ledger moved to .corrupt" });
+        return null;
       }
-    } catch {
+      windowSpent = true;
+      windowWhy = `the ledger at ${ledger} exists but cannot be read or repaired, so the spend cannot be counted. It is treated as spent rather than as zero: delete that file to start the window over, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`;
+      return windowWhy;
     }
-    return false;
+    const now = Date.now();
+    if (window.sticky && stopRecorded(entries, now)) {
+      windowSpent = true;
+      windowWhy = `a stop was recorded in this ledger and holds until its entries age out (six hours). The provider's window does not reopen on the ${Math.round(window.windowMs / 6e4)}-min timer, so this one does not either. Raise OC_HARNESS_BUDGET_WINDOW_STOP, or set OC_HARNESS_BUDGET_WINDOW_STICKY=0 to let the sum alone decide.`;
+      return windowWhy;
+    }
+    if (windowSpend(entries, now, window.windowMs) >= window.stopAt) {
+      windowSpent = true;
+      windowWhy = sumWhy();
+      try {
+        recordStop(ledger);
+      } catch {
+      }
+      return windowWhy;
+    }
+    return null;
   };
   const toast = async (message, variant) => {
     try {
@@ -1243,11 +1298,23 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
         }
         if (!windowSpent && window.stopAt > 0 && recent >= window.stopAt) {
           windowSpent = true;
+          windowWhy = sumWhy();
+          try {
+            recordStop(ledger);
+          } catch {
+          }
           await toast(
             `The shared window hit ${tokens(window.stopAt)} context tokens in ${Math.round(window.windowMs / 6e4)} min: tool calls are now blocked in every session. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
             "error"
           );
         }
+      }
+      if (limits.turnStopAt > 0 && spent >= limits.turnStopAt && !turnStops.has(part.sessionID)) {
+        turnStops.set(part.sessionID, spent);
+        await toast(
+          `One request in this session re-sent ${tokens(spent)} context tokens (turn stop ${tokens(limits.turnStopAt)}). Tool calls in this session are now blocked: stop, do not retry the same step. Start a new session with a smaller task.`,
+          "error"
+        );
       }
       if (crossed.warn) {
         await toast(
@@ -1273,12 +1340,17 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
             `it has used ${tokens(budget.total)} context tokens, and the stop threshold is ${tokens(limits.stopAt)}. Start a new session, or raise OC_HARNESS_BUDGET_STOP.`
           );
         }
-        if (sharedWindowSpent()) {
+        const spentReason = sharedWindowSpent();
+        if (spentReason) {
+          refuse(input.tool, "shared token window", "the shared token window is spent", spentReason);
+        }
+        const turnSpend = input.sessionID ? turnStops.get(input.sessionID) : void 0;
+        if (turnSpend !== void 0) {
           refuse(
             input.tool,
-            "shared token window",
-            "the shared token window is spent",
-            `all sessions have used ${tokens(window.stopAt)} context tokens in the last ${Math.round(window.windowMs / 6e4)} min. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`
+            "single request budget",
+            "a single request in this session re-sent too much context",
+            `it re-sent ${tokens(turnSpend)} tokens against a turn stop of ${tokens(limits.turnStopAt)}. Stop: do not retry the same step, because every retry re-sends the same prompt. Start a new session with a smaller task, or raise OC_HARNESS_TURN_STOP.`
           );
         }
         if (input.tool === "bash") {

@@ -21,6 +21,18 @@
 //
 //   OC_HARNESS_BUDGET_WARN   warn once at this many context tokens (default 2M)
 //   OC_HARNESS_BUDGET_STOP   block tool calls at this many (default 5M)
+//   OC_HARNESS_TURN_STOP     block after one request re-sent this much
+//                            (default 300k): the count that catches a loop the
+//                            per-session total is too large to catch
+//
+// and, for the window every session shares:
+//
+//   OC_HARNESS_BUDGET_WINDOW_MINUTES  how far back to sum (default 60)
+//   OC_HARNESS_BUDGET_WINDOW_WARN     warn once at this many (default 4M)
+//   OC_HARNESS_BUDGET_WINDOW_STOP     block tool calls at this many (default 8M)
+//   OC_HARNESS_BUDGET_WINDOW_STICKY   `0` lets a stop end when the sum rolls
+//                                     over; default on holds it for 6h
+//   OC_HARNESS_BUDGET_FILE            the ledger path (tests, benchmarks)
 //
 // Zero disables that threshold. A stop below the warn is not a warn: the warn
 // is clamped down to the stop, so the warning always comes first.
@@ -31,6 +43,16 @@ import { dirname, join } from "node:path"
 
 export const DEFAULT_WARN_TOKENS = 2_000_000
 export const DEFAULT_STOP_TOKENS = 5_000_000
+
+// What one request may re-send before it is a loop rather than a turn. A
+// request that re-sends 58,000 tokens costs the same on its fifth retry as on
+// its first, so the per-session total above does not see a loop until it has
+// spent far more than a person can use: the session that prompted this kit
+// made 599 requests at 20,077 tokens each. The per-turn count stops the loop
+// while the ledger still has room, and it is counted PER SESSION, not from the
+// shared ledger: one step-finish reports one request's context, and the
+// ledger's sum over an hour is a different number.
+export const DEFAULT_TURN_STOP_TOKENS = 300_000
 
 // The provider's window is not per session and not per project: every session
 // on the account draws on the same one, and it is what actually runs out. A
@@ -90,14 +112,16 @@ export function requestTokens(tokens) {
  * The limits this process should use.
  *
  * @param {Record<string, string | undefined>} [env]
- * @returns {{ warnAt: number, stopAt: number }}
+ * @returns {{ warnAt: number, stopAt: number, turnStopAt: number }}
  */
 export function budgetLimits(env = process.env) {
   const warnAt = count(env?.OC_HARNESS_BUDGET_WARN, DEFAULT_WARN_TOKENS)
   const stopAt = count(env?.OC_HARNESS_BUDGET_STOP, DEFAULT_STOP_TOKENS)
+  const turnStopAt = count(env?.OC_HARNESS_TURN_STOP, DEFAULT_TURN_STOP_TOKENS)
   return {
     warnAt: stopAt > 0 && warnAt > stopAt ? stopAt : warnAt,
     stopAt,
+    turnStopAt,
   }
 }
 
@@ -190,36 +214,90 @@ export function ledgerPath(env = process.env) {
 /**
  * The entries in the ledger, or none.
  *
- * A ledger that cannot be read is treated as empty: the guard runs inside
- * opencode, and a corrupt file must not stop the editor from working. The next
- * write replaces it, so the corruption repairs itself.
+ * Three answers, not two, because "I could not read the count" and "the count
+ * is zero" are different facts and only one of them means there is room left:
+ *
+ *   - no file            -> `[]`: nothing has been spent yet.
+ *   - a file that parses -> its entries.
+ *   - a file that does not parse -> `null`.
+ *
+ * It used to return `[]` for the third case, which made a corrupt or
+ * half-written ledger indistinguishable from an empty window: the shared stop
+ * silently disappeared. `sharedWindowSpent()` in `guard.ts` repairs the file
+ * instead (see `repairSpend`): a ledger that cannot be read must not lock the
+ * window forever, because the only way out is a hand-delete the user may not
+ * know about. Nothing here throws.
+ *
+ * A `stop` entry is a marker, not a spend: `{ t, n: 0, stop: true }` records
+ * that the window was locked at `t`, so the lock can outlive the sliding sum
+ * that tripped it.
  *
  * @param {string} path
- * @returns {{ t: number, n: number }[]}
+ * @returns {{ t: number, n: number, stop?: boolean }[] | null}
  */
 export function readSpend(path) {
+  let raw
   try {
     if (!existsSync(path)) return []
-    const parsed = JSON.parse(readFileSync(path, "utf8"))
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter(
-      (e) => e && Number.isFinite(e.t) && Number.isFinite(e.n) && e.n > 0,
-    )
+    raw = readFileSync(path, "utf8")
   } catch {
-    return []
+    return null
   }
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed)) return null
+  return parsed.filter(
+    (e) =>
+      e &&
+      Number.isFinite(e.t) &&
+      Number.isFinite(e.n) &&
+      (e.n > 0 || (e.stop === true && e.n === 0)),
+  )
 }
 
 /**
  * Keep the entries that are still inside the keep window, oldest first.
  *
- * @param {{ t: number, n: number }[]} entries
+ * @param {{ t: number, n: number, stop?: boolean }[]} entries
  * @param {number} now
- * @returns {{ t: number, n: number }[]}
+ * @returns {{ t: number, n: number, stop?: boolean }[]}
  */
 export function pruneSpend(entries, now) {
   const floor = now - KEEP_MS
   return entries.filter((e) => e.t >= floor).sort((a, b) => a.t - b.t)
+}
+
+/**
+ * Move an unreadable ledger aside and start a fresh one.
+ *
+ * The old code read a corrupt file as "spent" and failed closed, which is the
+ * right answer for a single tool call and the wrong answer for the machine:
+ * the only exit was deleting a file the user had never heard of, so the next
+ * session was blocked for six hours by a truncated JSON write. The evidence
+ * still matters - a corrupt ledger is a bug worth reading - so the broken file
+ * is renamed to `<path>.corrupt` rather than deleted, and an empty ledger
+ * replaces it. The count cannot be recovered, so the new file starts at zero;
+ * if the old file had a stop marker, `.corrupt` still holds it.
+ *
+ * Returns false when the repair could not be written; the caller then falls
+ * back to the old fail-closed answer rather than pretending the window is
+ * empty.
+ *
+ * @param {string} path
+ * @returns {boolean}
+ */
+export function repairSpend(path) {
+  try {
+    if (existsSync(path)) renameSync(path, `${path}.corrupt`)
+    writeSpend(path, [])
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -231,7 +309,7 @@ export function pruneSpend(entries, now) {
  * session would leave the window blocked for everyone.
  *
  * @param {string} path
- * @param {{ t: number, n: number }[]} entries
+ * @param {{ t: number, n: number, stop?: boolean }[]} entries
  */
 export function writeSpend(path, entries) {
   const tmp = `${path}.${process.pid}.tmp`
@@ -243,22 +321,62 @@ export function writeSpend(path, entries) {
 /**
  * Add one request's cost to the shared ledger.
  *
+ * A ledger that cannot be read is repaired first, so the first write after a
+ * corruption appends to a fresh file instead of overwriting the broken one.
+ * The repair does not invent a stop: the count is unknown, and a marker that
+ * holds for six hours is the failure this repair exists to end.
+ *
  * @param {string} path
  * @param {number} n
  * @param {number} [now]
- * @returns {{ t: number, n: number }[]} the pruned ledger
+ * @returns {{ t: number, n: number, stop?: boolean }[]} the pruned ledger
  */
 export function recordSpend(path, n, now = Date.now()) {
-  const entries = pruneSpend(readSpend(path), now)
+  const previous = readSpend(path)
+  if (previous === null) repairSpend(path)
+  const entries = pruneSpend(previous ?? [], now)
   if (Number.isFinite(n) && n > 0) entries.push({ t: now, n: Math.floor(n) })
   writeSpend(path, entries)
   return entries
 }
 
 /**
+ * Record that the window was locked, so the lock survives the window it was
+ * measured in.
+ *
+ * The sum is over the last hour, and the provider's window is not: it stayed
+ * shut for hours after the stop fired. A lock that releases itself on a timer
+ * is a lock that was only partly on, so the marker holds until `KEEP_MS`.
+ *
+ * @param {string} path
+ * @param {number} [now]
+ * @returns {{ t: number, n: number, stop?: boolean }[]} the pruned ledger
+ */
+export function recordStop(path, now = Date.now()) {
+  const previous = readSpend(path)
+  if (previous === null) repairSpend(path)
+  const entries = pruneSpend(previous ?? [], now)
+  entries.push({ t: now, n: 0, stop: true })
+  writeSpend(path, entries)
+  return entries
+}
+
+/**
+ * Whether a stop marker is still inside the keep window.
+ *
+ * @param {{ t: number, n: number, stop?: boolean }[]} entries
+ * @param {number} now
+ * @returns {boolean}
+ */
+export function stopRecorded(entries, now) {
+  const floor = now - KEEP_MS
+  return entries.some((e) => e.stop === true && e.t >= floor)
+}
+
+/**
  * Tokens spent in the last `windowMs`, across every session on this machine.
  *
- * @param {{ t: number, n: number }[]} entries
+ * @param {{ t: number, n: number, stop?: boolean }[]} entries
  * @param {number} now
  * @param {number} windowMs
  * @returns {number}
@@ -277,8 +395,13 @@ export function windowSpend(entries, now, windowMs) {
  * value that is not a positive number falls back to the default: a window of
  * zero would sum nothing and silently disable the tripwire.
  *
+ * `OC_HARNESS_BUDGET_WINDOW_STICKY` (default on) makes a stop hold until its
+ * marker ages out, instead of ending when the entries that tripped it roll out
+ * of the window. `0` restores the sum-only behaviour, which unlocks the
+ * window on a timer the provider does not keep.
+ *
  * @param {Record<string, string | undefined>} [env]
- * @returns {{ windowMs: number, warnAt: number, stopAt: number }}
+ * @returns {{ windowMs: number, warnAt: number, stopAt: number, sticky: boolean }}
  */
 export function windowLimits(env = process.env) {
   const rawMinutes = Number(env?.OC_HARNESS_BUDGET_WINDOW_MINUTES)
@@ -290,5 +413,6 @@ export function windowLimits(env = process.env) {
     windowMs: minutes * 60_000,
     warnAt: stopAt > 0 && warnAt > stopAt ? stopAt : warnAt,
     stopAt,
+    sticky: env?.OC_HARNESS_BUDGET_WINDOW_STICKY !== "0",
   }
 }

@@ -462,6 +462,27 @@ export function generateConfig(p, opts = {}) {
     }
   }
 
+  // A second bundle hid in the same map: the ECC subagents, whose prompts
+  // live at `prompts/agents/<name>.txt`. They are not lanes, so the loop
+  // above ignored them, and the live config carried 25 of them - architect,
+  // code-reviewer, e2e-runner and the rest. Their descriptions are loaded on
+  // every request, which is the 6k-token floor this removes; their prompts
+  // are read only when one is delegated to.
+  //
+  // Ownership is the same rule as above: only an entry whose prompt is the
+  // bundle's own `{file:...prompts/agents/<name>.txt}` is removed. An agent
+  // the user wrote, or a lane, is untouched.
+  const removedBundled = []
+  for (const name of Object.keys(agent)) {
+    if (roles[name] !== undefined) continue
+    if (lanes[name]) continue
+    const prompt = agent[name]?.prompt
+    if (typeof prompt === "string" && /\{file:[^}]*prompts\/agents\/[^}]+\}/.test(prompt)) {
+      delete agent[name]
+      removedBundled.push(name)
+    }
+  }
+
   // The user's own bash rules are merged in, not replaced.
   //
   // The map used to be built from the kit's two lists alone, so every rule
@@ -585,7 +606,13 @@ export function generateConfig(p, opts = {}) {
 
     experimental: {
       batch_tool: true,
-      continue_loop_on_deny: true,
+      // A denial is a stop, not a prompt. With this on, opencode hands the
+      // guard's refusal back to the model and continues the same loop; the
+      // measured session made 138 requests and 7,559,016 context tokens in 29
+      // minutes on six `shared token window` denials, each retry carrying
+      // the whole prompt. Off, the denial ends the turn and the error is what
+      // the user sees.
+      continue_loop_on_deny: false,
       ...(base.experimental ?? {}),
     },
 
@@ -634,6 +661,7 @@ export function generateConfig(p, opts = {}) {
     unhealthy,
     dropped: own.dropped,
     removedLanes,
+    removedBundled,
     skillsDropped: skillPaths.dropped,
     skills: opts.skills,
   })
@@ -643,8 +671,8 @@ export function generateConfig(p, opts = {}) {
  * @param {Record<string, any>} cfg
  * @param {Profile} p
  * @param {{ comments: boolean, instructionsPath?: string, unhealthy?: Set<string>,
- *          dropped?: string[], removedLanes?: string[], skillsDropped?: string[],
- *          skills?: boolean }} opts
+ *          dropped?: string[], removedLanes?: string[], removedBundled?: string[],
+ *          skillsDropped?: string[], skills?: boolean }} opts
  * @returns {string}
  */
 function render(cfg, p, opts) {
@@ -730,6 +758,15 @@ function render(cfg, p, opts) {
           ...opts.removedLanes.map((r) => `${c}  ${r}`),
           `${c}A lane whose prompt you had rewritten is left alone instead - pin the`,
           `${c}lane back with a prompt of your own if it was yours.`,
+        ]
+      : []),
+    ...(opts.removedBundled?.length
+      ? [
+          `${c}`,
+          `${c}Bundled subagents removed from the agent map (prompt prompts/agents/*):`,
+          ...opts.removedBundled.map((r) => `${c}  ${r}`),
+          `${c}Their descriptions were loaded on every request; hand-written agents`,
+          `${c}are left alone.`,
         ]
       : []),
     ...(opts.skillsDropped?.length

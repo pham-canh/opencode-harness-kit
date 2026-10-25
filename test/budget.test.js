@@ -16,21 +16,28 @@ import {
   tokens,
   DEFAULT_WARN_TOKENS,
   DEFAULT_STOP_TOKENS,
+  DEFAULT_TURN_STOP_TOKENS,
 } from "../src/budget.js"
 
-test("the defaults warn at 2M and stop at 5M", () => {
+test("the defaults warn at 2M, stop at 5M, and catch a single huge request", () => {
   assert.deepEqual(budgetLimits({}), {
     warnAt: DEFAULT_WARN_TOKENS,
     stopAt: DEFAULT_STOP_TOKENS,
+    turnStopAt: DEFAULT_TURN_STOP_TOKENS,
   })
   assert.equal(DEFAULT_WARN_TOKENS, 2_000_000)
   assert.equal(DEFAULT_STOP_TOKENS, 5_000_000)
+  assert.equal(DEFAULT_TURN_STOP_TOKENS, 300_000)
 })
 
-test("the environment sets both limits", () => {
+test("the environment sets all three limits", () => {
   assert.deepEqual(
-    budgetLimits({ OC_HARNESS_BUDGET_WARN: "1000", OC_HARNESS_BUDGET_STOP: "2000" }),
-    { warnAt: 1000, stopAt: 2000 },
+    budgetLimits({
+      OC_HARNESS_BUDGET_WARN: "1000",
+      OC_HARNESS_BUDGET_STOP: "2000",
+      OC_HARNESS_TURN_STOP: "500",
+    }),
+    { warnAt: 1000, stopAt: 2000, turnStopAt: 500 },
   )
 })
 
@@ -39,8 +46,16 @@ test("a value that is not a token count falls back instead of disabling the guar
   // budget that never fires. The fallback is the safe direction.
   for (const bad of ["abc", "-1", "", "Infinity"]) {
     assert.deepEqual(
-      budgetLimits({ OC_HARNESS_BUDGET_WARN: bad, OC_HARNESS_BUDGET_STOP: bad }),
-      { warnAt: DEFAULT_WARN_TOKENS, stopAt: DEFAULT_STOP_TOKENS },
+      budgetLimits({
+        OC_HARNESS_BUDGET_WARN: bad,
+        OC_HARNESS_BUDGET_STOP: bad,
+        OC_HARNESS_TURN_STOP: bad,
+      }),
+      {
+        warnAt: DEFAULT_WARN_TOKENS,
+        stopAt: DEFAULT_STOP_TOKENS,
+        turnStopAt: DEFAULT_TURN_STOP_TOKENS,
+      },
       `${JSON.stringify(bad)} did not fall back`,
     )
   }
@@ -48,15 +63,19 @@ test("a value that is not a token count falls back instead of disabling the guar
 
 test("zero disables that threshold on purpose", () => {
   assert.deepEqual(
-    budgetLimits({ OC_HARNESS_BUDGET_WARN: "0", OC_HARNESS_BUDGET_STOP: "0" }),
-    { warnAt: 0, stopAt: 0 },
+    budgetLimits({
+      OC_HARNESS_BUDGET_WARN: "0",
+      OC_HARNESS_BUDGET_STOP: "0",
+      OC_HARNESS_TURN_STOP: "0",
+    }),
+    { warnAt: 0, stopAt: 0, turnStopAt: 0 },
   )
 })
 
 test("a warn above the stop is clamped down, so the warning still comes first", () => {
   assert.deepEqual(
     budgetLimits({ OC_HARNESS_BUDGET_WARN: "9000", OC_HARNESS_BUDGET_STOP: "1000" }),
-    { warnAt: 1000, stopAt: 1000 },
+    { warnAt: 1000, stopAt: 1000, turnStopAt: DEFAULT_TURN_STOP_TOKENS },
   )
 })
 
@@ -145,6 +164,9 @@ import {
   pruneSpend,
   readSpend,
   recordSpend,
+  recordStop,
+  repairSpend,
+  stopRecorded,
   windowLimits,
   windowSpend,
 } from "../src/budget.js"
@@ -190,15 +212,28 @@ test("old entries are pruned so the file does not grow forever", () => {
   assert.deepEqual(kept.map((e) => e.n), [2, 3])
 })
 
-test("a corrupt ledger reads as empty instead of throwing", () => {
-  // The guard runs inside opencode: a half-written file must not stop the
-  // editor. The next write replaces it.
+test("a corrupt ledger is not empty, and is not a lock either", () => {
+  // `[]` for a corrupt file made the shared stop vanish; failing closed made
+  // the machine unusable until somebody found and deleted a file they had
+  // never heard of. The reader now says "cannot know" (`null`) and the only
+  // caller that matters repairs it.
   const dir = mkdtempSync(join(tmpdir(), "budget-corrupt-"))
   const path = join(dir, "budget.json")
   writeRaw(path, "{not json")
+  assert.equal(readSpend(path), null)
+  assert.equal(repairSpend(path), true)
   assert.deepEqual(readSpend(path), [])
+  assert.deepEqual(readdirSync(dir).sort(), ["budget.json", "budget.json.corrupt"])
+  assert.equal(readRaw(path + ".corrupt", "utf8"), "{not json")
+
+  // A record after the repair starts from zero instead of re-reading the
+  // broken file, and it does not invent a six-hour stop.
+  writeRaw(path, "{still not json")
+  recordSpend(path, 42, 1000)
+  assert.deepEqual(readSpend(path), [{ t: 1000, n: 42 }])
+
   writeRaw(path, JSON.stringify({ entries: [] }))
-  assert.deepEqual(readSpend(path), [])
+  assert.equal(readSpend(path), null)
   writeRaw(path, JSON.stringify([{ t: 1, n: 5 }, { t: 2, n: "x" }, null]))
   assert.deepEqual(readSpend(path), [{ t: 1, n: 5 }])
 
@@ -224,11 +259,15 @@ test("the window limits default to an hour and clamp a warn above the stop", () 
     windowMs: 60 * 60_000,
     warnAt: 4_000_000,
     stopAt: 8_000_000,
+    sticky: true,
   })
   assert.deepEqual(
     windowLimits({ OC_HARNESS_BUDGET_WINDOW_MINUTES: "30", OC_HARNESS_BUDGET_WINDOW_WARN: "9", OC_HARNESS_BUDGET_WINDOW_STOP: "5" }),
-    { windowMs: 30 * 60_000, warnAt: 5, stopAt: 5 },
+    { windowMs: 30 * 60_000, warnAt: 5, stopAt: 5, sticky: true },
   )
+  // Sticky is the default: the provider's window is still shut when our
+  // one-hour sum rolls out, so the stop cannot expire with the sum.
+  assert.equal(windowLimits({ OC_HARNESS_BUDGET_WINDOW_STICKY: "0" }).sticky, false)
   // Zero minutes would sum nothing and silently disable the tripwire.
   assert.equal(windowLimits({ OC_HARNESS_BUDGET_WINDOW_MINUTES: "0" }).windowMs, 60 * 60_000)
   assert.equal(windowLimits({ OC_HARNESS_BUDGET_WINDOW_MINUTES: "abc" }).windowMs, 60 * 60_000)

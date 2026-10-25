@@ -16,7 +16,10 @@ import {
   ledgerPath,
   readSpend,
   recordSpend,
+  recordStop,
+  repairSpend,
   requestTokens,
+  stopRecorded,
   tokens,
   windowLimits,
   windowSpend,
@@ -268,6 +271,11 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
   const budgets = new Map<string, ReturnType<typeof createBudget>>()
   /** `step-finish` parts already counted, so an update is not a second step. */
   const counted = new Set<string>()
+  // A single request that re-sent more than `OC_HARNESS_TURN_STOP`. This is
+  // the count that sees a deny/retry loop: each retry is a new request whose
+  // per-session total still looks small, but whose context re-send is the
+  // whole prompt. Keyed by session, valued by the size that tripped it.
+  const turnStops = new Map<string, number>()
 
   // The window is shared, so the count cannot live in this process: two
   // sessions open at once are two processes, and the one that has to warn is
@@ -277,6 +285,13 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
   const ledger = ledgerPath()
   let windowWarned = false
   let windowSpent = false
+  /** Why the window is spent, so the refusal states the real reason. */
+  let windowWhy = ""
+
+  /** The sum crossing its stop. Also the reason a recorded stop keeps holding. */
+  const sumWhy = () =>
+    `all sessions have used ${tokens(window.stopAt)} context tokens in the last ` +
+    `${Math.round(window.windowMs / 60_000)} min. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`
 
   const budgetFor = (sessionID: string) => {
     let b = budgets.get(sessionID)
@@ -288,24 +303,64 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
   }
 
   /**
-   * Whether the shared window is already spent.
+   * Why the shared window is spent, or null if it is not.
    *
    * Checked against the ledger, not only the cached flag: a session that opens
    * after the window ran out has seen no step of its own, so the flag would
    * still be false and its first tool call would go through.
+   *
+   * Three ways to be spent, and all three fail closed:
+   *
+   *   - a stop was recorded and its marker has not aged out. The sum is over
+   *     the last hour; the provider's window is not, so a lock that ends when
+   *     the sum rolls over was only partly on.
+   *   - the sum crossed the stop.
+   *   - the ledger exists and cannot be read. That is not a window with room
+   *     in it - it is an unknown count, and the old code read it as zero.
    */
-  const sharedWindowSpent = () => {
-    if (windowSpent) return true
-    if (window.stopAt <= 0) return false
-    try {
-      if (windowSpend(readSpend(ledger), Date.now(), window.windowMs) >= window.stopAt) {
-        windowSpent = true
-        return true
+  const sharedWindowSpent = (): string | null => {
+    if (windowSpent) return windowWhy
+    if (window.stopAt <= 0) return null
+    const entries = readSpend(ledger)
+    if (entries === null) {
+      // A corrupt ledger used to fail closed, and the only way out was a
+      // hand-delete the user had never heard of. Repair it instead and say so
+      // in telemetry; only a repair that cannot be written still fails closed.
+      if (repairSpend(ledger)) {
+        write(telemetryDir, { kind: "budget repair", tool: "ledger", rule: "corrupt ledger moved to .corrupt" })
+        return null
       }
-    } catch {
-      // Same rule as the record: an unreadable ledger does not block work.
+      windowSpent = true
+      windowWhy =
+        `the ledger at ${ledger} exists but cannot be read or repaired, so the spend cannot be counted. ` +
+        `It is treated as spent rather than as zero: delete that file to start the window over, ` +
+        `or raise OC_HARNESS_BUDGET_WINDOW_STOP.`
+      return windowWhy
     }
-    return false
+    const now = Date.now()
+    if (window.sticky && stopRecorded(entries, now)) {
+      windowSpent = true
+      windowWhy =
+        `a stop was recorded in this ledger and holds until its entries age out (six hours). ` +
+        `The provider's window does not reopen on the ${Math.round(window.windowMs / 60_000)}-min timer, ` +
+        `so this one does not either. Raise OC_HARNESS_BUDGET_WINDOW_STOP, or set ` +
+        `OC_HARNESS_BUDGET_WINDOW_STICKY=0 to let the sum alone decide.`
+      return windowWhy
+    }
+    if (windowSpend(entries, now, window.windowMs) >= window.stopAt) {
+      windowSpent = true
+      windowWhy = sumWhy()
+      // Persist the lock. The sum rolls out of the one-hour window while the
+      // provider's window stays shut, and a session that opens after the roll
+      // must not get a fresh turn out of the same spent budget.
+      try {
+        recordStop(ledger)
+      } catch {
+        // An unwritable ledger still blocks this process through windowSpent.
+      }
+      return windowWhy
+    }
+    return null
   }
 
   /** A toast is a courtesy, never a reason to fail a turn. */
@@ -358,12 +413,40 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
         }
         if (!windowSpent && window.stopAt > 0 && recent >= window.stopAt) {
           windowSpent = true
+          // Without this, `sharedWindowSpent()` returned the empty windowWhy
+          // and every tool call was allowed: the toast said "blocked" while
+          // the guard passed. The reason and the marker have to be set here,
+          // where the sum crossed.
+          windowWhy = sumWhy()
+          try {
+            recordStop(ledger)
+          } catch {
+            // The in-process flag still blocks this session.
+          }
           await toast(
             `The shared window hit ${tokens(window.stopAt)} context tokens in ${Math.round(window.windowMs / 60_000)} min: ` +
               `tool calls are now blocked in every session. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
             "error",
           )
         }
+      }
+
+      // The turn stop, before the total: a loop is one request re-sending the
+      // whole prompt, and the total may still be far below its stop. Block the
+      // next tool call in this session and say not to retry - a retry is what
+      // spent the window.
+      if (
+        limits.turnStopAt > 0 &&
+        spent >= limits.turnStopAt &&
+        !turnStops.has(part.sessionID)
+      ) {
+        turnStops.set(part.sessionID, spent)
+        await toast(
+          `One request in this session re-sent ${tokens(spent)} context tokens ` +
+            `(turn stop ${tokens(limits.turnStopAt)}). Tool calls in this session are now blocked: ` +
+            `stop, do not retry the same step. Start a new session with a smaller task.`,
+          "error",
+        )
       }
 
       if (crossed.warn) {
@@ -396,13 +479,19 @@ export const GuardPlugin: Plugin = async ({ worktree, directory, client }) => {
         // A new session does not reset the provider's window, so the shared
         // stop has to hold across sessions - otherwise the fix for a spent
         // session is "open another one", which spends the same window again.
-        if (sharedWindowSpent()) {
+        const spentReason = sharedWindowSpent()
+        if (spentReason) {
+          refuse(input.tool, "shared token window", "the shared token window is spent", spentReason)
+        }
+        const turnSpend = input.sessionID ? turnStops.get(input.sessionID) : undefined
+        if (turnSpend !== undefined) {
           refuse(
             input.tool,
-            "shared token window",
-            "the shared token window is spent",
-            `all sessions have used ${tokens(window.stopAt)} context tokens in the last ` +
-              `${Math.round(window.windowMs / 60_000)} min. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
+            "single request budget",
+            "a single request in this session re-sent too much context",
+            `it re-sent ${tokens(turnSpend)} tokens against a turn stop of ${tokens(limits.turnStopAt)}. ` +
+              `Stop: do not retry the same step, because every retry re-sends the same prompt. ` +
+              `Start a new session with a smaller task, or raise OC_HARNESS_TURN_STOP.`,
           )
         }
         if (input.tool === "bash") {

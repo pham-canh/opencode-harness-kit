@@ -464,7 +464,9 @@ test("context settings that matter are switched on", () => {
   assert.equal(c.compaction.tail_turns, undefined, "inert compaction key must be dropped")
   assert.deepEqual(c.tool_output, { max_lines: 2000, max_bytes: 51200 })
   assert.equal(c.experimental.batch_tool, true)
-  assert.equal(c.experimental.continue_loop_on_deny, true)
+  // A denial ends the turn. On, opencode fed the refusal back and retried -
+  // 138 requests and 7,559,016 context tokens in 29 minutes.
+  assert.equal(c.experimental.continue_loop_on_deny, false)
 })
 
 test("bash allowlist keeps read-only work silent and gates the dangerous rest", () => {

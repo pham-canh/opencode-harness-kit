@@ -20,6 +20,29 @@ counts the context a request reads instead of only its uncached part.
 
 ### Fixed
 
+- **A denied tool call was fed back as another turn, and the retry spent the
+  window.** `experimental.continue_loop_on_deny` was `true`, so opencode
+  handed the guard's refusal back to the model and continued the loop. The
+  measured session made 138 requests and 7,559,016 context tokens in 29
+  minutes on six `shared token window` denials, each retry re-sending the
+  whole prompt. The generated config now sets it to `false`, and the guard
+  blocks a single request that re-sends more than `OC_HARNESS_TURN_STOP`
+  (default 300k) with "do not retry".
+- **The in-event shared-window stop did not refuse anything.** When the
+  `step-finish` sum crossed `OC_HARNESS_BUDGET_WINDOW_STOP`, the guard set
+  `windowSpent` but never set `windowWhy`, so `sharedWindowSpent()` returned
+  an empty reason and every tool call was allowed. The reason is set where
+  the sum crosses, and the stop is written to the ledger with
+  `recordStop()` so a new session cannot outlive the provider's window.
+- **A corrupt ledger locked the machine for six hours, or vanished.** It is
+  now moved to `budget.json.corrupt` and the window starts empty; the broken
+  bytes are kept as evidence. `recordSpend()` and `recordStop()` repair
+  before writing instead of reading the corruption as an empty window.
+- **The bundled ECC subagents were loaded on every request.** Their
+  descriptions came from `prompts/agents/*.txt`, were not lanes, and so were
+  not covered by the stale-lane rule. They are removed from the generated
+  agent map when that is the prompt, and named in the config header;
+  hand-written agents are untouched.
 - **The token budget undercounted a cached session five to forty times, so it
   never fired.** A `step-finish` part reports `input`, `cache.read`,
   `cache.write`, `output` and `reasoning`. The guard summed `input` alone -

@@ -1177,10 +1177,11 @@ context per session, and at two thresholds it acts:
 |---|---|---|
 | `OC_HARNESS_BUDGET_WARN` | 2,000,000 | one toast: this session has used N context tokens |
 | `OC_HARNESS_BUDGET_STOP` | 5,000,000 | tool calls are refused, with the number and the fix |
+| `OC_HARNESS_TURN_STOP` | 300,000 | tool calls are refused after one request re-sends this much: the loop stop |
 
 ```bash
-OC_HARNESS_BUDGET_STOP=2000000 opencode    # a smaller window for a long task
-OC_HARNESS_BUDGET_WARN=0 OC_HARNESS_BUDGET_STOP=0 opencode   # off
+OC_HARNESS_BUDGET_STOP=2000000 OC_HARNESS_TURN_STOP=150000 opencode   # a smaller window for a long task
+OC_HARNESS_BUDGET_WARN=0 OC_HARNESS_BUDGET_STOP=0 OC_HARNESS_TURN_STOP=0 opencode   # off
 ```
 
 The stop is a refusal with an explanation, not a crash: the model gets the
@@ -1204,17 +1205,23 @@ is written to one file and the window is the sum of the entries inside it:
 | `OC_HARNESS_BUDGET_WINDOW_MINUTES` | 60 | how far back the sum reaches |
 | `OC_HARNESS_BUDGET_WINDOW_WARN` | 4,000,000 | one toast: the account has used N in the window |
 | `OC_HARNESS_BUDGET_WINDOW_STOP` | 8,000,000 | tool calls are refused in *every* session, old or new |
+| `OC_HARNESS_BUDGET_WINDOW_STICKY` | 1 | a crossed stop is recorded and holds until its entries age out (six hours) |
 
 The ledger is `OC_HARNESS_BUDGET_FILE`, default
 `$XDG_STATE_HOME/opencode-harness-kit/budget.json` (`~/.local/state/...` when
 `XDG_STATE_HOME` is unset).
 
-The file is written atomically (write, then rename), an unreadable file reads
-as empty rather than failing the session, and entries older than six hours are
-dropped on the next write. `0` disables either threshold. The stop is checked
-when the tool is called, not when the session starts, so a session opened
-after the window ran out is still refused - with the window's number, not the
-session's.
+The file is written atomically (write, then rename); an unreadable file is
+moved to `budget.json.corrupt` and the window starts empty instead of failing
+the session or locking it for six hours; entries older than six hours are
+dropped on the next write. A crossed stop is written into the ledger as a
+marker, so a session opened after the one-hour sum rolls out is still refused.
+`OC_HARNESS_BUDGET_WINDOW_STICKY=0` turns that marker off. `0` disables either
+threshold. The stop is checked when the tool is called, not when the session
+starts, so a session opened after the window ran out is still refused - with
+the window's number, not the session's.
+
+A denial ends the turn: the generated config sets `experimental.continue_loop_on_deny: false`. With it on, opencode fed the guard's refusal back to the model as another turn. The measured session retried six times and made 138 requests / 7,559,016 context tokens in 29 minutes, each retry re-sending the whole prompt. `OC_HARNESS_TURN_STOP` is the second half: it blocks a single request that re-sends more than 300k, while the total still looks small.
 
 The other half is the fixed cost. opencode writes every discovered skill's
 name and description into the system message, so a machine with a large skill
@@ -1228,17 +1235,7 @@ oc-harness use fleet-safe --no-skills
 omits the skill list from the lanes' prompt and says so in the config header.
 It is off by default: removing a capability is the user's call, not the kit's.
 
-It covers the ten lanes. **Subagents are a separate surface** and a separate
-decision: the flag does not touch them, because the kit does not generate them
-and a subagent's prompt is where a skill is usually named. On this machine
-thirty-three subagents came from the ECC bundle with the tool enabled, and the
-rule applied to them was mechanical rather than uniform: the tool is turned
-off where the prompt never says `skill:`, and left on where it does - six
-Java/Kotlin/PHP/Python/C++ agents tell themselves to read `springboot-patterns`,
-`kotlin-patterns` and the like, so removing the tool would have made their
-instructions unrunnable. Twenty-six of the thirty-three were off. The list is
-per-machine config, not a kit default; a reinstall of the bundle can reset it,
-and `oc-harness verify` does not check it.
+It covers the ten lanes. **Subagents are a separate surface**: the flag does not touch them. It does remove the bundled ECC subagents whose prompt is `prompts/agents/<name>.txt` from the generated agent map, because their descriptions were loaded on every request while their prompts were read only when one was delegated to. An agent you wrote, or a lane, is left alone, and the config header names every entry removed. The `skill` tool on a hand-written subagent is still your call, not the kit's.
 
 ## Known limits
 

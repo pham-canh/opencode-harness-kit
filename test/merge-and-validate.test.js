@@ -268,6 +268,43 @@ test("a lane whose prompt was rewritten is user data and is left alone", () => {
 
 // --- dead skills paths -------------------------------------------------------
 
+test("the bundled ECC subagents are dropped from the agent map, and named", () => {
+  // The second inherited bundle: 25 subagents whose prompts live at
+  // `prompts/agents/<name>.txt`. They are not lanes, so the stale-lane rule
+  // ignored them and every request carried their descriptions. Their prompts
+  // are read only when one is delegated to, so removing the entries from the
+  // agent map costs nothing until somebody asks for one.
+  const text = generateConfig(loadProfile("deepseek-v4.1-flash-free"), {
+    base: {
+      agent: {
+        architect: {
+          prompt: "{file:/home/x/.config/opencode/prompts/agents/architect.txt}",
+          model: "opencode/some-model",
+        },
+        "code-reviewer": {
+          prompt: "{file:/home/x/.config/opencode/prompts/agents/code-reviewer.txt}",
+          model: "opencode/some-model",
+        },
+        mine: { prompt: "{file:/mine/architect.md}", model: "opencode/whatever" },
+      },
+    },
+  })
+  const out = parseGenerated(text)
+  assert.equal(out.agent.architect, undefined, "the bundled architect survived")
+  assert.equal(out.agent["code-reviewer"], undefined, "the bundled code-reviewer survived")
+  assert.ok(out.agent.mine, "a hand-written agent was dropped with the bundle")
+  assert.match(text, /Bundled subagents removed from the agent map/)
+  assert.match(text, /architect/)
+  // No bundled prompt may be left behind under another name.
+  for (const [name, agent] of Object.entries(out.agent ?? {})) {
+    assert.doesNotMatch(
+      String(agent?.prompt ?? ""),
+      /prompts\/agents\//,
+      `the bundled prompt ${name} survived under a different name`,
+    )
+  }
+})
+
 test("a skills path that resolves nowhere is dropped and named", () => {
   // The kit's own config shipped `paths: ["../skills"]`, which resolves to
   // `~/.config/skills` - a directory that has never existed - and the entry
