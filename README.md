@@ -1321,6 +1321,13 @@ fails before it starts, the error event is now fatal on the spot:
   wrong answers. Its stream goes to a scratch directory, not `--out`, so
   `--rescore` does not warn about a file it cannot grade.
 
+The suite also turns the kit's own budget off for its runs and points the
+ledger at the run directory. A hundred and twenty runs spend more than the
+shared window's stop, and from that run on the guard would refuse tool calls -
+so the runs after it would be scored as wrong answers for a reason the suite
+is not measuring. The suite has its own cap, and the account's real window is
+not charged by a benchmark.
+
 `eval/ab.mjs` knows how to read opencode's event stream, so it can only compare
 the kit with opencode. `eval/compare.mjs` grades any CLI the same way: it runs
 the command in a fresh copy of the subject, treats stdout as the answer, and

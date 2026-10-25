@@ -383,3 +383,48 @@ exit 1
 
   rmSync(dir, { recursive: true, force: true })
 })
+
+test("the suite's own guard budget is off, so the kit cannot stop the benchmark", () => {
+  // 120 runs spend more than the shared window's stop. With the guard left at
+  // its defaults it would refuse tool calls partway through and every later
+  // run would be scored as a wrong answer for a reason the suite is not
+  // measuring. The ledger is moved too, so a benchmark does not charge the
+  // account's real window.
+  const dir = mkdtempSync(join(tmpdir(), "ab-env-"))
+  const bin = join(dir, "bin")
+  const target = join(dir, "subject")
+  const out = join(dir, "out")
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(target, { recursive: true })
+  mkdirSync(out, { recursive: true })
+
+  const fake = join(bin, "opencode")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+printf '%s|%s|%s|%s|%s\\n' "$OC_HARNESS_BUDGET_WARN" "$OC_HARNESS_BUDGET_STOP" "$OC_HARNESS_BUDGET_WINDOW_WARN" "$OC_HARNESS_BUDGET_WINDOW_STOP" "$OC_HARNESS_BUDGET_FILE" >> "${dir}/env.txt"
+printf '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":10}}}\\n'
+printf '{"type":"text","timestamp":2,"part":{"text":"ok"}}\\n'
+exit 0
+`,
+  )
+  chmodSync(fake, 0o755)
+
+  const r = spawnSync(
+    process.execPath,
+    [AB, "--target", target, "--task", "anything", "--reps", "1", "--timeout", "10", "--out", out],
+    { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+  )
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  // The last line is the measured run: the first one is the preflight, which
+  // has its own scratch directory.
+  const line = readFileSync(join(dir, "env.txt"), "utf8").trim().split("\n").at(-1)
+  const [warn, stop, winWarn, winStop, file] = line.split("|")
+  assert.equal(warn, "0")
+  assert.equal(stop, "0")
+  assert.equal(winWarn, "0")
+  assert.equal(winStop, "0")
+  assert.equal(file, join(out, "budget.json"))
+
+  rmSync(dir, { recursive: true, force: true })
+})

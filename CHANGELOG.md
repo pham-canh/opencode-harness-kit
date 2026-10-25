@@ -42,6 +42,14 @@ and the read-only lanes no longer have a write-capable shell.
   `/tmp` - made it find a file and fail for a reason that was not the code's.
   The test now runs twelve levels down, past the walk-up's ceiling, so nothing
   above its own tree is looked at; the walk-up itself is unchanged.
+- **The A/B was governed by the kit's own budget.** The kit-on arm runs on the
+  real config, so the guard's session and window thresholds applied to it: 120
+  runs spend more than the window's stop, and from the run that crossed it the
+  guard refused tool calls - every later run would be scored as a wrong answer
+  for a reason the suite is not measuring. The suite now sets all four
+  thresholds to `0` for its runs and points `OC_HARNESS_BUDGET_FILE` at the run
+  directory, so a benchmark neither trips the guard nor charges the account's
+  real window. The suite's own cap is `--budget`.
 - **An empty plan reported success.** A plan with no tasks printed
   "every task is done (0/0)" and exited 0. Nothing was done, so it now stops
   with exit 2 and says the plan has no tasks.

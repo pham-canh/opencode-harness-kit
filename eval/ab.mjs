@@ -663,6 +663,19 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
   return new Promise((resolve) => {
     const out = join(outDir, `${id}-${arm}-${idx}.json`)
     const env = { ...process.env }
+    // The kit's own guard must not decide the outcome of the suite. 120 runs
+    // spend more than the shared window's stop, so from the run that crosses it
+    // the guard would refuse tool calls - and every run after that point would
+    // be scored as a wrong answer for a reason the suite is not measuring. The
+    // suite has its own cap (`--budget`), and it is the one that counts here.
+    // The ledger is pointed at the run directory for the same reason: a
+    // benchmark should not charge the account's real window, or leave it
+    // looking spent to the session that started the benchmark.
+    env.OC_HARNESS_BUDGET_WARN = "0"
+    env.OC_HARNESS_BUDGET_STOP = "0"
+    env.OC_HARNESS_BUDGET_WINDOW_WARN = "0"
+    env.OC_HARNESS_BUDGET_WINDOW_STOP = "0"
+    env.OC_HARNESS_BUDGET_FILE = join(outDir, "budget.json")
     if (arm === "off" && home) {
       env.HOME = home
       // The kit-free home is only kit-free if the config is not found
