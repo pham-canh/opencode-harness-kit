@@ -18,6 +18,16 @@ bottom runs the same task with and without the kit, ten times each, on both
 arms at once - 120 agent runs, which is enough to be worth reading and not
 enough to be worth trusting.
 
+**One definition changed, and the tables are marked.** Until commit `8614d75`
+the A/B added up `tokens.input` - the part of each request that was not in the
+provider's prompt cache - and called it "input tokens". That is not what a
+request costs: a cached step reports a few hundred tokens there against tens of
+thousands in `cache.read`. The column is now called **uncached input**, and a
+**context tokens** row was added where the streams still exist to re-read it.
+Both are medians over the same runs; the context row is the one to compare
+against the guard's budget, and the uncached row is the one to compare against
+any table written before this note.
+
 ## Two measurements, and the difference between them
 
 **`npm run measure` is an OBSERVATION about one install.** It compares the work
@@ -175,7 +185,7 @@ so it entered the medians as a fast, empty, wrong answer.
 | narrow reads | 66.7% | 66.7% |
 | grep/glob calls | 3 | 2 |
 | steps | 9 | 6 |
-| input tokens | 56,205 | 10,540 |
+| uncached input | 56,205 | 10,540 |
 | final context | 39,928 | 12,718 |
 | wall seconds | 43 | 21 |
 | paths written outside the target | 0 | 0 |
@@ -199,8 +209,10 @@ traffic - gave **55/60 against 54/60**, the other way. Two measurements
 put the tie on either side of zero, which is what a tie looks like from
 both ends.
 
-**On everything else, the kit is a cost.** It spends **5.3x the input
-tokens** and takes **twice as long**, and it makes **more** tool calls.
+**On everything else, the kit is a cost.** It spends **5.3x the uncached input
+tokens** (the streams for this run are gone, so the context total cannot be
+re-derived; on the free route, where they survive, the same ratio is 6.9x) and
+takes **twice as long**, and it makes **more** tool calls.
 Those are the honest numbers.
 
 **The previous conclusion was the grader's fault, and it is worth writing
@@ -320,7 +332,7 @@ is the check that stops an ambiguous task.
 | tool calls | 12 | 12 |
 | read calls | 2 | 2 |
 | narrow reads | 50% | 58.4% |
-| input tokens | 46,025 | 17,324 |
+| uncached input | 46,025 | 17,324 |
 | final context | 45,455 | 18,962 |
 | wall seconds | **31.4** | 34.4 |
 | paths outside the target | 0 | 0 |
@@ -368,7 +380,7 @@ pristine subject file by file, and the answer is graded by citation.
 | **correct** | **2/2** | **2/2** |
 | tool calls | 47 | 46 |
 | read calls | 12 | 18 |
-| input tokens | 78,280 | 37,171 |
+| uncached input | 78,280 | 37,171 |
 | final context | 68,794 | 42,732 |
 | wall seconds | 121.4 | 104.7 |
 
@@ -396,7 +408,7 @@ off and on:
 | --- | --- | --- | --- |
 | tool calls | 67.5 | 51 | **-24%** |
 | read calls | 22.5 | 18.5 | -18% |
-| input tokens | 268,834 | 84,325 | **-69%** |
+| uncached input | 268,834 | 84,325 | **-69%** |
 | final context | 48,637 | 75,705 | +56% |
 | wall seconds | 307.5 | 123.5 | **-60%** |
 
@@ -437,7 +449,7 @@ task actually says, and the difference between the arms is the lane.
 | **correct** | **2/2** | **2/2** |
 | tool calls | 36 | 20 |
 | read calls | 5.5 | 7 |
-| input tokens | 85,499 | 38,934 |
+| uncached input | 85,499 | 38,934 |
 | wall seconds | 161.5 | 80.8 |
 
 ### What this says, and what it does not
