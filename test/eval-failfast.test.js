@@ -302,6 +302,47 @@ exit 0
   rmSync(dir, { recursive: true, force: true })
 })
 
+test("--rescore does not grade a timed-out run as a wrong answer", () => {
+  // The stream of a run that hit the ceiling stops mid-sentence and looks
+  // exactly like an answer that cited nothing. Only the sidecar knows. Four
+  // runs that timed out at 12 steps came back as four wrong answers, which
+  // turned 18/19 into 18/23.
+  const dir = mkdtempSync(join(tmpdir(), "ab-rescore-timeout-"))
+  const target = join(dir, "subject")
+  const out = join(dir, "out")
+  mkdirSync(target, { recursive: true })
+  mkdirSync(out, { recursive: true })
+  writeFileSync(join(target, "a.ts"), "export const answer = 42\n")
+
+  // A run that worked, and a run that timed out after doing work.
+  writeFileSync(
+    join(out, "single-off-1.json"),
+    '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":100}}}\n' +
+      '{"type":"text","timestamp":2,"part":{"text":"a.ts:1 export const answer = 42"}}\n',
+  )
+  writeFileSync(join(out, "single-off-1.result.json"), JSON.stringify({ id: "single", arm: "off", i: 1, correct: true }))
+  writeFileSync(
+    join(out, "single-off-2.json"),
+    '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":100}}}\n',
+  )
+  writeFileSync(
+    join(out, "single-off-2.result.json"),
+    JSON.stringify({ id: "single", arm: "off", i: 2, correct: null, timedOut: true, why: "TIMED OUT, not scored" }),
+  )
+
+  const r = spawnSync(
+    process.execPath,
+    [AB, "--target", target, "--task", "where is answer", "--expect", "answer = 42", "--rescore", out, "--timeout", "10"],
+    { encoding: "utf8", timeout: 60_000 },
+  )
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /single off-2 \.\.\. TIMED OUT, not scored/)
+  assert.match(r.stdout, /correct\s+0\/0\s+1\/1/)
+  assert.match(r.stdout, /not scored\s+0\s+1/)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test("--budget stops the suite with room left, and the stop is resumable", () => {
   const dir = mkdtempSync(join(tmpdir(), "ab-budget-"))
   const bin = join(dir, "bin")

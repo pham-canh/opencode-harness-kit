@@ -312,6 +312,41 @@ suite, where the kit's fixed overhead is the whole cost. Three reps per arm
 is not enough to call a correctness difference; it is enough to say the cost
 reproduces.
 
+### The 10-rep run: 47 of 120, stopped by the window
+
+    node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json \
+      --reps 10 --timeout 180 --out <scratch>/ab-self-10 --budget 12000000
+
+It reached 47 runs and then the account's free window ran out, which looks
+like `opencode run` hanging rather than like an error - see the preflight note
+in the README. The 47 are real; the other 73 were never started. Three of the
+six tasks have runs at all, so this is a partial set and **not** the headline
+number. It is here because the direction is worth having and because the files
+it came from will not survive forever:
+
+    node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json \
+      --rescore <scratch>/ab-self-10
+
+| metric | kit on | kit off |
+| --- | --- | --- |
+| correct, all three tasks | 18/19 | 22/22 |
+| `read-control` | 9/10 | 10/10 |
+| `read-multi-denylist` | 6/6 | 10/10 |
+| `read-multi-gate` | 3/3 | 2/2 |
+| context tokens (median) | 62,990 | 49,374 |
+| not scored | 5 | 1 |
+
+Five runs hit the 180-second ceiling: four of them are `read-multi-denylist`
+on the kit, at 12, 12, 15 and 20 steps, so on that task the kit did not merely
+answer worse, it did not finish four times in ten. The fifth is one kit-off
+run that produced nothing. The context ratio here (1.3x) is much smaller than
+the 3-rep run's 6.4x and should not be read as a contradiction: the task mix
+is different, and the four unfinished runs are excluded from the median.
+
+Resuming is `--out` plus the same command; a finished run is read from its
+sidecar and not paid for again, and the sidecar's token count is re-read from
+the stream so the cap counts the corrected number.
+
 ## The A/B on TypeScript, against a PUBLIC subject
 
     node eval/prepare.mjs --clone https://github.com/typesense/typesense-js \

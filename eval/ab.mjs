@@ -917,11 +917,27 @@ if (rescoreDir) {
     }
     const file = join(rescoreDir, f)
     const s = parseStream(file, TARGET_REAL)
-    const invalid = s.steps === 0
+    // The sidecar is the only place that knows a run hit the ceiling: its
+    // stream stops mid-sentence and looks exactly like a run that answered
+    // nothing. Grading it as wrong is the mistake this file warns about, and
+    // the re-score path made it - four runs that timed out at 12 steps came
+    // back as four wrong answers.
+    let timedOut = false
+    const side = join(rescoreDir, f.replace(/\.json$/, ".result.json"))
+    if (existsSync(side)) {
+      try {
+        timedOut = JSON.parse(readFileSync(side, "utf8")).timedOut === true
+      } catch {
+        // A sidecar that will not parse leaves the run scored on its stream.
+      }
+    }
+    const invalid = s.steps === 0 || timedOut
     let ok = null
     let why
     if (job.mutate) {
       why = "mutation not rescored"
+    } else if (timedOut) {
+      why = "TIMED OUT, not scored"
     } else if (invalid) {
       why = "no output, not scored"
     } else {
@@ -929,11 +945,14 @@ if (rescoreDir) {
       // the answers differently from the run it is re-scoring would be a
       // measurement of the grader, and the number it produced would not be
       // comparable with the one it is meant to explain.
-      const g = gradeAnswer(target, s.text, job.want, { exclude: SUITE_FILES })
+      // `want` is the suite's field and `expect` is the one a bare `--task`
+      // sets; reading only the first graded every single-task re-score against
+      // the string "undefined" and reported "none held" for a right answer.
+      const g = gradeAnswer(target, s.text, job.want ?? job.expect, { exclude: SUITE_FILES })
       ok = g.ok
       why = g.ok ? `cited ${g.cited}` : g.cited === 0 ? "no citation" : `cited ${g.cited}, none held`
     }
-    runs.push({ id: job.id, arm: m[2], i: Number(m[3]), ...s, wall: s.seconds, code: 0, timedOut: false, invalid: invalid || job.mutate, correct: ok, why })
+    runs.push({ id: job.id, arm: m[2], i: Number(m[3]), ...s, wall: s.seconds, code: 0, timedOut, invalid: invalid || job.mutate, correct: ok, why })
     console.log(`  ${job.id} ${m[2]}-${m[3]} ... ${why}`)
   }
   console.log("")

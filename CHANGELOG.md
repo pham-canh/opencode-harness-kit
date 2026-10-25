@@ -43,6 +43,17 @@ counts the context a request reads instead of only its uncached part.
   `~/.local/state/opencode-harness-kit/budget.json` - the live ledger showed
   twelve test entries and nothing else. The tests now point the ledger at
   their own temporary directory.
+- **`--rescore` graded a timeout as a wrong answer.** A run that hit the
+  ceiling has a stream that stops mid-sentence, which reads exactly like an
+  answer that cited nothing; only the sidecar knows which it was. Four runs
+  that timed out at 12 steps were re-scored as four wrong answers, and the
+  table then showed 18/23 where the honest count is 18/19.
+- **A resume crashed the report on a sidecar from an older version.** The
+  re-score reads `escaped`, `tools` and `text` from every result; a sidecar
+  written before those fields existed threw a `TypeError` after every run had
+  already been paid for. Missing fields are read as empty, and the corrected
+  token count is written back so a second resume does not depend on the stream
+  still being there.
 - **The A/B's preflight said "ok" to a run that had failed.** It checked only
   the timeout and the quota, so a run that reported an error event and exited
   in three seconds passed. The first suite with that preflight spent eighteen
