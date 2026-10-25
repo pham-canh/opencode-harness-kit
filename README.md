@@ -1099,14 +1099,14 @@ so anyone can repeat it:
 |---|---|---|
 | **correct** | **54/60** | **55/60** |
 | tool calls | 12.5 | 8 |
-| input tokens | 56,205 | 10,540 |
+| uncached input | 56,205 | 10,540 |
 | final context | 39,928 | 12,718 |
 | wall seconds | 43 | 21 |
 | paths written outside the target | 0 | 0 |
 
 **On a task that fits in one read, the kit is a cost.** It spends over five
-times the input tokens and takes twice as long, and the answers are a tie -
-54 against 55, and a second run of the same 120 runs gave 55 against 54.
+times the uncached input tokens and takes twice as long, and the answers are a
+tie - 54 against 55, and a second run of the same 120 runs gave 55 against 54.
 The two edit tasks are a tie at 10/10, and the guard stopped no writes in
 either arm.
 

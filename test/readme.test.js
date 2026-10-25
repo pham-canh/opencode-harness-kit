@@ -211,7 +211,7 @@ test("the README and eval/RESULTS.md quote the same A/B", () => {
 
   // The rows a reader decides on. If one of them is missing from either
   // file, the comparison below would pass without comparing it.
-  for (const row of ["**correct**", "input tokens", "final context", "wall seconds"]) {
+  for (const row of ["**correct**", "uncached input", "final context", "wall seconds"]) {
     assert.ok(a.has(row), `eval/RESULTS.md is missing the "${row}" row`)
     assert.ok(b.has(row), `README.md is missing the "${row}" row`)
   }
