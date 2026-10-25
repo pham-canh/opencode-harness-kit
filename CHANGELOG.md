@@ -19,6 +19,29 @@ and the read-only lanes no longer have a write-capable shell.
 
 ### Fixed
 
+- **The A/B's preflight said "ok" to a run that had failed.** It checked only
+  the timeout and the quota, so a run that reported an error event and exited
+  in three seconds passed. The first suite with that preflight spent eighteen
+  runs learning that every kit-off arm had failed with
+  `ProviderModelNotFoundError`, scored as "no output, not scored". It now
+  reads the stream, and any error event stops the suite with exit 2 and the
+  provider's own message.
+- **The kit-off arm could not resolve the model it was told to use.** opencode
+  keeps its model catalogue in `~/.cache/opencode/models.json`, and the arm's
+  temporary `HOME` had no cache, so a bare `model:` string was a model the
+  installation had never heard of. The cache is opencode's, not the kit's, so
+  it is symlinked into the temporary home the same way `~/.local/share/opencode`
+  already was.
+- **An error in a measured run was counted as a wrong answer.** A run that
+  produced no tool call and no text, but did report an error, now stops the
+  suite at once with that error instead of waiting for `--fail-fast` and then
+  scoring the refusal.
+- **The lane counter's "no telemetry" test failed on a machine that had one
+  two directories up.** The lookup walks up to the project root by design, so
+  `/tmp/.space/telemetry.jsonl` - written by any `opencode run` started in
+  `/tmp` - made it find a file and fail for a reason that was not the code's.
+  The test now runs twelve levels down, past the walk-up's ceiling, so nothing
+  above its own tree is looked at; the walk-up itself is unchanged.
 - **An empty plan reported success.** A plan with no tasks printed
   "every task is done (0/0)" and exited 0. Nothing was done, so it now stops
   with exit 2 and says the plan has no tasks.
@@ -100,6 +123,25 @@ and the read-only lanes no longer have a write-capable shell.
   is a fixed cost on every request. The flag turns the skill tool off for the
   lanes, which carry their instructions in `prompts/`, and the config header
   says so. Off by default.
+- **A shared-window ledger, so a new session does not reset the budget.** The
+  per-session count answered the wrong question: the free tier is one window
+  per account, and two sessions were measured spending one window 47 and 33
+  minutes apart. The guard now writes each session's spend to
+  `OC_HARNESS_BUDGET_FILE` (default `$XDG_STATE_HOME/opencode-harness-kit/budget.json`)
+  and sums the entries inside `OC_HARNESS_BUDGET_WINDOW_MINUTES` (default 60),
+  warning at `OC_HARNESS_BUDGET_WINDOW_WARN` (4M) and refusing tool calls at
+  `OC_HARNESS_BUDGET_WINDOW_STOP` (8M) in every session, including one opened
+  after the window ran out. The file is written atomically, an unreadable file
+  reads as empty, and entries older than six hours are pruned.
+- **`eval/ab.mjs --out <dir>`**: one stream and one result per run, and a
+  rerun with the same `--out` skips the runs that already have a result. A
+  suite stopped by the quota or by a reboot resumes instead of starting over.
+- **`eval/ab.mjs --budget <tokens>`**: cap the suite's input tokens. Checked
+  before each run, so the run that crosses the cap is still measured; the next
+  one stops the suite with exit 2.
+- **A preflight run in `eval/ab.mjs`** (on by default, `--no-preflight` to
+  skip): one question to the model before the suite, exit 2 if it does not
+  answer, times out, or its stream carries an error event.
 - `oc-harness run --review`: after verify passes, ask the reviewer lane for
   a schema'd verdict, `oc-harness/review@1`. A fail, prose, a malformed
   object or a crashed reviewer stops the run with exit 5 and marks the task

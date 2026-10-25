@@ -30,7 +30,7 @@ test("a route that answers nothing stops the suite instead of being timed out", 
 
   const r = spawnSync(
     process.execPath,
-    [AB, "--target", target, "--task", "say something", "--reps", "5", "--timeout", "5", "--fail-fast", "2"],
+    [AB, "--target", target, "--task", "say something", "--reps", "5", "--timeout", "5", "--fail-fast", "2", "--no-preflight"],
     {
       encoding: "utf8",
       timeout: 60_000,
@@ -82,7 +82,7 @@ exit 0
 
   const r = spawnSync(
     process.execPath,
-    [AB, "--target", target, "--task", "say something", "--reps", "5", "--timeout", "5", "--fail-fast", "2"],
+    [AB, "--target", target, "--task", "say something", "--reps", "5", "--timeout", "5", "--fail-fast", "2", "--no-preflight"],
     {
       encoding: "utf8",
       timeout: 60_000,
@@ -166,7 +166,7 @@ test("a run killed by the ceiling takes its process group with it", async () => 
 
   const r = spawnSync(
     process.execPath,
-    [AB, "--target", target, "--task", "hang", "--reps", "1", "--timeout", "1", "--fail-fast", "5"],
+    [AB, "--target", target, "--task", "hang", "--reps", "1", "--timeout", "1", "--fail-fast", "5", "--no-preflight"],
     {
       encoding: "utf8",
       timeout: 60_000,
@@ -190,6 +190,196 @@ test("a run killed by the ceiling takes its process group with it", async () => 
   // reaps it. Give the OS a moment before calling it a leak.
   for (let i = 0; i < 40 && alive(); i++) await new Promise((res) => setTimeout(res, 25))
   assert.equal(alive(), false, `pid ${pid} survived the timeout`)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("--out makes a suite resumable: a finished run is reused, not paid for twice", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-resume-"))
+  const bin = join(dir, "bin")
+  const target = join(dir, "subject")
+  const out = join(dir, "out")
+  const calls = join(dir, "calls")
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(target, { recursive: true })
+  writeFileSync(join(target, "a.ts"), "export const answer = 42\n")
+
+  // Count the real runs, and answer with the citation the grader wants.
+  const fake = join(bin, "opencode")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+echo run >> "${calls}"
+printf '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":100}}}\n'
+printf '{"type":"text","timestamp":2,"part":{"text":"a.ts:1"}}\n'
+exit 0
+`,
+  )
+  chmodSync(fake, 0o755)
+
+  const argv = (extra) => [
+    AB, "--target", target, "--task", "where is answer", "--reps", "2",
+    "--timeout", "10", "--out", out, "--no-preflight", ...extra,
+  ]
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` }
+
+  const first = spawnSync(process.execPath, argv([]), { encoding: "utf8", timeout: 60_000, env })
+  assert.equal(first.status, 0, first.stderr)
+  const ranFirst = readFileSync(calls, "utf8").trim().split("\n").length
+  assert.equal(ranFirst, 4, "2 reps x 2 arms should be 4 runs")
+
+  // Same --out: nothing runs, and the report still covers all four.
+  const second = spawnSync(process.execPath, argv([]), { encoding: "utf8", timeout: 60_000, env })
+  assert.equal(second.status, 0, second.stderr)
+  assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 4, "a resumed suite ran the agent again")
+  assert.match(second.stdout, /resumed/)
+  assert.match(second.stdout, /correct/)
+
+  // A sidecar is the unit of resume: one per run, named after it.
+  assert.deepEqual(
+    readdirSync(out).filter((f) => f.endsWith(".result.json")).sort(),
+    ["single-off-1.result.json", "single-off-2.result.json", "single-on-1.result.json", "single-on-2.result.json"],
+  )
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("--budget stops the suite with room left, and the stop is resumable", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-budget-"))
+  const bin = join(dir, "bin")
+  const target = join(dir, "subject")
+  const out = join(dir, "out")
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(target, { recursive: true })
+  writeFileSync(join(target, "a.ts"), "export const answer = 42\n")
+
+  const fake = join(bin, "opencode")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+printf '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":1000}}}\n'
+printf '{"type":"text","timestamp":2,"part":{"text":"a.ts:1"}}\n'
+exit 0
+`,
+  )
+  chmodSync(fake, 0o755)
+
+  const r = spawnSync(
+    process.execPath,
+    [AB, "--target", target, "--task", "where is answer", "--reps", "5", "--timeout", "10",
+     "--out", out, "--no-preflight", "--budget", "2500"],
+    { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+  )
+
+  // 1000 tokens per run, a 2500 cap: three runs fit under it, the fourth
+  // would not. The cap is checked before a run, so the run that crosses it is
+  // measured - its cost is not known until it finishes - and the next one is
+  // not started.
+  assert.equal(r.status, 2, r.stdout + r.stderr)
+  assert.match(r.stderr, /STOP: the suite has spent 3,000 input tokens/)
+  assert.match(r.stderr, /stops the run after the one that crossed it/)
+  assert.match(r.stderr, /resume later with the same --out/)
+  assert.equal(readdirSync(out).filter((f) => f.endsWith(".result.json")).length, 3)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("the preflight stops a closed route before any run is spent", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-preflight-"))
+  const bin = join(dir, "bin")
+  const target = join(dir, "subject")
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(target, { recursive: true })
+
+  const fake = join(bin, "opencode")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+echo '{"type":"error","timestamp":1,"error":{"name":"AI_APICallError","data":{"message":"Free usage limit reached. Subscribe to OpenCode Go to keep going: https://opencode.ai/go"}}}'
+exit 0
+`,
+  )
+  chmodSync(fake, 0o755)
+
+  const r = spawnSync(
+    process.execPath,
+    [AB, "--target", target, "--task", "anything", "--reps", "5", "--timeout", "10"],
+    { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+  )
+  assert.equal(r.status, 2, r.stdout + r.stderr)
+  assert.match(r.stderr, /out of quota before the suite started/)
+  assert.match(r.stderr, /nothing was measured/)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("the preflight fails when the run reports an error, not only when it hangs", () => {
+  // A three-second error used to print "ok" here. The first suite with this
+  // preflight passed it and then spent eighteen runs learning that every
+  // off arm had failed with ProviderModelNotFoundError.
+  const dir = mkdtempSync(join(tmpdir(), "ab-preflight-err-"))
+  const bin = join(dir, "bin")
+  const target = join(dir, "subject")
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(target, { recursive: true })
+
+  const fake = join(bin, "opencode")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+echo '{"type":"error","timestamp":1,"sessionID":"ses","error":{"name":"UnknownError","data":{"message":"ProviderModelNotFoundError: Model not found: opencode/nope"}}}'
+exit 1
+`,
+  )
+  chmodSync(fake, 0o755)
+
+  const r = spawnSync(
+    process.execPath,
+    [AB, "--target", target, "--task", "anything", "--reps", "5", "--timeout", "10"],
+    { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+  )
+  assert.equal(r.status, 2, r.stdout + r.stderr)
+  assert.match(r.stderr, /failed before the suite started/)
+  assert.match(r.stderr, /ProviderModelNotFoundError/)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("an error in a measured run stops the suite at once, instead of counting it as a wrong answer", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-run-err-"))
+  const bin = join(dir, "bin")
+  const target = join(dir, "subject")
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(target, { recursive: true })
+
+  // The preflight answers, the measured runs do not: this is the case where a
+  // setup problem appears only for the arm that has its own HOME.
+  let n = 0
+  const fake = join(bin, "opencode")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+n=$(cat "${dir}/n" 2>/dev/null || echo 0)
+echo $((n+1)) > "${dir}/n"
+if [ "$n" -eq 0 ]; then
+  printf '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":10}}}\n'
+  printf '{"type":"text","timestamp":2,"part":{"text":"ok"}}\n'
+  exit 0
+fi
+echo '{"type":"error","timestamp":1,"sessionID":"ses","error":{"name":"UnknownError","data":{"message":"ProviderModelNotFoundError: Model not found: opencode/nope"}}}'
+exit 1
+`,
+  )
+  chmodSync(fake, 0o755)
+
+  const r = spawnSync(
+    process.execPath,
+    [AB, "--target", target, "--task", "anything", "--reps", "5", "--timeout", "10", "--fail-fast", "9"],
+    { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+  )
+  assert.equal(r.status, 2, r.stdout + r.stderr)
+  assert.match(r.stderr, /measured the installation, not the kit/)
+  assert.match(r.stderr, /ProviderModelNotFoundError/)
 
   rmSync(dir, { recursive: true, force: true })
 })

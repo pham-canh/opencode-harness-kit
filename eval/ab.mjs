@@ -24,7 +24,7 @@
 // every fix so far would otherwise have cost another twenty runs.
 
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, cpSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, cpSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
@@ -81,6 +81,29 @@ const suitePath = flag("--suite")
 // has been wrong five times in this repo and every fix would otherwise have
 // cost another twenty runs.
 const rescoreDir = flag("--rescore")
+// Where the streams go, and therefore whether a suite can be continued.
+//
+// Without it every run lands in a fresh temp directory, so an interrupted
+// suite has nothing to continue from: a 36-run suite stopped at run 13 pays
+// for those 13 again. With `--out` the verdict for each run is written beside
+// its stream, and a later invocation with the same `--out` skips what is
+// already there.
+const outFlag = flag("--out")
+// A ceiling on what the whole suite may spend, in input tokens. The free tier
+// is one shared window and the suite is the biggest single consumer of it; a
+// cap is the difference between "the suite stopped" and "the account is out
+// until the window rolls".
+let suiteBudget = 0
+try {
+  const n = numberFlag("--budget")
+  if (n !== null) {
+    if (!(n > 0)) throw new Error("--budget must be more than 0 tokens, or the cap is removed")
+    suiteBudget = Math.floor(n)
+  }
+} catch (err) {
+  console.error(String(errorMessage(err)))
+  process.exit(1)
+}
 // The lane to run, for a suite that measures the kit's PROCESS rather than
 // its answers: a reviewer that does not edit, a verify that does not fix.
 const agent = flag("--agent")
@@ -129,6 +152,30 @@ const QUOTA_RE = /Free usage limit reached|FreeUsageLimitError|HTTP 429|"statusC
  * @param {string} stderr
  * @returns {string | null}
  */
+/**
+ * The first error event in a stream, or null.
+ *
+ * `opencode run --format json` reports a failure as a `{"type":"error"}` line
+ * and exits 0 or 1; the message is all the caller gets. The first one is the
+ * one that stopped the run.
+ *
+ * @param {string} stdout
+ * @returns {string | null}
+ */
+function streamError(stdout) {
+  for (const line of stdout.split("\n")) {
+    if (!line.includes('"type":"error"')) continue
+    try {
+      const ev = JSON.parse(line)
+      const msg = ev?.error?.data?.message ?? ev?.error?.message ?? ev?.error?.name
+      if (msg) return String(msg).slice(0, 240)
+    } catch {
+      return line.trim().slice(0, 240)
+    }
+  }
+  return null
+}
+
 function quotaReason(stdout, stderr) {
   const text = `${stdout}\n${stderr}`
   if (!QUOTA_RE.test(text)) return null
@@ -469,6 +516,17 @@ function makeNokitHome(model) {
   try {
     symlinkSync(join(REAL_HOME, ".local/share/opencode"), link, "dir")
   } catch {}
+  // And the cache, which is where opencode keeps `models.json` - the catalogue
+  // it resolves a `provider/model` string against. Without it a bare
+  // `model: "opencode/deepseek-v4.1-flash-free"` is a model the off arm has
+  // never heard of: every off run failed with "Unexpected server error" and
+  // the cause was only visible in `--print-logs` as ProviderModelNotFoundError.
+  // The cache is opencode's, not the kit's, so sharing it keeps the arm
+  // kit-free without making it a different installation.
+  mkdirSync(join(home, ".cache"), { recursive: true })
+  try {
+    symlinkSync(join(REAL_HOME, ".cache/opencode"), join(home, ".cache/opencode"), "dir")
+  } catch {}
   return home
 }
 
@@ -685,8 +743,54 @@ if (!armModel) {
   console.warn("        which is not necessarily the model the kit-on arm uses.")
 }
 const nokit = rescoreDir ? null : makeNokitHome(armModel)
-const outDir = rescoreDir ?? mkdtempSync(join(tmpdir(), "opencode-ab-out-"))
+// `--out` is what makes a suite resumable: the streams and their verdicts go
+// to a directory the caller names, so a second invocation can pick up where
+// the first stopped instead of paying for the same runs again.
+const outDir = rescoreDir ?? outFlag ?? mkdtempSync(join(tmpdir(), "opencode-ab-out-"))
+if (outFlag && !rescoreDir) mkdirSync(outFlag, { recursive: true })
 const before = fingerprint(target)
+
+/**
+ * The recorded verdict for one run, if `--out` was used and it is there.
+ *
+ * A sidecar rather than the stream alone, because grading a mutation needs the
+ * copy of the repository the run produced, and that copy is deleted. The
+ * verdict is written when it is known, and read back unchanged on a resume -
+ * re-grading a saved answer would be a second, possibly different, opinion.
+ *
+ * @param {string} id
+ * @param {"on" | "off"} arm
+ * @param {number} i
+ * @returns {any | null}
+ */
+function resumeRun(id, arm, i) {
+  if (!outFlag || rescoreDir) return null
+  const file = join(outDir, `${id}-${arm}-${i}.result.json`)
+  if (!existsSync(file)) return null
+  try {
+    const saved = JSON.parse(readFileSync(file, "utf8"))
+    // A sidecar from a different suite or a half-written file is not a
+    // result: the id and arm have to match, and there has to be a verdict.
+    if (saved?.id !== id || saved?.arm !== arm || saved?.i !== i) return null
+    if (!("correct" in saved)) return null
+    return saved
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Record one run's verdict so a later invocation can reuse it.
+ *
+ * @param {any} run
+ */
+function saveRun(run) {
+  if (!outFlag || rescoreDir) return
+  const file = join(outDir, `${run.id}-${run.arm}-${run.i}.result.json`)
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(run))
+  renameSync(tmp, file)
+}
 
 console.log(`A/B: ${jobs.length} task(s) x ${reps} rep(s) per arm${rescoreDir ? ", rescored" : ", alternating"}`)
 console.log(`  target  ${target}`)
@@ -695,6 +799,52 @@ console.log(`  timeout ${runTimeoutMs / 1000}s per run, giving up after ${failFa
 console.log(`  model   ${armModel ?? "(opencode's default - NOT pinned)"}`)
 if (nokit) console.log(`  kit-off home ${nokit}`)
 console.log("")
+
+// One cheap run before the suite, because the expensive failure is not a
+// wrong answer, it is spending the first twenty runs discovering the route is
+// closed. A preflight costs a few hundred tokens and turns that into one.
+//
+// `--no-preflight` skips it: a paid route has no window to spend, and the
+// check is a round trip.
+if (!rescoreDir && !args.includes("--no-preflight")) {
+  const probeDir = mkdtempSync(join(tmpdir(), "opencode-ab-preflight-"))
+  process.stdout.write("preflight ... ")
+  // Into the probe directory, not `--out`: a preflight stream has no task and
+  // would only be skipped with a warning by a later --rescore.
+  const probe = await runArmCapture("off", nokit, "preflight", 0, probeDir, "Reply with the single word: ok", probeDir)
+  if (probe.quota) {
+    console.log("")
+    console.error("FAIL: the model route is out of quota before the suite started, so nothing was measured.")
+    console.error(`  ${probe.quota}`)
+    console.error("  The free tier is one shared window: this suite and every chat session draw on it.")
+    console.error(`  preflight stream kept: ${probe.out}`)
+    process.exit(2)
+  }
+  if (probe.timedOut) {
+    console.log("")
+    console.error(`FAIL: the preflight did not answer within ${runTimeoutMs / 1000}s.`)
+    console.error("  A spent or unreachable route looks like this. Nothing was measured.")
+    console.error("  Check it by hand: opencode run --print-logs -m <model> hi")
+    console.error(`  preflight stream kept: ${probe.out}`)
+    process.exit(2)
+  }
+  // Answering is the test, not exiting. A run that reports an error and exits
+  // in three seconds used to print "ok" here - the first suite with this
+  // preflight passed it and then spent eighteen runs discovering that every
+  // off arm had failed.
+  const probeErr = streamError(readFileSync(probe.out, "utf8"))
+  if (probeErr) {
+    console.log("")
+    console.error("FAIL: the preflight run failed before the suite started, so nothing was measured.")
+    console.error(`  ${probeErr}`)
+    console.error("  A model the installation cannot resolve, or a provider that refuses the request,")
+    console.error("  fails every run the same way. Run one by hand to see the whole log:")
+    console.error("    opencode run --print-logs -m <model> hi")
+    console.error(`  preflight stream kept: ${probe.out}`)
+    process.exit(2)
+  }
+  console.log(`ok (${probe.wall}s)`)
+}
 
 const runs = []
 const keptCopies = []
@@ -736,6 +886,29 @@ if (rescoreDir) {
 } else for (const job of jobs) {
   for (let i = 1; i <= reps; i++) {
     for (const arm of /** @type {const} */ (["on", "off"])) {
+      // A run already in `--out` is not run again. This is the difference
+      // between an interrupted suite costing its remaining runs and costing
+      // all of them: a 36-run suite stopped at 13 paid for 13 twice.
+      const resumed = resumeRun(job.id, arm, i)
+      if (resumed) {
+        runs.push(resumed)
+        console.log(`  ${job.id} ${arm}-${i} ... resumed: ${resumed.why ?? (resumed.correct ? "correct" : "wrong")}`)
+        continue
+      }
+      // A ceiling on the suite's own spend, checked before each run rather
+      // than after: the point is not to buy the last run, it is to stop with
+      // room left in the window.
+      if (suiteBudget > 0) {
+        const spent = runs.reduce((n, r) => n + (r.inputTokens ?? 0), 0)
+        if (spent >= suiteBudget) {
+          console.log("")
+          console.error(`STOP: the suite has spent ${spent.toLocaleString("en-US")} input tokens, its --budget is ${suiteBudget.toLocaleString("en-US")}.`)
+          console.error(`  ${runs.length} run(s) measured, the rest were not started. A run's cost is only`)
+          console.error(`  known after it finishes, so the cap stops the run after the one that crossed it.`)
+          console.error(`  resume later with the same --out: node eval/ab.mjs ... --out ${outDir}`)
+          process.exit(2)
+        }
+      }
       // Every run gets its own throwaway copy of the subject. A read-only task
       // does not need one, but sharing a tree between an editing task and
       // anything else is how a run inherits the previous run's work.
@@ -760,6 +933,19 @@ if (rescoreDir) {
       const runReal = realpathSync(runDir)
       const m = parseStream(r.out, runReal)
       if (m.steps === 0 && m.text.trim() === "") {
+        // An error the installation can state is not a dead route to wait out:
+        // it will fail every run the same way, and --fail-fast would need two
+        // of them per task. Stop now and show the message.
+        const why = streamError(readFileSync(r.out, "utf8"))
+        if (why) {
+          console.log("")
+          console.error("FAIL: the run failed before it started, so this measured the installation, not the kit.")
+          console.error(`  ${why}`)
+          console.error(`  ${job.id} ${arm}-${i} produced no tool calls and no text. Nothing after it was measured.`)
+          console.error(`  A model the arm cannot resolve is the usual cause: the off arm has its own HOME.`)
+          console.error(`  raw stream kept: ${r.out}`)
+          process.exit(2)
+        }
         deadStreak++
         if (deadStreak >= failFast) {
           console.log("")
@@ -836,7 +1022,11 @@ if (rescoreDir) {
         ok = g.ok
         why = g.ok ? `cited ${g.cited}` : g.cited === 0 ? "no citation" : `cited ${g.cited}, none held`
       }
-      runs.push({ id: job.id, arm, i, ...m, wall: r.wall, code: r.code, timedOut: r.timedOut, invalid, correct: ok, why })
+      const run = { id: job.id, arm, i, ...m, wall: r.wall, code: r.code, timedOut: r.timedOut, invalid, correct: ok, why }
+      runs.push(run)
+      // Written before the escape check, because a run that escaped is still
+      // a result and re-running it would repeat the escape.
+      saveRun(run)
       // Stop the moment an arm reaches outside the run directory. The first
       // pilot wrote to the real repository while the task said not to modify
       // anything, so a second arm is not worth the risk once this has happened.

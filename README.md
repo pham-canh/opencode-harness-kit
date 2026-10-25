@@ -1175,6 +1175,34 @@ message that the session hit its budget and that a new session is the fix. A
 subagent gets its own session and its own count, so its tokens are not
 charged to the conversation that started it.
 
+### The window is shared, so a new session does not reset it
+
+The per-session count is the wrong shape for the thing that actually runs out.
+The free tier is one window per account: session A spends it, and session B -
+opened a minute later to get a clean count - is refused on its first request.
+Two sessions were measured spending one window 47 and 33 minutes apart, so
+"open a new session" is not a fix once the window is gone.
+
+The guard therefore keeps a ledger, not just a counter. Every session's spend
+is written to one file and the window is the sum of the entries inside it:
+
+| | default | what happens |
+|---|---|---|
+| `OC_HARNESS_BUDGET_WINDOW_MINUTES` | 60 | how far back the sum reaches |
+| `OC_HARNESS_BUDGET_WINDOW_WARN` | 4,000,000 | one toast: the account has used N in the window |
+| `OC_HARNESS_BUDGET_WINDOW_STOP` | 8,000,000 | tool calls are refused in *every* session, old or new |
+
+The ledger is `OC_HARNESS_BUDGET_FILE`, default
+`$XDG_STATE_HOME/opencode-harness-kit/budget.json` (`~/.local/state/...` when
+`XDG_STATE_HOME` is unset).
+
+The file is written atomically (write, then rename), an unreadable file reads
+as empty rather than failing the session, and entries older than six hours are
+dropped on the next write. `0` disables either threshold. The stop is checked
+when the tool is called, not when the session starts, so a session opened
+after the window ran out is still refused - with the window's number, not the
+session's.
+
 The other half is the fixed cost. opencode writes every discovered skill's
 name and description into the system message, so a machine with a large skill
 collection pays tens of thousands of tokens on every request, before the
@@ -1270,6 +1298,28 @@ Both arms pin `small_model` as well as `model`. `model` only covers the main
 loop; the title agent runs on `small_model`, whose default is a paid model, so
 an unpinned kit-off arm makes paid title calls for a benchmark that is meant
 to be free.
+
+The kit-off arm has its own `HOME` with no kit config in it, and that is
+enough to break it: opencode resolves `provider/model` against a catalogue it
+keeps in `~/.cache/opencode/models.json`, so an arm with a bare `HOME` reports
+`ProviderModelNotFoundError` for every model the live install knows. The
+catalogue is opencode's, not the kit's, so `eval/ab.mjs` symlinks the cache
+into the temporary home along with `~/.local/share/opencode`. If a run still
+fails before it starts, the error event is now fatal on the spot:
+
+- `--out <dir>` keeps each run's stream as `<id>-<arm>-<i>.json` next to a
+  `<id>-<arm>-<i>.result.json`, and a rerun with the same `--out` skips the
+  runs that already have a result. A suite interrupted by the quota, or by a
+  reboot, continues instead of starting over.
+- `--budget <tokens>` caps the suite's input tokens. It is checked before each
+  run, so the run that crosses the cap is still measured and counted; the next
+  one stops the suite with exit 2.
+- A preflight run (on by default, `--no-preflight` to skip) asks the model one
+  question before the suite and stops with exit 2 if it does not answer, if it
+  times out, or if its stream carries an error event. It costs one request and
+  saves the eighteen that a broken arm would otherwise spend being scored as
+  wrong answers. Its stream goes to a scratch directory, not `--out`, so
+  `--rescore` does not warn about a file it cannot grade.
 
 `eval/ab.mjs` knows how to read opencode's event stream, so it can only compare
 the kit with opencode. `eval/compare.mjs` grades any CLI the same way: it runs

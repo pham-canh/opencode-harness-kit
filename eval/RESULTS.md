@@ -255,6 +255,33 @@ one-file question following it is waste either way. A fleet that routes
 each job to the model built for it is the other half of what the kit
 offers, and this suite uses one model on both sides, so it cannot see that.
 
+### The same suite on the free route, 3 reps per arm
+
+    node eval/ab.mjs --target <scratch>/self --suite eval/tasks-self.json \
+      --reps 3 --timeout 180 --out <scratch>/ab-self-02 --budget 2500000
+
+Run after the budget work, on the route this install actually uses,
+`opencode/deepseek-v4.1-flash-free`, with `--out` so a quota stop would
+resume rather than restart. 36 runs, 33 scored: three hit the 180-second
+ceiling (one on, two off) and are excluded rather than counted as wrong.
+
+| metric (median) | kit on | kit off |
+| --- | --- | --- |
+| **correct** | **15/17** | **16/16** |
+| tool calls | 9 | 4 |
+| steps | 7 | 4 |
+| narrow reads | 60% | 83.4% |
+| input tokens | 44,444 | 9,527 |
+| final context | 43,823 | 11,236 |
+| wall seconds | 53.8 | 18.6 |
+
+Same shape as the 10-rep run, and a little worse for the kit: 4.7x the input
+tokens, 2.9x the wall time, twice the tool calls, and the one task the kit
+lost outright was `read-control` (1/3 against 3/3) - the smallest task in the
+suite, where the kit's fixed overhead is the whole cost. Three reps per arm
+is not enough to call a correctness difference; it is enough to say the cost
+reproduces.
+
 ## The A/B on TypeScript, against a PUBLIC subject
 
     node eval/prepare.mjs --clone https://github.com/typesense/typesense-js \
