@@ -16,15 +16,18 @@ passes.
 
 | Code | Meaning |
 |---|---|
-| 0 | Every task is done. |
+| 0 | Every task is done, and any final verify or final review that was asked for passed. |
 | 1 | There is no task file. The loop needs a plan to walk. |
-| 2 | Stopped early and a person is needed: a task is blocked, a task has no verify command or one that cannot fail (`true`, `echo ok`), a task file with no tasks in it, the agent changed files the task did not name, another run holds the lock, the round cap was reached, or the time budget ran out. |
-| 3 | The agent itself failed. The reason is the agent's own last words, and the task is marked blocked with them. This includes the agent exiting 0 with an empty transcript: that is a spent or unreachable model route, not a change worth verifying, so no verify runs. |
-| 4 | The verify command failed. The task is marked blocked and the real output is in `.space/tasks.md` - not in the exit code, which is no place for a stack trace. |
-| 5 | The review did not pass: the reviewer failed, returned prose instead of a schema'd verdict, or returned `fail`. The task is marked blocked with the blockers and the verdict file is in `.space/review/`. |
+| 2 | Stopped early and a person is needed: a task is already blocked, a task has no verify command or one that cannot fail (`true`, `echo ok`), a task file with no tasks in it, the agent changed files the task did not name, the round cap was reached, or the time budget ran out. |
+| 3 | This run got no edit to believe in. A spent or unreachable model route - a timeout, a non-zero exit before the agent took a step, or exit 0 with an empty transcript - leaves the task **pending** so `work` can try the next route. A build agent that ran and then failed marks the task blocked; there is no second route that would change that answer. Another run holding the project lock exits here too: wait for it. |
+| 4 | Verify failed after its fix rounds, or the final verify failed. The task is marked blocked and the real output is in `.space/tasks.md` - not in the exit code, which is no place for a stack trace. |
+| 5 | Review failed after its fix rounds, the final review failed, or the reviewer returned prose instead of a schema'd verdict. The task is marked blocked with the blockers and the verdict file is in `.space/review/`. |
 
 Code 2 is the "asked for something impossible" code: nothing about it is a
-bug, and the reason is printed. Codes 3, 4 and 5 mean the work did not land.
+bug, and the reason is printed. Codes 3, 4 and 5 mean this run did not land the
+task. Code 3 is the retryable one: a spent route leaves the plan unchanged and
+the task pending, so `work` can move to another route; a live lock means wait
+for the other run, do not delete the lock by hand.
 
 A task's `files:` line is a scope, not a hint. When the agent changes a file
 the line does not name, the loop marks the task blocked and stops rather than

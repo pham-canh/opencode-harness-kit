@@ -25,6 +25,7 @@ import {
   countSteps,
 } from "../src/driver/run.mjs"
 import { parseTasks, isVacuousVerify } from "../src/tasks.js"
+import { createRun, runTask } from "../src/driver/run-state.mjs"
 import { mkdtemp } from "./helpers.mjs"
 
 function scratch(doc) {
@@ -609,6 +610,16 @@ test("--force-unlock is the explicit way past a live lock", () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test("two tasks that share a title get separate records", () => {
+  const run = createRun({ cwd: "/tmp/example" })
+  const first = runTask(run, { title: "same", files: "a.js", change: "one", verify: "check-a" })
+  const second = runTask(run, { title: "same", files: "b.js", change: "two", verify: "check-a" })
+  assert.notEqual(first, second, "a shared title is not a shared record")
+  first.attempts = 2
+  assert.equal(second.attempts, 0)
+  assert.equal(run.tasks.length, 2)
+})
+
 test("a task keeps its identity when a same-titled duplicate is removed", () => {
   const doc = `# Goal
 
@@ -951,6 +962,18 @@ test("a review failure becomes a fix round, and only the last verdict decides", 
   })
   assert.equal(r.code, 0)
   assert.equal(reviews, 2)
+
+  // A fix round is a second review of the same task round. It must get its
+  // own file; overwriting the failed verdict would hide the failure that
+  // caused the fix.
+  const first = verdictPath(dir, { title: "do the thing" }, 1)
+  const second = verdictPath(dir, { title: "do the thing" }, 2)
+  assert.notEqual(first, second)
+  assert.equal(JSON.parse(readFileSync(first, "utf8")).verdict, "fail")
+  assert.equal(JSON.parse(readFileSync(second, "utf8")).verdict, "pass")
+  const run = JSON.parse(readFileSync(join(dir, ".space", "run.json"), "utf8"))
+  assert.deepEqual(run.tasks[0].reviews.map((entry) => entry.round), [1, 2])
+
   const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
   assert.equal(after.tasks[0].status, "done")
 })
@@ -985,6 +1008,33 @@ test("final verify and final review gate the summary", () => {
   const summary = readFileSync(join(dir, ".space", "summary.md"), "utf8")
   assert.match(summary, /Final verify: pass/)
   assert.match(summary, /Final review: pass/)
+  assert.match(summary, /Status: done/, "the summary is written after the run is marked done")
+  assert.doesNotMatch(summary, /Status: running/)
+})
+
+test("a preflight refusal finalizes the run record instead of leaving it running", () => {
+  const dir = scratch(`# Goal
+
+## Tasks
+- [ ] no check
+  - files: src/a.js
+  - change: make it work
+  - status: pending
+`)
+  const r = runLoop({
+    cwd: dir,
+    runAgent: () => {
+      throw new Error("preflight must run before the first agent call")
+    },
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+  })
+  assert.equal(r.code, 2)
+  const record = JSON.parse(readFileSync(join(dir, ".space", "run.json"), "utf8"))
+  assert.equal(record.status, "preflight-failed")
+  assert.equal(record.exitCode, 2)
+  assert.ok(record.endedAt, "a stopped run has an end time")
+  assert.equal(record.tasks[0].status, "blocked")
+  rmSync(dir, { recursive: true, force: true })
 })
 
 test("the run record holds the attempts and survives a redaction", () => {

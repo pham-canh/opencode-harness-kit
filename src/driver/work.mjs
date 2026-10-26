@@ -92,7 +92,10 @@ export function workRequest(options) {
     const planned = /** @type {any} */ (plan({
       cwd,
       request: options.request,
-      force: options.force === true,
+      // A plan already on disk that preflight refused is not a plan `--force`
+      // is protecting: leaving it would make the next command see the same
+      // error. Replacing it needs no second flag.
+      force: true,
       // `--dry-run` must not write; `--plan-only` must, or the command has
       // nothing to show for itself.
       print: options.dryRun === true,
@@ -107,7 +110,15 @@ export function workRequest(options) {
   } else if (options.planOnly && options.request) {
     // An explicit re-plan was asked for; an existing valid plan is replaced
     // only when --force says so.
-    const planned = /** @type {any} */ (plan({ cwd, request: options.request, force: options.force === true, print: true }))
+    // `print: true` here was the bug: --plan-only said "written" and wrote
+    // nothing, and --force changed no file. A dry run is the only mode that
+    // may print instead of write.
+    const planned = /** @type {any} */ (plan({
+      cwd,
+      request: options.request,
+      force: options.force === true,
+      print: options.dryRun === true,
+    }))
     if (!planned.ok) return { ok: false, code: planned.code, reason: planned.reason, phase: "plan", text: planned.text }
     return { ok: true, code: 0, phase: "plan", planned, loop: null }
   } else {
@@ -145,8 +156,10 @@ export function workRequest(options) {
   }
 
   // The baseline is what was already dirty when the run started. A checkpoint
-  // never commits any of it: those edits belong to whoever made them.
-  const baseline = options.allowDirty ? changedPaths(runDir) : new Set()
+  // never commits any of it: those edits belong to whoever made them - and
+  // --allow-dirty is the flag that says those edits are allowed to stay, not
+  // that they may be swept into the agent's commit.
+  const baseline = changedPaths(runDir)
 
   const prior = readRun(runDir)
   const run = prior ? { ...prior, status: "running", reason: "", exitCode: null } : createRun({
@@ -164,44 +177,46 @@ export function workRequest(options) {
   run.goal = run.goal || options.request || ""
   run.status = "running"
   run.branch = options.branch || options.worktree ? branchName : run.branch ?? null
-  writeRun(runDir, run)
+  // NOT written here. `runLoop` takes the lock before it writes, so a second
+  // work run in the same project refuses without overwriting the record of
+  // the run that is still going. A record written here made the loser of the
+  // lock race look like the winner.
 
-  const onTaskDone = ({ task }) => {
-    // Mutate the SAME record `runLoop` holds. Reading it back, updating the
-    // copy, and writing it out loses the update when the loop writes its own
-    // object at the end of the run - which is how a checkpoint SHA disappears
-    // from a record that clearly has the commit in git.
-    const record = runTask(run, task)
-    record.status = "done"
-    record.verify = task.verify
-    record.endedAt = new Date().toISOString()
-    if (options.commit) {
-      const made = checkpoint(runDir, { title: task.title, verify: task.verify, round: run.rounds }, {
-        baseline,
-        allowDirty: options.allowDirty === true,
-      })
-      if (!made.ok) return { ok: false, code: 2, reason: /** @type {any} */ (made).reason }
-      record.commit = made.commit
-      log(`checkpoint: ${made.commit ? made.commit.slice(0, 7) : "(nothing to commit)"} ${task.title}`)
+  /** A loop options value bound to ONE run record. */
+  const loopOptionsFor = (state) => {
+    const onTaskDone = ({ task }) => {
+      // Mutate the SAME record `runLoop` holds. Reading it back, updating the
+      // copy, and writing it out loses the update when the loop writes its own
+      // object at the end of the run - which is how a checkpoint SHA disappears
+      // from a record that clearly has the commit in git.
+      const record = runTask(state, task)
+      record.status = "done"
+      record.verify = task.verify
+      record.endedAt = new Date().toISOString()
+      if (options.commit) {
+        const made = checkpoint(runDir, { title: task.title, verify: task.verify, round: state.rounds }, { baseline })
+        if (!made.ok) return { ok: false, code: 2, reason: /** @type {any} */ (made).reason }
+        record.commit = made.commit
+        log(`checkpoint: ${made.commit ? made.commit.slice(0, 7) : "(nothing to commit)"} ${task.title}`)
+      }
+      writeRun(runDir, state)
+      return { ok: true }
     }
-    writeRun(runDir, run)
-    return { ok: true }
+    return {
+      ...loop,
+      cwd: runDir,
+      goal: options.request ?? "",
+      runState: state,
+      finalBaseRef: loop.finalBaseRef ?? null,
+      onTaskDone: (info) => {
+        const checkpointResult = onTaskDone(info)
+        if (!checkpointResult.ok) return checkpointResult
+        return loop.onTaskDone ? loop.onTaskDone(info) : { ok: true }
+      },
+    }
   }
 
-  const loopOptions = {
-    ...loop,
-    cwd: runDir,
-    goal: options.request ?? "",
-    runState: run,
-    finalBaseRef: loop.finalBaseRef ?? null,
-    onTaskDone: (info) => {
-      const checkpointResult = onTaskDone(info)
-      if (!checkpointResult.ok) return checkpointResult
-      return loop.onTaskDone ? loop.onTaskDone(info) : { ok: true }
-    },
-  }
-
-  let result = runLoop(loopOptions)
+  let result = runLoop(loopOptionsFor(run))
 
   // A spent route is not a failed edit. Move to the next rung once per rung,
   // and never retry the route that just failed.
@@ -216,7 +231,10 @@ export function workRequest(options) {
         process.env.OC_HARNESS_MODEL = route
         log(`route: ${result.reason.split("\n")[0]}`)
         log(`route: retrying on ${route}`)
-        result = runLoop({ ...loopOptions, runState: readRun(runDir) ?? run })
+        // The checkpoint closure has to see the record the retry is writing:
+        // passing a copy to runLoop while a closure still updates the first
+        // record dropped the commit SHA from the run the user reads.
+        result = runLoop(loopOptionsFor(readRun(runDir) ?? run))
         if (!isRouteFailure(result)) break
       }
     } finally {
@@ -224,9 +242,12 @@ export function workRequest(options) {
       else process.env.OC_HARNESS_MODEL = previous
     }
     if (isRouteFailure(result)) {
+      const verdict = routes.length
+        ? `tried every route in the ${loop.role ?? "build"} lane chain (${[...tried].join(", ")}).`
+        : `the ${loop.role ?? "build"} lane has no configured route chain, so there was nowhere to move.`
       result = {
         ...result,
-        reason: `${result.reason}\n\ntried every route in the ${loop.role ?? "build"} lane chain (${[...tried].join(", ")}). The failure is the model provider, not the task.`,
+        reason: `${result.reason}\n\n${verdict} The failure is the model provider, not the task.`,
       }
     }
   }

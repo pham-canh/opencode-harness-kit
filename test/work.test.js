@@ -18,7 +18,7 @@ function gitEnv() {
 }
 
 import { changedPaths, checkpoint, createBranch } from "../src/driver/git.mjs"
-import { readRun } from "../src/driver/run-state.mjs"
+import { createRun, readRun, writeRun } from "../src/driver/run-state.mjs"
 import { isRouteFailure, workRequest } from "../src/driver/work.mjs"
 
 const planText = `# Ship it
@@ -85,6 +85,81 @@ test("--plan-only writes the plan and never starts a loop", () => {
   assert.equal(r.code, 0)
   assert.equal(r.loop, null)
   assert.equal(r.phase, "plan")
+})
+
+test("an invalid plan on disk is replaced instead of refusing to plan", () => {
+  const dir = repo()
+  writeFileSync(join(dir, ".space", "tasks.md"), "# Goal\n\n## Tasks\n")
+  let seen = null
+  const r = workRequest({
+    cwd: dir,
+    request: "ship it",
+    planOnly: true,
+    plan: (opts) => {
+      seen = opts
+      writeFileSync(join(dir, ".space", "tasks.md"), planText)
+      return { ok: true, code: 0, path: join(dir, ".space", "tasks.md"), text: planText, tasks: 1 }
+    },
+  })
+  assert.equal(r.code, 0, r.reason)
+  assert.equal(seen.force, true, "a refused plan must not need a second --force")
+})
+
+test("--plan-only with --force actually replaces the plan", () => {
+  const dir = repo()
+  writeFileSync(join(dir, ".space", "tasks.md"), planText)
+  let seen = null
+  const r = workRequest({
+    cwd: dir,
+    request: "try again",
+    planOnly: true,
+    force: true,
+    plan: (opts) => {
+      seen = opts
+      writeFileSync(join(dir, ".space", "tasks.md"), planText.replace("42", "43"))
+      return { ok: true, code: 0, path: join(dir, ".space", "tasks.md"), text: "new plan", tasks: 1 }
+    },
+  })
+  assert.equal(r.code, 0, r.reason)
+  assert.equal(seen.force, true)
+  assert.equal(seen.print, false, "a real plan-only run must write, not print")
+  assert.match(readFileSync(join(dir, ".space", "tasks.md"), "utf8"), /43/)
+})
+
+test("--allow-dirty does not sweep a pre-existing edit into the checkpoint", () => {
+  const dir = repo()
+  writeFileSync(join(dir, ".space", "tasks.md"), planText)
+  writeFileSync(join(dir, "README.md"), "human edit\n")
+  const r = workRequest({
+    cwd: dir,
+    branch: "oc-harness/dirty",
+    commit: true,
+    allowDirty: true,
+    loop: {
+      runAgent: () => {
+        writeFileSync(join(dir, "answer.txt"), "42\n")
+        return { ok: true }
+      },
+      runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+    },
+  })
+  assert.equal(r.code, 0, r.reason)
+  const files = spawnSync("git", ["-C", dir, "show", "--name-only", "--format=", "HEAD"], { encoding: "utf8", env: gitEnv() })
+  assert.match(String(files.stdout), /answer\.txt/)
+  assert.doesNotMatch(String(files.stdout), /README\.md/, "the human's edit belongs to the human")
+  assert.equal(readFileSync(join(dir, "README.md"), "utf8"), "human edit\n")
+})
+
+test("a refused lock does not overwrite the run that holds it", () => {
+  const dir = repo()
+  writeFileSync(join(dir, ".space", "tasks.md"), planText)
+  const active = createRun({ cwd: dir, id: "active-run" })
+  writeRun(dir, active)
+  writeFileSync(join(dir, ".space", "run.lock"), JSON.stringify({ pid: process.pid, at: new Date().toISOString() }))
+  const r = workRequest({ cwd: dir, loop: {} })
+  assert.equal(r.code, 3)
+  assert.match(r.reason, /already in progress/)
+  assert.equal(readRun(dir).id, "active-run")
 })
 
 test("--dry-run never calls the loop", () => {
@@ -162,10 +237,12 @@ test("a route failure is retried once per other route and never on the same one"
   const r = workRequest({
     cwd: dir,
     routes: ["model-a", "model-b"],
+    commit: true,
     loop: {
       runAgent: () => {
         models.push(process.env.OC_HARNESS_MODEL ?? null)
         calls++
+        if (calls > 1) writeFileSync(join(dir, "answer.txt"), "42\n")
         return calls === 1 ? spent : { ok: true, stdout: "done" }
       },
       runVerify: () => ({ ok: true }),
@@ -176,6 +253,9 @@ test("a route failure is retried once per other route and never on the same one"
   assert.equal(models[1], "model-b")
   assert.equal(models[0], null)
   assert.equal(process.env.OC_HARNESS_MODEL, undefined, "the override must not leak out of the retry")
+  const record = readRun(dir)
+  assert.equal(record.status, "done", "the retry's record is the one that is written")
+  assert.ok(record.tasks[0].commit, "the checkpoint from the retry is recorded")
 })
 
 test("isRouteFailure separates a provider failure from a failed edit", () => {

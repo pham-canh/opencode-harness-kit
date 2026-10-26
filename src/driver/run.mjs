@@ -737,6 +737,7 @@ export function runLoop(options) {
   /** @type {any[]} */
   const entries = []
   let rounds = 0
+  let reviewCount = 0
   let tokens = 0
   let run = null
   let lock = null
@@ -778,6 +779,26 @@ export function runLoop(options) {
     }
 
     let parsed = parseTasks(readFileSync(file, "utf8"))
+    // The run record exists before preflight passes. A refused plan is a run
+    // that stopped, and a record left behind by the previous command would
+    // report a status that no longer matches the task file.
+    if (o.state !== false) {
+      run = o.runState ?? createRun({
+        cwd,
+        id: o.runId,
+        goal: o.goal ?? parsed.goal ?? "",
+        role,
+        branch: o.branch ?? null,
+      })
+      run.status = "running"
+      run.reason = ""
+      run.exitCode = null
+      run.endedAt = null
+      run.goal = run.goal || o.goal || parsed.goal || ""
+      for (const t of parsed.tasks) runTask(run, t)
+      writeRun(cwd, run)
+    }
+
     const preflight = validatePlan(parsed)
     for (const warning of preflight.warnings) log(`preflight: ${warning}`)
     if (preflight.errors.length) {
@@ -791,6 +812,11 @@ export function runLoop(options) {
           if (ids.has(`${t.index}`)) {
             const bad = !t.verify ? "no verify command" : `verify "${t.verify}" cannot fail`
             text = markTask(text, t, { status: "blocked", verifyOutput: `blocked before the agent ran: ${bad}` })
+            if (run) {
+              const stateTask = runTask(run, t)
+              stateTask.status = "blocked"
+              stateTask.note = `blocked before the agent ran: ${bad}`
+            }
           }
         }
         writeFileSync(file, text)
@@ -798,18 +824,6 @@ export function runLoop(options) {
       const reason = `plan preflight failed: ${preflight.errors.join("; ")}`
       for (const line of preflight.errors) log(`preflight: ${line}`)
       return finish({ reason, code: 2, status: "preflight-failed" })
-    }
-
-    if (o.state !== false) {
-      run = o.runState ?? createRun({
-        cwd,
-        id: o.runId,
-        goal: o.goal ?? parsed.goal ?? "",
-        role,
-        branch: o.branch ?? null,
-      })
-      for (const t of parsed.tasks) runTask(run, t)
-      writeRun(cwd, run)
     }
 
     const budgetStop = () => {
@@ -929,15 +943,20 @@ export function runLoop(options) {
         if (verify.ok) {
           if (!review) break
           const diff = reviewDiff(cwd, { baseRef: null })
-          const verdict = readVerdict(runReviewer, cwd, task, rounds, diff, verify, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
+          // `rounds` counts tasks, not reviews. A review that fails and is
+          // fixed is a second review of the SAME task round; keying the
+          // verdict file by `rounds` alone made the second write overwrite the
+          // first, so the audit trail lost the failure that caused the fix.
+          const reviewRound = ++reviewCount
+          const verdict = readVerdict(runReviewer, cwd, task, reviewRound, diff, verify, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
           if (stateTask) {
-            stateTask.reviews.push({ round: rounds, verdict: verdict.verdict ?? "invalid", at: new Date().toISOString(), note: verdict.error ?? "" })
+            stateTask.reviews.push({ round: reviewRound, verdict: verdict.verdict ?? "invalid", at: new Date().toISOString(), note: verdict.error ?? "" })
           }
           if (verdict.error) {
             blocked = { code: 5, reason: `${task.title}: reviewer did not return a schema'd verdict: ${verdict.error}` }
             break
           }
-          writeVerdict(cwd, task, rounds, verdict.parsed, verify)
+          writeVerdict(cwd, task, reviewRound, verdict.parsed, verify)
           if (verdict.parsed.verdict === "pass") break
           if (reviewFixes < reviewFixRounds) {
             reviewFixes++
@@ -1082,14 +1101,19 @@ export function runLoop(options) {
       log("final review passed")
     }
 
-    const summary = summarize(parseTasks(readFileSync(file, "utf8")))
-    if (run) writeSummary(cwd, run, parseTasks(readFileSync(file, "utf8")))
-    return finish({
+    const finalParsed = parseTasks(readFileSync(file, "utf8"))
+    const summary = summarize(finalParsed)
+    const result = finish({
       reason: `every task is done: ${summary.done}/${summary.total} (${rounds} rounds, ${elapsed().toFixed(0)}s)`,
       code: 0,
       summary,
       status: "done",
     })
+    // Written after finish, because finish is what sets the status the summary
+    // reports. Written before it, the file said "running" on a run that had
+    // just succeeded.
+    if (run) writeSummary(cwd, run, finalParsed)
+    return result
   } finally {
     lock?.release?.()
   }
@@ -1164,7 +1188,9 @@ function writeSummary(cwd, run, parsed) {
     ``,
     `## Notes`,
     ``,
-    ...(run.tasks.filter((t) => t.note).map((t) => `- ${t.title}: ${t.note}`) || ["- none"]),
+    ...(run.tasks.some((t) => t.note)
+      ? run.tasks.filter((t) => t.note).map((t) => `- ${t.title}: ${t.note}`)
+      : ["- none"]),
     ``,
   ]
   const path = join(cwd, ".space", "summary.md")
@@ -1204,11 +1230,6 @@ function stop(log, { reason, code, summary, rounds, tokens, run }) {
 function gitHead(cwd) {
   const res = spawnSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 10_000, env: gitEnv() })
   return res.status === 0 ? String(res.stdout).trim() : null
-}
-
-/** The run record carries its project, so the report can point at the file. */
-function cwdForRun(run) {
-  return run?.cwd ?? process.cwd()
 }
 
 export { TASKS_PATH }

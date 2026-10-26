@@ -90,6 +90,11 @@ export function changedPaths(cwd) {
  */
 export function createBranch(cwd, name, { allowDirty = false } = {}) {
   if (!isGitRepo(cwd)) return { ok: false, reason: "not a git repository" }
+  // A leading dash is parsed by git as an option, and a name with whitespace
+  // or .. is refused by git anyway; refusing it here says which argument was
+  // wrong instead of pasting git's usage text into the run log.
+  const bad = !name || name.startsWith("-") || /\s/.test(name) || name.includes("..") || name.endsWith("/") || name.startsWith("/")
+  if (bad) return { ok: false, reason: `cannot create branch: ${JSON.stringify(name)} is not a branch name` }
   const dirty = changedPaths(cwd)
   if (dirty.size && !allowDirty) {
     return {
@@ -111,12 +116,14 @@ export function createBranch(cwd, name, { allowDirty = false } = {}) {
  *
  * @param {string} cwd
  * @param {{ title: string, verify: string, round: number }} task
- * @param {{ baseline?: Set<string>, allowDirty?: boolean }} [opts]
+ * @param {{ baseline?: Set<string> }} [opts]
  * @returns {{ ok: true, commit: string | null } | { ok: false, reason: string }}
  */
-export function checkpoint(cwd, task, { baseline = new Set(), allowDirty = false } = {}) {
+export function checkpoint(cwd, task, { baseline = new Set() } = {}) {
   const now = changedPaths(cwd)
-  const paths = [...now].filter((p) => allowDirty || !baseline.has(p))
+  // The baseline is always excluded. `--allow-dirty` means those paths may
+  // stay dirty, not that a checkpoint may commit them.
+  const paths = [...now].filter((p) => !baseline.has(p))
   if (!paths.length) return { ok: true, commit: null }
 
   const added = git(cwd, ["add", "--", ...paths])

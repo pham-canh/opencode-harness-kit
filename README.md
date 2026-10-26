@@ -1135,8 +1135,8 @@ from a branch it did not write is exactly the failure this gate exists for.
 |---|---|
 | 0 | every task done, and any final verify/review that was asked for passed |
 | 1 | no task file |
-| 2 | bad plan, trust refused, scope violation, budget spent, round cap |
-| 3 | the model route failed before it edited anything; `work` tries the next route |
+| 2 | bad plan, trust refused, scope violation, budget spent, round cap, or a task already blocked |
+| 3 | a model route failed before it edited anything (task left pending; `work` tries the next route), the build agent ran and then failed, or another run holds the live lock |
 | 4 | a verify failed after its fix rounds, or a final verify failed |
 | 5 | a review failed after its fix rounds, or the reviewer's answer was not a verdict |
 

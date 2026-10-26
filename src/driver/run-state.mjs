@@ -103,18 +103,27 @@ export function createRun({ cwd, id, goal = "", role = "build", branch = null, w
 /**
  * Find or create the record for one task.
  *
- * Keyed by title + verify, the same identity `findTask` uses: two tasks may
- * share a title, and a record that merged them would report an attempt count
- * for work that was never attempted.
+ * Keyed by title + change + files, the same identity `findTask` uses. Two
+ * tasks may share a title and even a verify command while naming different
+ * files; a record that merged them would report one attempt count for work
+ * that was attempted twice.
  *
  * @param {ReturnType<typeof createRun>} run
- * @param {{ title: string, verify?: string }} task
+ * @param {{ title: string, change?: string, files?: string, verify?: string }} task
  */
 export function runTask(run, task) {
-  const hit = run.tasks.find((t) => t.title === task.title && (t.verify ?? "") === (task.verify ?? ""))
+  const hit = run.tasks.find(
+    (t) =>
+      t.title === task.title &&
+      (t.change ?? "") === (task.change ?? "") &&
+      (t.files ?? "") === (task.files ?? "") &&
+      (t.verify ?? "") === (task.verify ?? ""),
+  )
   if (hit) return hit
   const record = {
     title: task.title,
+    change: task.change ?? "",
+    files: task.files ?? "",
     verify: task.verify ?? "",
     status: "pending",
     attempts: 0,
