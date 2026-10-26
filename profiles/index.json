@@ -69,17 +69,6 @@
       "note": "The only free model publishing a `none` effort level, so it is the reasoning-off sweep lane. It hangs on a file ATTACHMENT - never hand it one - but not on a tool read."
     },
     {
-      "id": "nemotron-3-ultra-free",
-      "file": "profiles/nemotron-3-ultra-free.json",
-      "title": "Nemotron 3 Ultra Free",
-      "retention": "may-train",
-      "free": true,
-      "topEffort": null,
-      "context": 1000000,
-      "default": false,
-      "note": "The largest open MoE on the tier at 550B-A55B. No selectable effort. NVIDIA trial terms: sessions are logged."
-    },
-    {
       "id": "nemotron-3.5-lightning-free",
       "file": "profiles/nemotron-3.5-lightning-free.json",
       "title": "Nemotron 3.5 Lightning Free",

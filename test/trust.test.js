@@ -293,3 +293,62 @@ esac
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("a replacement that fails after the revoke says the package now has no publisher", () => {
+  // npm cannot edit a trusted publisher, so a mismatch is repaired by revoke
+  // then create. If the create fails, the package is worse off than before
+  // the command ran: the old configuration is gone. Saying "did not create"
+  // and stopping would leave that fact unsaid.
+  const dir = mkdtemp("ock-trust-replace-fail-")
+  const bin = join(dir, "bin")
+  mkdirSync(bin, { recursive: true })
+  const fake = join(bin, "npm")
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+case "$1" in
+  --version) echo "11.21.1" ;;
+  whoami) echo "someone" ;;
+  trust)
+    case "$2" in
+      list)
+        echo '{"id":"cfg-1","claims":{"repository":"pham-canh/opencode-harness-kit","workflow_ref":{"file":"ci.yml"}},"permissions":["publish"]}'
+        exit 0
+        ;;
+      revoke)
+        exit 0
+        ;;
+      github)
+        echo "npm error code E500" >&2
+        echo "npm error the registry refused the configuration" >&2
+        exit 1
+        ;;
+      *) echo "npm error unexpected trust call: $*" >&2; exit 1 ;;
+    esac
+    ;;
+  *) echo "npm error unexpected call: $*" >&2; exit 1 ;;
+esac
+`,
+    { mode: 0o755 },
+  )
+  try {
+    const r = spawnSync("node", [CLI, "trust"], {
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        OC_TRUST_NO_BROWSER: "1",
+        OC_TRUST_WAIT_SECONDS: "10",
+      },
+      encoding: "utf8",
+    })
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`
+    assert.notEqual(r.status, 0, "a failed replacement must not exit 0")
+    assert.doesNotMatch(out, /the trusted publisher is configured/, out)
+    assert.match(out, /did not create the replacement configuration/, out)
+    assert.match(out, /has already been revoked, so this package has no trusted publisher now/, out)
+    assert.match(out, /Put it back with/, out)
+    assert.match(out, /npm trust github opencode-harness-kit --file ci\.yml --repo pham-canh\/opencode-harness-kit/, out)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

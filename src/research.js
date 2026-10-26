@@ -47,6 +47,7 @@ export const TIER_PROVIDER = "opencode"
  * @property {{ count: number, gone: { id: string, provider: string, asBase: string[], inChains: Record<string, string[]>, present: boolean, reason: string }[] }} shipped
  * @property {{ lane: string, dead: string[], live: string[] }[]} lanes
  * @property {{ id: string, model: string, provider: string, context: number | null, output: number | null, effort: string[], capabilities: { toolCall: boolean, attachment: boolean, temperature: boolean }, retention: string, fits: string[], blockers: string[] }[]} candidates
+ * @property {string[]} unusable routes a live probe rejected, kept out of the shortlist
  */
 
 /**
@@ -216,6 +217,7 @@ export function shippedAcross(profiles) {
  * @param {(model: string) => string} [input.retentionOf] the retention verdict for a model id
  * @param {string} [input.provider]
  * @param {string | null} [input.defaultProfileId] the profile the lane view is about
+ * @param {Set<string>} [input.unusable] `provider/model` ids a probe could not use
  * @returns {ResearchReport} the report
  */
 export function researchModels({
@@ -224,6 +226,7 @@ export function researchModels({
   retentionOf = () => "unknown",
   provider = TIER_PROVIDER,
   defaultProfileId = null,
+  unusable = new Set(),
 }) {
   const tier = tierModels(catalog, provider)
   const live = tier.filter((t) => !t.withdrawn)
@@ -259,6 +262,10 @@ export function researchModels({
   // can do, which lanes it could serve, and what is still undecided.
   const candidates = live
     .filter((t) => !shipped.has(t.id))
+    // A live catalogue entry can still be a route that answers nothing. The
+    // probe result is a measurement, and a shortlist that recommends a dead
+    // route is worse than a shorter shortlist.
+    .filter((t) => !unusable.has(t.id) && !unusable.has(`${provider}/${t.id}`))
     .map((t) => {
       const fits = Object.entries(roles)
         .filter(([lane, role]) => fitsLane(t.model, lane, role ?? null))
@@ -320,6 +327,7 @@ export function researchModels({
     shipped: { count: shipped.size, gone },
     lanes,
     candidates,
+    unusable: [...unusable].sort(),
   }
 }
 

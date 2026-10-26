@@ -32,22 +32,24 @@ models. A profile says which lanes it enables and which model serves each one.
 
 | lane | job | model in `fleet-all` | model in `fleet-safe` |
 |---|---|---|---|
-| `build` | write and verify the change | minimax-m3.1-flash-free | minimax-m3.1-flash-free |
+| `build` | write and verify the change | flint-40b-free | deepseek-v4.1-flash-free |
 | `plan` | turn a request into a plan | beam-free | deepseek-v4.1-flash-free |
-| `reviewer` | read a change in two passes | nemotron-3-ultra-free | glm-5.3-flash-free |
+| `reviewer` | read a change in two passes | glm-5.3-flash-free | glm-5.3-flash-free |
 | `locate` | find where something lives | nemotron-3.5-lightning-free | deepseek-v4.1-flash-free |
 | `verify` | run the project's checks | big-pickle | deepseek-v4.1-flash-free |
-| `vision` | read an image or a screenshot | mimo-v2.6-flash-free | minimax-m3.1-flash-free |
+| `vision` | read an image or a screenshot | mimo-v2.6-flash-free | deepseek-v4.1-flash-free |
 | `doc` | read a long document or a spec | glm-5.3-flash-free | glm-5.3-flash-free |
 | `schema` | produce JSON or a JSON schema | deepseek-v4.1-flash-free | deepseek-v4.1-flash-free |
 | `sweep` | sweep a lot of code mechanically | nemotron-3.5-super-vl-free | deepseek-v4.1-flash-free |
-| `longform` | read a megabyte, or write alternatives | longcat-2.5-preview-free | longcat-2.5-preview-free |
+| `longform` | read a megabyte, or write alternatives | flint-40b-free | deepseek-v4.1-flash-free |
 
-`fleet-all` gives every lane the model built for it: ten jobs, ten models,
-one to one. `fleet-safe` is the same fleet under a zero-retention ceiling.
+`fleet-all` gives every lane the model built for it. Two models serve two
+jobs each - Flint writes and reads long form, GLM reviews and reads documents -
+because on this tier there is one model that does each of those jobs well.
+`fleet-safe` is the same fleet under a zero-retention ceiling.
 
-**Six of the ten lanes run on a second-choice model under that ceiling**:
-plan, reviewer, locate, verify, vision and sweep. That is the price of the
+**Seven of the ten lanes run on a second-choice model under that ceiling**:
+build, plan, locate, verify, vision, sweep and longform. That is the price of the
 ceiling, and it is worth paying only when the model that takes over is the
 best one available *for that job*, which is why the two fleets order their
 chains differently (see below).
@@ -270,8 +272,18 @@ of this kit's five original profiles were dead within a month - so every lane
 lists the models that could serve it, best first.
 
 ```
-build   minimax-m3.1-flash-free → deepseek-v4.1-flash-free → longcat-2.5-preview-free
-plan    beam-free               → deepseek-v4.1-flash-free → longcat-2.5-preview-free
+fleet-safe
+build   deepseek-v4.1-flash-free → glm-5.3-flash-free
+plan    deepseek-v4.1-flash-free → glm-5.3-flash-free
+reviewer glm-5.3-flash-free      → deepseek-v4.1-flash-free
+sweep   deepseek-v4.1-flash-free → glm-5.3-flash-free
+...
+
+fleet-all
+build   flint-40b-free              → deepseek-v4.1-flash-free
+plan    beam-free                   → deepseek-v4.1-flash-free
+reviewer glm-5.3-flash-free         → deepseek-v4.1-flash-free
+sweep   nemotron-3.5-super-vl-free  → beam-free
 ...
 ```
 
@@ -379,7 +391,7 @@ observed on OpenCode 1.19, with the plugin out of the way (`--pure`):
 
 ```
 agent file:  model: opencode/beam-free
-config:      agent.build.model: opencode/minimax-m3.1-flash-free
+config:      agent.build.model: opencode/flint-40b-free
 result:      the agent file's model wins
 ```
 

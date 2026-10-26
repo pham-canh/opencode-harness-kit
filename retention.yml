@@ -83,15 +83,6 @@ models:
     verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
-  opencode/nemotron-3-ultra-free:
-    retention: may-train
-    note: >-
-      NVIDIA free trial endpoints. "Trial use only - do not submit personal or
-      confidential data. Your use is logged for security purposes and to
-      improve NVIDIA products and services."
-    verified: 2026-10-19
-    source: https://opencode.ai/docs/zen
-
   opencode/nemotron-3.5-lightning-free:
     retention: may-train
     note: >-

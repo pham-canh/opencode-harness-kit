@@ -1,0 +1,13 @@
+{
+  "$comment": "Free routes a live probe could not use. `eval/models.mjs --free` skips these. Re-probe a model before removing it from this list.",
+  "checked": "2026-10-26",
+  "probe": "node eval/models.mjs --free --check --reps 2",
+  "models": {
+    "opencode/nemotron-3-ultra-free": {
+      "category": "error",
+      "attempts": 2,
+      "reason": "exit 0 with no step and no text on every attempt (no reply)",
+      "checked": "2026-10-26"
+    }
+  }
+}

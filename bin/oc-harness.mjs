@@ -37,6 +37,7 @@ import {
   resolveRoleModel,
   resolveLaneChain,
   resolveLaneModel,
+  resolveEffort,
   modelRetention,
   loadLanes,
   laneNames,
@@ -1211,9 +1212,8 @@ function cmdVerify() {
   }
 
   // 1. The generated config must still be what the profile compiles to. A
-  //    hand-edit anywhere in the model/variant/permission surface shows up
-  //    here, which is the check that would have caught `build` being moved onto
-  //    a may-train model.
+  //    hand-edit anywhere the compiler owns shows up here, which is the check
+  //    that would have caught `build` being moved onto a may-train model.
   const actual = existsSync(CONFIG_FILE) ? readConfigJson() : null
   if (!actual) {
     problems.push(`${CONFIG_FILE} does not exist. Run: oc-harness use ${p.id}`)
@@ -1223,6 +1223,17 @@ function cmdVerify() {
       ok.push(`config matches profile ${p.id}`)
     } else {
       for (const d of drift) problems.push(`config drift: ${d}`)
+    }
+    // Which kit wrote the file. A config from an older release still runs,
+    // so this is a note by default; `--strict` is for CI that wants an
+    // upgraded install to be regenerated on purpose rather than on the next
+    // unrelated `use`.
+    const haveKit = /** @type {any} */ (actual).harness?.kit
+    const wantKit = kitVersion()
+    if (haveKit !== wantKit) {
+      const message = `config was written by kit ${haveKit ?? "(unknown)"}, this is ${wantKit}. Run: oc-harness use ${p.id}`
+      if (flag("--strict")) problems.push(message)
+      else notes.push(message)
     }
   }
 
@@ -1533,62 +1544,69 @@ function stripFrontmatter(text) {
 }
 
 /**
- * Fields of the installed config that must agree with the profile. Model and
- * variant first because those are the ones with consequences that are invisible
- * from inside a session.
+ * Fields of the installed config that must agree with the profile.
+ *
+ * The comparison used to be a hand-written list: model, small_model, each
+ * lane's model/variant/prompt, compaction.reserved, harness.threshold and
+ * permission.edit. That list is why a config from the previous kit version
+ * passed `verify`: `harness.kit` had been added to the compiler and nobody
+ * added it here. Any key the compiler starts owning would have the same gap.
+ *
+ * So the expected file is compiled from the profile with the installed file
+ * as the inherited base - exactly what `use` does - and the two are compared
+ * key by key. A key the compiler rewrites shows up even if nobody remembers
+ * to list it. User keys the compiler preserves appear on both sides and
+ * stay silent, which is what "drift" has to mean here: what `use` would
+ * change, not every difference from a template.
+ *
+ * `harness.kit` is excluded: a config written by an older kit is a warning
+ * until `--strict`, not a broken install. Comparing it here would make every
+ * upgrade a hard failure for a file that still works.
+ *
+ * @param {ReturnType<typeof loadProfile>} p
+ * @param {any} actual
+ * @returns {string[]}
  */
 function configDrift(p, actual) {
-  const out = []
-  const want = `${p.provider}/${p.model}`
-  const roles = resolveRoles(p)
-
-  if (actual.model !== want) out.push(`model ${actual.model} -> ${want}`)
-  // The utility route, which is the session model unless the profile names
-  // a cheaper one for opencode's short auxiliary calls.
-  const wantUtility = utilityModel(p) ?? want
-  if (actual.small_model !== wantUtility) {
-    out.push(`small_model ${actual.small_model} -> ${wantUtility}`)
-  }
-
-  for (const [role, level] of Object.entries(roles)) {
-    if (level === undefined) continue
-    const agent = actual.agent?.[role]
-    if (!agent) {
-      out.push(`agent.${role} missing`)
-      continue
-    }
-    // A lane's expected model is the one its chain resolved to, not the
-    // profile's base. A fleet puts ten different models behind ten agents, so
-    // comparing every lane against the base would report drift forever and
-    // train the user to ignore the one command that exists to catch a moved
-    // lane.
-    const resolved = resolveRoleModel(p, role)
-    const wantRole = `${p.provider}/${resolved ? resolved.model : p.model}`
-    if (agent.model !== wantRole) {
-      out.push(`agent.${role}.model ${agent.model} -> ${wantRole}`)
-    }
-    if (agent.variant !== (level ?? undefined)) {
-      out.push(`agent.${role}.variant ${agent.variant ?? "(none)"} -> ${level ?? "(none)"}`)
-    }
-    if (!agent.prompt) {
-      out.push(`agent.${role}.prompt missing - the lane would run without instructions`)
-    }
-  }
-
-  const wantReserved = reservedTokens(p)
-  if (actual.compaction?.reserved !== wantReserved) {
-    out.push(`compaction.reserved ${actual.compaction?.reserved} -> ${wantReserved}`)
-  }
-  const wantThreshold = pruneThreshold(p)
-  if (actual.harness?.threshold !== wantThreshold) {
-    out.push(`harness.threshold ${actual.harness?.threshold} -> ${wantThreshold}`)
-  }
-  if (actual.permission?.edit !== "allow") {
-    out.push(
-      `permission.edit ${actual.permission?.edit ?? "(unset)"} -> allow. While it is ask, opencode appends the global rule after each agent's and last-match-wins overrides every read-only role's edit deny.`,
+  let expected
+  try {
+    expected = JSON.parse(
+      generateConfig(p, {
+        base: actual,
+        comments: false,
+        configDir: CONFIG_DIR,
+        kitRoot: ROOT,
+      }),
     )
+  } catch (err) {
+    return [`config cannot be recompiled from the profile: ${err instanceof Error ? err.message : String(err)}`]
   }
-  return out
+
+  const out = []
+  const show = (v) => {
+    if (v === undefined) return "(missing)"
+    const s = typeof v === "string" ? v : JSON.stringify(v)
+    return s.length > 80 ? `${s.slice(0, 77)}...` : s
+  }
+  const walk = (want, got, path) => {
+    if (path === "harness.kit") return
+    if (Array.isArray(want) || Array.isArray(got)) {
+      if (JSON.stringify(want) !== JSON.stringify(got)) {
+        out.push(`${path} ${show(got)} -> ${show(want)}`)
+      }
+      return
+    }
+    if (want && got && typeof want === "object" && typeof got === "object") {
+      const keys = new Set([...Object.keys(want), ...Object.keys(got)])
+      for (const key of keys) {
+        walk(want[key], got[key], path ? `${path}.${key}` : key)
+      }
+      return
+    }
+    if (!Object.is(want, got)) out.push(`${path} ${show(got)} -> ${show(want)}`)
+  }
+  walk(expected, actual, "")
+  return out.sort()
 }
 
 /**
@@ -2734,6 +2752,75 @@ function chainOf(p) {
 }
 
 /**
+ * Free routes a live probe found unusable.
+ *
+ * `eval/models.mjs --free --check` writes this file; `research` reads it so a
+ * shortlist does not recommend a route the probe already watched answer
+ * nothing. Missing or unreadable is not an error: the file only ever makes a
+ * report smaller.
+ *
+ * @returns {Record<string, any>}
+ */
+function readUnusableModels() {
+  const file = join(ROOT, "eval", "unusable-models.json")
+  if (!existsSync(file)) return {}
+  try {
+    return JSON.parse(readFileSync(file, "utf8")).models ?? {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Can every lane's route actually do the job the lane describes?
+ *
+ * `doctor` used to prove only that a model existed and was not withdrawn.
+ * That is the question before the first request; it says nothing about
+ * whether the route can call a tool, read an image, or honour the effort the
+ * profile asked for. A vision lane pinned to a text-only model is green on
+ * every check above and fails on the first screenshot.
+ *
+ * The lane audits the first rung of its chain that is still live, which is
+ * the one `install` will use after it prunes withdrawn rungs.
+ *
+ * @param {ReturnType<typeof loadProfile>} p
+ * @param {any} catalog
+ * @returns {string[]} one message per lane whose route cannot serve it
+ */
+function laneCapabilityIssues(p, catalog) {
+  const issues = []
+  for (const lane of Object.keys(p.roles ?? {})) {
+    const chain = resolveLaneChain(p, lane)
+    const model = chain.find((rung) => {
+      const rec = catalog?.[p.provider]?.models?.[rung]
+      return rec && !isWithdrawn(rec)
+    })
+    if (!model) continue // the chain check above already failed this lane
+    const record = catalog?.[p.provider]?.models?.[model]
+    if (record.tool_call === false) {
+      issues.push(`lane ${lane}: ${model} cannot call tools`)
+    }
+    if (lane === "vision" && record.attachment === false) {
+      issues.push(`lane ${lane}: ${model} cannot read images`)
+    }
+    const context = record.limit?.context ?? 0
+    const output = record.limit?.output ?? 0
+    if (!(context > 0)) issues.push(`lane ${lane}: ${model} publishes no context window`)
+    if (!(output > 0)) issues.push(`lane ${lane}: ${model} publishes no output ceiling`)
+    const want = p.roles?.[lane]
+    const levels = record.reasoning_options?.find((r) => r.type === "effort")?.values ?? []
+    // Snapping a level down is the documented behaviour: `max` on a model
+    // topping out at `xhigh` still runs at the top of that model's scale.
+    // null is different - the lane asked for a level the model cannot
+    // express at all, so no variant is emitted and the request is lost.
+    if (want && resolveEffort(levels, want) === null && (levels.length || want === "none")) {
+      issues.push(`lane ${lane}: ${model} cannot express effort ${want}`)
+    }
+  }
+  return issues
+}
+
+/**
  * The history of what the catalogue lost.
  *
  * A model is withdrawn without a rename and without a notice, so the only
@@ -2803,7 +2890,12 @@ function withdrawnModels(catalog) {
       ...Object.values(p.roleModels ?? {}).flatMap((r) => r?.chain ?? []),
     ])) {
       if (!model) continue
-      if (catalog?.[p.provider]?.models?.[model]) continue
+      // Present is not the same as alive: models.dev keeps a withdrawn
+      // model and marks it `deprecated`. Asking only whether the record
+      // exists reported a dead base or fallback as healthy, which is the
+      // exact miss this check exists to catch.
+      const record = catalog?.[p.provider]?.models?.[model]
+      if (record && !isWithdrawn(record)) continue
       const users = gone.get(model) ?? []
       if (!users.includes(id)) users.push(id)
       gone.set(model, users)
@@ -2857,7 +2949,7 @@ async function cmdDoctorWatch() {
     const fresh = [...gone.keys()].filter((m) => !seen.has(m))
     for (const m of fresh) {
       const users = gone.get(m) ?? []
-      console.log(red(`  ${new Date().toISOString()}  ${m} is no longer in the catalogue`))
+      console.log(red(`  ${new Date().toISOString()}  ${m} is gone (withdrawn or removed)`))
       if (users.length) console.log(stamp(`    used by: ${users.join(", ")}`))
       console.log(stamp(`    fix: oc-harness doctor && oc-harness refresh <profile>`))
       recordWithdrawal(m, users.join(","))
@@ -2896,7 +2988,7 @@ async function cmdDoctorWatch() {
         )
         process.exit(1)
       }
-      console.log(green("  every shipped model is still in the catalogue"))
+      console.log(green("  every shipped model is still live"))
       return
     }
     first = false
@@ -2991,6 +3083,7 @@ async function cmdResearch() {
     profiles,
     retentionOf: (model) => modelRetention(model),
     defaultProfileId: index().default ?? null,
+    unusable: new Set(Object.keys(readUnusableModels())),
   })
 
   if (wantJson) {
@@ -3126,6 +3219,8 @@ async function runDoctor(catalog) {
         )
       }
     }
+
+    issues.push(...laneCapabilityIssues(p, catalog))
 
     if (issues.length === 0) {
       console.log(`  ${green("✓")} ${id.padEnd(32)} ${stamp("matches catalog")}`)

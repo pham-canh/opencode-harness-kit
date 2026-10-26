@@ -1,0 +1,30 @@
+# The free tier moves under the kit: a provider withdraws a model, or starts
+# answering a spent route with exit 0 and no text. The suite cannot see that,
+# because it runs against a fixture. This job asks the live catalogue once a
+# day, so a dead base or fallback is a notification on Monday rather than a
+# failed task on a user's machine.
+name: models.yml
+
+on:
+  schedule:
+    # Daily. The free tier is the part of this kit that changes without a
+    # commit, and a check that only runs on release is a check that finds out
+    # at the worst moment.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  models:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+      # No install: this command imports only the repository and node's own
+      # modules. A dependency install on a scheduled job is a failure mode
+      # that has nothing to do with the question being asked.
+      - name: every shipped model is still live
+        run: node bin/oc-harness.mjs doctor --check-models

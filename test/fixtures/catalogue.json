@@ -25,12 +25,6 @@
           "output": 32000
         }
       },
-      "nemotron-3-ultra-free": {
-        "limit": {
-          "context": 200000,
-          "output": 32000
-        }
-      },
       "glm-5.3-flash-free": {
         "limit": {
           "context": 200000,

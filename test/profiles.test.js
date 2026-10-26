@@ -84,14 +84,13 @@ const FREE_MODELS = [
   "flint-40b-free",
   "glm-5.3-flash-free",
   "mimo-v2.6-flash-free",
-  "nemotron-3-ultra-free",
   "nemotron-3.5-lightning-free",
   "nemotron-3.5-super-vl-free",
 ]
 
 test("every shipped profile loads and validates", () => {
   const ids = listProfileIds()
-  assert.ok(ids.length >= 11, `expected the model profiles and the fleets, found ${ids.length}`)
+  assert.ok(ids.length >= 10, `expected the model profiles and the fleets, found ${ids.length}`)
   for (const id of ids) {
     const p = loadProfile(id)
     assert.equal(p.id, id)
@@ -243,14 +242,14 @@ test("the safe fleet's second choice is still the best one inside the ceiling", 
   // measures 19 reasoning tokens at 3.4s.
   assert.equal(resolveLaneModel(safe, "sweep").model, "deepseek-v4.1-flash-free")
   assert.equal(resolveRoles(safe).sweep, "low")
-  // Six lanes differ from the unrestricted fleet. The number is a fact about
-  // the tier, not a preference, and the docs quote it.
+  // Seven lanes differ from the unrestricted fleet. The number is a fact
+  // about the tier, not a preference, and the docs quote it.
   const all = loadProfile("fleet-all")
   const displaced = Object.keys(safe.roles).filter(
     (lane) => resolveLaneModel(safe, lane).model !== resolveLaneModel(all, lane).model,
   )
-  assert.equal(displaced.length, 8)
-  assert.deepEqual(displaced.sort(), ["build", "locate", "longform", "plan", "reviewer", "sweep", "verify", "vision"])
+  assert.equal(displaced.length, 7)
+  assert.deepEqual(displaced.sort(), ["build", "locate", "longform", "plan", "sweep", "verify", "vision"])
 })
 
 test("a model whose terms are unknown is never used", () => {
@@ -676,7 +675,7 @@ test("effectiveRetention names the MODEL responsible for the level", () => {
   const all = effectiveRetention(loadProfile("fleet-all"))
   assert.equal(all.retention, "may-train")
   assert.ok(
-    ["big-pickle", "mimo-v2.6-flash-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "nemotron-3.5-super-vl-free", "flint-40b-free"].includes(
+    ["big-pickle", "mimo-v2.6-flash-free", "nemotron-3.5-lightning-free", "nemotron-3.5-super-vl-free", "flint-40b-free"].includes(
       all.worst,
     ),
     `worst should name a model, got ${all.worst}`,
@@ -805,7 +804,7 @@ test("every profile has a retention.yml entry, and the two agree", () => {
     }
     checked++
   }
-  assert.ok(checked >= 11, "the loop must actually run, not skip everything")
+  assert.ok(checked >= 10, "the loop must actually run, not skip everything")
 })
 
 test("the plan explains every downgrade instead of hiding it", () => {
@@ -889,13 +888,13 @@ test("a lane that asks for a tier gets one, unless a measurement says otherwise"
   // `locate` lane's model is the fastest lane on the tier and reasons 59
   // tokens on an 80-token answer, so trading a tier for 12% of the lane's
   // time is the wrong trade. The request stays, so a failover can honour it.
-  // Three lanes in the unrestricted fleet, and the reason is in the
-  // measurement rather than in the profile: the three models that cannot
+  // Two lanes in the unrestricted fleet, and the reason is in the
+  // measurement rather than in the profile: the two models that cannot
   // serve the tier are the fleet's CHEAPEST reasoners. locate measures 59
-  // reasoning tokens a message, verify 18 and reviewer 116 - against build
-  // at 289 and plan at 198, which are the lanes that keep their tier on
-  // purpose. The tier is the lever, and it is not where the tokens are.
-  const EXCEPTIONS = { "fleet-all": ["reviewer", "locate", "verify"] }
+  // reasoning tokens a message and verify 18 - against build at 289 and
+  // plan at 198, which are the lanes that keep their tier on purpose. The
+  // tier is the lever, and it is not where the tokens are.
+  const EXCEPTIONS = { "fleet-all": ["locate", "verify"] }
 
   for (const id of ["fleet-safe", "fleet-all"]) {
     const p = loadProfile(id)

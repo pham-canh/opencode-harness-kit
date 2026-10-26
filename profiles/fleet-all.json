@@ -5,10 +5,10 @@
   "provider": "opencode",
   "model": "flint-40b-free",
   "family": "flint",
-  "verified": "2026-10-22",
+  "verified": "2026-10-26",
   "retention": "may-train",
   "maxRetention": "may-train",
-  "notes": "Every lane gets the model built for it: beam plans, Nemotron 3 Ultra reviews, Lightning sweeps, MiMo sees, GLM audits, Super VL reasons with the effort turned off. Five of the ten providers state that collected data may be used to improve the model, or log the session, so the profile as a whole is may-train and the generated config says so in its header. Install it for public or throwaway repositories.",
+  "notes": "Every lane gets the model built for it: beam plans, GLM reviews, Lightning sweeps, MiMo sees, GLM audits, Super VL reasons with the effort turned off. Five of the ten providers state that collected data may be used to improve the model, or log the session, so the profile as a whole is may-train and the generated config says so in its header. Install it for public or throwaway repositories.",
   "limits": {
     "context": 262144,
     "output": 65536
@@ -17,8 +17,8 @@
     "reasoning": true,
     "temperature": true,
     "toolCall": true,
-    "structuredOutput": false,
-    "attachment": true
+    "structuredOutput": true,
+    "attachment": false
   },
   "effort": {
     "levels": [
@@ -63,9 +63,8 @@
       ]
     },
     "reviewer": {
-      "model": "nemotron-3-ultra-free",
+      "model": "glm-5.3-flash-free",
       "chain": [
-        "nemotron-3-ultra-free",
         "glm-5.3-flash-free",
         "deepseek-v4.1-flash-free"
       ]

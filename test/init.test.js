@@ -125,7 +125,7 @@ test("a profile whose split role may train is announced before it becomes defaul
   assert.equal(r.exit, 0, "without a terminal the run continues, it does not hang")
   assert.ok(r.out.includes(ASK), `the consent warning is printed, not swallowed:\n${r.out}`)
   assert.ok(
-    r.out.includes("nemotron-3-ultra-free"),
+    r.out.includes("flint-40b-free"),
     "the warning names the model that actually may train, not the zero-retention base",
   )
   assert.ok(

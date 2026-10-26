@@ -12,6 +12,72 @@ is not happening.
 
 ---
 
+## [0.7.1] — 2026-10-26
+
+A release about checks that were green while the thing they check was not:
+a withdrawn model reported healthy, a lane on a model that cannot do the
+lane's job, a config from the previous kit reported as matching the current
+profile, and a free route that answered nothing still recommended as a
+candidate.
+
+### Fixed
+
+- **`doctor --check-models` read presence, not lifecycle.** models.dev keeps
+  a withdrawn model and marks it `deprecated`; the check only asked whether a
+  record existed, so a pulled base or fallback rung was reported healthy.
+  It now asks `isWithdrawn`, and the message says withdrawn-or-removed.
+- **A lane's route was never checked for the job it does.** A live model that
+  cannot call tools, a `vision` lane on a text-only model, a missing context
+  or output ceiling, and an effort level the model cannot express all passed
+  `doctor`. Each is now reported by lane, against the first live rung of the
+  chain `install` would use. A level that snaps down is still allowed, because
+  that is the documented behaviour; a level that resolves to `null` is not.
+- **`verify` compared a hand-written key list.** `harness.kit` had been added
+  to the compiler and not to the list, so the live install - compiled by
+  0.6.4, still carrying 25 ECC subagents - passed as matching the profile.
+  The check now recompiles the profile over the installed file and compares
+  every key the compiler owns. A config from an older kit is a note;
+  `verify --strict` makes it a failure.
+- **The probe could not tell an answer from a spent route.** `eval/models.mjs`
+  now classifies `ok`, `empty`, `timeout` and `error`, treats a finished step
+  with no text as `empty`, and exits non-zero under `--check`.
+- **A free route that answered nothing was still recommended.** Two live
+  probes of `nemotron-3-ultra-free` produced no step and no text. The route
+  is recorded in `eval/unusable-models.json`; `--free` and `research` skip it
+  until it is re-probed, and the standalone profile and its reviewer rung are
+  retired. The reviewer lane now runs on GLM 5.3 Flash.
+
+### Added
+
+- `eval/models.mjs --free --list` selects live free routes without spending a
+  request and names the ones a probe rejected.
+- `eval/graph.mjs` checks the import graph and prints the routing graph:
+  `--check` fails on an unresolved import, a module cycle, or a source file no
+  entry or test reaches; `--routing` prints profile -> lane -> model with the
+  catalogue's verdict on each rung. `--json` and `--dot` are for a machine.
+- `npm run graph`, `npm run test:coverage` (85% lines, 70% branches, 80%
+  functions), and `npm run selfcheck`, which runs build, typecheck, the suite,
+  the graph, `premises`, and a fresh install in a temporary config directory
+  ending in `verify --strict`.
+- `test/effort.test.js` covers the config mutation directly: the router's
+  session model, a lane's preserved model and prompt, a `null` variant
+  deleting a stale one, `harness` keys surviving, and health entries keyed by
+  provider. `test/trust.test.js` covers a replacement that fails after the
+  revoke and has to say the package now has no publisher.
+- CI runs `graph`, `test:coverage` and `premises` beside the suite, and the
+  install smoke test uses `verify --strict`. A daily `models.yml` job asks the
+  live catalogue whether every shipped model is still live.
+
+### Changed
+
+- `fleet-safe` and `fleet-all` are refreshed against the live catalogue:
+  `fleet-safe` publishes three effort levels (`low`, `high`, `max`) and
+  `fleet-all` no longer claims image attachments on a model that does not
+  read them.
+- README and `docs/ROUTING.md` quote the current fleet: reviewer on GLM 5.3
+  Flash, build and longform on Flint, and the seven lanes that move under the
+  zero-retention ceiling.
+
 ## [0.7.0] — 2026-10-25
 
 `oc-harness run` now stops for the reasons it already claimed to stop for,
@@ -2161,7 +2227,8 @@ silent in the worst way:
 ---
 
 [0.7.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.6.4...v0.7.0
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.0...HEAD
+[0.7.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.0...v0.7.1
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.1...HEAD
 [0.5.7]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...v0.5.5

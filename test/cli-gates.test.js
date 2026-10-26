@@ -307,7 +307,7 @@ test("doctor --check-models fails when a shipped model is gone", () => {
 
     const gone = run(box, ["doctor", "--check-models"], { env })
     assert.notEqual(gone.code, 0, "a gone model must fail the check")
-    assert.match(gone.out, /no longer in the catalogue/)
+    assert.match(gone.out, /is gone \(withdrawn or removed\)/)
 
     // A catalogue that still has every shipped model passes.
     const full = join(box.dir, "full-catalog.json")
@@ -331,7 +331,7 @@ test("doctor --check-models fails when a shipped model is gone", () => {
       env: { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${full}` },
     })
     assert.equal(ok.code, 0, ok.out)
-    assert.match(ok.out, /still in the catalogue/)
+    assert.match(ok.out, /every shipped model is still live/)
   } finally {
     box.cleanup()
   }

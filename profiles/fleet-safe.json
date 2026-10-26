@@ -5,7 +5,7 @@
   "provider": "opencode",
   "model": "deepseek-v4.1-flash-free",
   "family": "deepseek",
-  "verified": "2026-10-22",
+  "verified": "2026-10-26",
   "retention": "zero-retention",
   "maxRetention": "zero-retention",
   "notes": "The default. Every lane resolves to a model whose provider states a zero-retention policy: no training, nothing kept. The cost is that six of the ten jobs run on a second-choice model - the planner loses beam (30-day retention) and the reviewer loses Nemotron 3 Ultra - so this is the floor, not the ceiling. The chains are ordered within the ceiling rather than copied from `fleet-all`: `locate` takes deepseek because it publishes a `low` effort level that longcat does not, and `vision` takes deepseek because it is the zero-retention route the provider kept for image reads. `fleet-all` gives every lane the model built for it.",
@@ -17,15 +17,13 @@
     "reasoning": true,
     "temperature": true,
     "toolCall": true,
-    "structuredOutput": false,
+    "structuredOutput": true,
     "attachment": true
   },
   "effort": {
     "levels": [
       "low",
-      "medium",
       "high",
-      "xhigh",
       "max"
     ],
     "default": "max",

@@ -186,3 +186,34 @@ test("the model measurement refuses to measure nothing", () => {
   assert.notEqual(r.status, 0, "an empty measurement was accepted")
   assert.match(`${r.stdout}${r.stderr}`, /--reps must be a whole number of at least 1/)
 })
+
+test("--free --list selects live routes and names the ones a probe rejected", () => {
+  // The selection is the part that decides where requests are spent, and it
+  // can be checked without spending one. `nemotron-3-ultra-free` answered
+  // nothing on two live probes and is in eval/unusable-models.json; the list
+  // must say so rather than quietly drop it.
+  const r = spawnSync(
+    "node",
+    [join(ROOT, "eval", "models.mjs"), "--free", "--list"],
+    {
+      encoding: "utf8",
+      timeout: 60_000,
+      env: {
+        ...process.env,
+        OPENCODE_HARNESS_CATALOG_URL: `file://${join(ROOT, "test", "fixtures", "catalogue.json")}`,
+      },
+    },
+  )
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`)
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.source, "free")
+  assert.ok(
+    out.models.some((m) => m.model.endsWith("/deepseek-v4.1-flash-free")),
+    "a live free model was missing from the selection",
+  )
+  assert.ok(
+    !out.models.some((m) => m.model.endsWith("/nemotron-3-ultra-free")),
+    "a route a probe rejected was selected anyway",
+  )
+  assert.deepEqual(out.skipped, ["opencode/nemotron-3-ultra-free"])
+})

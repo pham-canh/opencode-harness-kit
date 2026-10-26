@@ -41,6 +41,15 @@ jobs:
       # test:all is deliberately the offline subset: measure/attribute read the
       # install database and ~/.config/opencode, neither of which exists here.
       - run: npm run check
+      # The suite says the modules it loads work. The graph says nothing is
+      # orphaned by a rename and no module cycle was introduced, and the
+      # coverage thresholds keep the failover and trust branches from quietly
+      # losing the tests that reach them.
+      - run: npm run graph
+      - run: npm run test:coverage
+      # A suite task cites file:line. The citation is the premise, and a
+      # rename makes it a lie without failing any test.
+      - run: node eval/premises.mjs --target . --suite eval/tasks-self.json
       - name: CLI smoke test
         run: |
           node bin/oc-harness.mjs list
@@ -68,7 +77,10 @@ jobs:
           export OPENCODE_CONFIG_DIR="$RUNNER_TEMP/opencode-config"
           node bin/oc-harness.mjs use fleet-safe --yes
           node bin/oc-harness.mjs install
-          node bin/oc-harness.mjs verify
+          # --strict, because the migration case is exactly what CI is for:
+          # a config written by the previous kit must not silently pass as
+          # the current one. Locally that is a note; here it is a failure.
+          node bin/oc-harness.mjs verify --strict
           node bin/oc-harness.mjs agents
           # Reuses the same scratch config dir, so the config-drift check inside
           # doctor reads the config installed above instead of the runner's.

@@ -94,7 +94,7 @@ about your prompts.
 |---|---|---|---|
 | `build` | write and verify the change | Flint 40B Free | 6.9 s |
 | `plan` | turn a request into a plan | Beam | **6.1 s** |
-| `reviewer` | read a change in two passes | Nemotron 3 Ultra | 7.8 s (34 s cold) |
+| `reviewer` | read a change in two passes | GLM 5.3 Flash | 7.4 s |
 | `locate` | find where something lives | Nemotron 3.5 Lightning | 6.9 s |
 | `verify` | run the project's checks | Big Pickle | 10.4 s |
 | `vision` | read an image or a screenshot | MiMo-V2.6 Flash | 9.3 s (19 s with an image) |
@@ -122,9 +122,9 @@ that has it. A delegation inside one session runs two different models — that
 was measured, not assumed:
 
 ```
-agent=build    modelID=minimax-m3.1-flash-free
-agent=reviewer modelID=nemotron-3-ultra-free
-agent=build    modelID=minimax-m3.1-flash-free
+agent=build    modelID=flint-40b-free
+agent=reviewer modelID=glm-5.3-flash-free
+agent=build    modelID=flint-40b-free
 ```
 
 Why ten lanes and not one model: the free tier is genuinely uneven, and the
@@ -144,23 +144,24 @@ capabilities the tier turns out not to have, is in
 Given a profile, `oc-harness use` writes an `opencode.jsonc` with every
 model-dependent number already worked out and commented:
 
-```
+```text
 $ oc-harness use fleet-safe --print
 
 // profile      fleet-safe
-// model        opencode/minimax-m3.1-flash-free
+// model        opencode/deepseek-v4.1-flash-free
+// utility      opencode/deepseek-v4.1-flash-free  (opencode's short calls: titles, summaries)
 // lanes        10 enabled, each on the first model its chain allows
-// context      1,000,000 tokens  (base model)
-// input cap    200,000 tokens  (narrowest lane; governs the shared reserve)
-// output cap   512,000 tokens
-// reasoning    low < medium < high < xhigh < max
+// context      200,000 tokens  (base model)
+// input cap    200,000 tokens
+// output cap   32,000 tokens
+// reasoning    low < high < max
 // retention    zero-retention
 //
 // Derived numbers, do not hand-edit:
 //   compaction.reserved  24,000  (12% of the narrowest input cap in play)
 //   prune threshold      176,000  (narrowest input cap minus reserve)
 //   role effort          plan=max  build=max  reviewer=max  locate=low  ...
-//   lane models          build=minimax-m3.1-flash-free (out 512,000)  plan=...
+//   lane models          build=deepseek-v4.1-flash-free (out 32,000)  plan=...
 ```
 
 Two numbers in there are worth explaining, because both were the wrong way
@@ -183,10 +184,11 @@ the substitution is reported:
 ```
 $ oc-harness show fleet-safe
   lanes
-  build                minimax-m3.1-flash-free  out 512,000
+  build                deepseek-v4.1-flash-free  out 32,000
   plan                 deepseek-v4.1-flash-free  out 32,000
+  reviewer             glm-5.3-flash-free        out 32,000
   locate               deepseek-v4.1-flash-free  out 32,000
-  vision               minimax-m3.1-flash-free    out 512,000
+  vision               deepseek-v4.1-flash-free  out 32,000
   ...
   lane effort
     plan       max
@@ -234,7 +236,6 @@ it. One file covers ten jobs either way.
 | `deepseek-v4.1-flash-free` | 5 | 200,000 | `max` | zero-retention |
 | `glm-5.3-flash-free` | 5 | 200,000 | `max` | zero-retention |
 | `nemotron-3.5-super-vl-free` | 5 | 1,048,576 | `xhigh` | **may train** |
-| `nemotron-3-ultra-free` | 5 | 1,000,000 | — | **may train** |
 | `nemotron-3.5-lightning-free` | 5 | 262,144 | — | **may train** |
 | `mimo-v2.6-flash-free` | 5 | 200,000 | — | **may train** |
 | `big-pickle` | 5 | 160,000 | — | **may train** |
@@ -358,7 +359,7 @@ only a person could fill, by hand, out of a catalogue dump.
 ```
 $ oc-harness research
 
-research  tier opencode, 10 live of 46 free
+research  tier opencode, 9 live of 46 free
 
   ✓ every model in use is still live
 
@@ -370,12 +371,7 @@ research  tier opencode, 10 live of 46 free
 
   candidates  live, free, and not in use yet
 
-      flint-40b-free  ctx 262,144  out 65,536  effort low,medium,high,xhigh,max
-        fits: plan, build, reviewer, locate, verify, doc, schema, sweep, longform
-        retention: unknown
-        no retention verdict in retention.yml - a person has to read the provider's terms
-
-  nothing here is written anywhere. A retention verdict is a person reading a provider's terms.
+  no live free model outside the ones the kit already uses
 ```
 
 That is the healthy state. When something has been withdrawn, the same command
@@ -408,6 +404,10 @@ It reports four things:
    its context window, its output cap, the effort levels it publishes, and
    **which lanes it could serve**.
 4. **What is still undecided** about each candidate.
+
+A candidate can be live in the catalogue and still unable to answer. The
+probe result goes in `eval/unusable-models.json`, and both `research` and
+`eval/models.mjs --free` skip it until somebody re-probes it.
 
 #### Why the candidate list knows about lanes
 
@@ -590,6 +590,10 @@ node eval/run.mjs               the pruner and the allowlist
 node eval/measure-prune.mjs     the pruner, on real sessions
 node eval/measure-install.mjs   before and after the install
 node eval/models.mjs            every model the profiles use, one line each
+node eval/models.mjs --free --list   free models, and the ones a probe rejected
+node eval/models.mjs --free --check  probe each free route: ok, empty, timeout, error
+node eval/graph.mjs --check     the import graph, and the profile -> lane -> model graph
+node eval/selfcheck.mjs         build, typecheck, suite, graph, premises, fresh install
 node eval/ab.mjs                the A/B: the same task with and without the kit
 node eval/compare.mjs           the same suite against any agent CLI, same grader
 ```
