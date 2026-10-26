@@ -17,7 +17,7 @@ function gitEnv() {
   return env
 }
 
-import { changedPaths, checkpoint, createBranch } from "../src/driver/git.mjs"
+import { changedPaths, checkpoint, createBranch, createWorktree } from "../src/driver/git.mjs"
 import { createRun, readRun, writeRun } from "../src/driver/run-state.mjs"
 import { isRouteFailure, runIdProblem, workRequest } from "../src/driver/work.mjs"
 import { parseTasks } from "../src/tasks.js"
@@ -328,5 +328,15 @@ test("createBranch refuses a name that already exists", () => {
   assert.equal(createBranch(dir, "same").ok, true)
   assert.equal(createBranch(dir, "same").ok, false)
   assert.equal(existsSync(join(dir, ".git")), true)
+})
+
+test("createWorktree refuses a branch name git would read as an option", () => {
+  const dir = repo()
+  for (const branch of ["", "-f", "--force", "with space", "../escape", "/leading", "trailing/"]) {
+    const r = createWorktree(dir, branch, "run-id")
+    assert.equal(r.ok, false, `${JSON.stringify(branch)} was accepted`)
+    assert.match(r.reason, /not a branch name/)
+  }
+  assert.equal(existsSync(join(dir, ".space", "worktrees")), false, "a refused name must not create a path")
 })
 

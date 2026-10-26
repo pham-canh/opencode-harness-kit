@@ -77,6 +77,24 @@ export function changedPaths(cwd) {
 }
 
 /**
+ * Names git would refuse, plus the leading dash it would parse as an option.
+ *
+ * @param {unknown} name
+ * @returns {boolean}
+ */
+function badBranchName(name) {
+  return (
+    typeof name !== "string" ||
+    !name ||
+    name.startsWith("-") ||
+    /\s/.test(name) ||
+    name.includes("..") ||
+    name.endsWith("/") ||
+    name.startsWith("/")
+  )
+}
+
+/**
  * Create and check out a branch, or refuse.
  *
  * A dirty tree is refused because the first checkpoint would otherwise commit
@@ -93,8 +111,9 @@ export function createBranch(cwd, name, { allowDirty = false } = {}) {
   // A leading dash is parsed by git as an option, and a name with whitespace
   // or .. is refused by git anyway; refusing it here says which argument was
   // wrong instead of pasting git's usage text into the run log.
-  const bad = !name || name.startsWith("-") || /\s/.test(name) || name.includes("..") || name.endsWith("/") || name.startsWith("/")
-  if (bad) return { ok: false, reason: `cannot create branch: ${JSON.stringify(name)} is not a branch name` }
+  if (badBranchName(name)) {
+    return { ok: false, reason: `cannot create branch: ${JSON.stringify(name)} is not a branch name` }
+  }
   const dirty = changedPaths(cwd)
   if (dirty.size && !allowDirty) {
     return {
@@ -162,6 +181,12 @@ export function checkpoint(cwd, task, { baseline = new Set() } = {}) {
  */
 export function createWorktree(cwd, branch, name) {
   if (!isGitRepo(cwd)) return { ok: false, reason: "not a git repository" }
+  // `createBranch` refuses these before git sees them; `worktree add -b` took
+  // the same argument straight through, so `--branch --force` or a name with
+  // `..` reached git's option parser instead of being reported as the mistake.
+  if (badBranchName(branch)) {
+    return { ok: false, reason: `cannot create a worktree: ${JSON.stringify(branch)} is not a branch name` }
+  }
   const path = `${cwd}/.space/worktrees/${name}`
   mkdirSync(dirname(path), { recursive: true })
   const made = git(cwd, ["worktree", "add", "-b", branch, path, "HEAD"])
