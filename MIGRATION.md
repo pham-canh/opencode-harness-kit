@@ -1,13 +1,43 @@
 # Migrating
 
-Three upgrades change what a user has to do. The most recent one first.
+Four upgrades change what a user has to do. The most recent one first.
 
+- [0.7.x → 0.8.x](#migrating-from-07x-to-08x) — verify commands are trusted
+  explicitly, and a failed review is now a fix round.
 - [0.4.x → 0.7.x](#migrating-from-04x-to-07x) — rerun the install, because
   the compiler now owns more of the config and `run` changed shape.
 - [0.3.x → 0.4.x](#migrating-from-03x-to-04x) — the kit starts enforcing
   things it used to only suggest, and the config says which kit wrote it.
 - [0.2.x → 0.3.0](#migrating-from-02x-to-030) — the single-model profile
   became a fleet.
+
+---
+
+# Migrating from 0.7.x to 0.8.x
+
+One command changes shape for scripts, and one exit code means something else.
+
+```bash
+# before
+oc-harness run --review
+# after: the commands run as shell, so say you trust them
+oc-harness run --review --trust-verify
+```
+
+## What changed
+
+| Area | 0.7.x | 0.8.x |
+|---|---|---|
+| verify commands | ran as soon as the task file was read | an interactive terminal asks `y/N`; non-interactive runs exit **2** until `--trust-verify`. `--print-verify` lists them |
+| a failed verify | marked the task blocked and stopped | handed back for up to `--max-fix-rounds` (default 2) fix rounds |
+| a failed review | exited **5** immediately | handed back with blockers for up to `--review-fix-rounds` (default 2); exits **5** only when spent |
+| a spent model route | exit **4**, task blocked | exit **3**, task stays pending; `work` retries the next route in the chain |
+| planning and finishing | separate skills a human sequences | `oc-harness work "<request>"` sequences plan, build, verify, review and finish; `run` still does only build + verify |
+| run state | task file and telemetry only | `.space/run.json`, numbered verdicts, and `.space/summary.md` on a finished run |
+
+A plan written for 0.7.x still runs. It is now checked as a whole before the
+first agent is called, so a task with no `verify:` stops the run at the start
+instead of halfway through.
 
 ---
 

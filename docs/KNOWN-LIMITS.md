@@ -488,3 +488,51 @@ its findings shaped the design here:
 
 The paper's own advice applies: build these components knowing that some will
 stop being necessary as models improve.
+
+## The loop is not a sandbox, and `--trust-verify` is the line
+
+`run` and `work` execute the `verify:` line from `.space/tasks.md` as shell.
+The trust gate is a speed bump with a real job - it stops a task file from a
+branch you did not write from running silently in a scheduled job - but it is
+not containment. `--trust-verify` means "I have read these commands"; it does
+not mean "these commands are safe."
+
+The guard plugin fences tool calls. It does not fence the driver's `spawnSync`,
+because the driver is a plain Node process, not an OpenCode session. Three
+consequences worth knowing:
+
+- Use `--worktree` (or a container) when the plan is not yours. The worktree
+  isolates the branch and the files; it does not isolate the process.
+- A `verify:` command can read anything the user running it can read. Do not
+  point an unattended `work` at a task file you would not run by hand.
+- `--allow-extra-files` disables the scope fence for that run. It exists for a
+  plan whose `files:` line was too narrow, not for a plan that did not bother
+  to name one.
+
+## `work` stops at a repository boundary
+
+`work` plans, builds, verifies, reviews, checkpoints and summarises. It does
+not push, open a pull request, tag or publish, and it will not do so on a flag
+that does not exist. `--commit` is local; the publish decision stays with a
+human and `space-finish`.
+
+Two things it also does not do:
+
+- **It does not repair a plan that cannot be parsed.** A plan is rejected and
+  left alone. Fix the file, or run `plan --force` again; a run that rewrote
+  its own contract mid-flight would make the verdict unauditable.
+- **It does not guarantee a review is correct.** The reviewer is one lane with
+  a schema. A clean pass means the reviewer found no blocker it could state
+  with `file:line`; it is evidence, not proof. `--final-review` widens what is
+  reviewed, not how good the reviewer is.
+
+## A local model is not a cheaper hosted model
+
+`ollama-qwen3-coder` exists for work that must not leave the machine, not to
+save money on a fleet. A 30B model runs the loop more slowly on the hardware
+that fits it, follows a multi-task plan less reliably, and fails in the shape
+of "the agent exited 0 without editing the file" rather than an error. That
+failure is reported as a route failure and `work` will try the next route -
+which, for a single-model local profile, is none. Start it on `locate` and
+`verify` lanes, or on one-task plans, and raise `--max-rounds` only after the
+first run shows where the time goes.

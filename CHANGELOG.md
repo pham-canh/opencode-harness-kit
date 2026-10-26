@@ -12,7 +12,70 @@ is not happening.
 
 ---
 
-## [Unreleased]
+## [0.8.0] — 2026-10-26
+
+The loop becomes something you can leave running. `run` now fixes a failed
+verify or review instead of stopping at the first one, `work` is the one
+command that plans, builds, verifies, reviews and finishes, and the run
+records enough for a script - or the person after you - to see what happened.
+
+### Added
+
+- **`oc-harness work "<request>"`.** Plan when there is no executable plan,
+  then build, verify, review, final verify, final review and summary. Flags:
+  `--plan-only`, `--dry-run`, `--branch`, `--commit`, `--worktree`,
+  `--allow-dirty`, `--max-tokens`, `--max-task-minutes`, `--final-verify`,
+  `--final-review`. It never pushes, opens a pull request or publishes.
+- **`oc-harness plan "<request>"`.** The planner's answer is validated before
+  it is written: every task needs `files:`, `change:` and a `verify:` that can
+  fail. A rejected plan never replaces an existing one. `--print` shows it
+  without writing; `--force` replaces an existing plan.
+- **`oc-harness status [--json]`.** The last run from `.space/run.json`:
+  status, reason, per-task attempts, review rounds and checkpoint commits.
+- **Plan preflight.** `run` checks the whole plan before the first agent is
+  called: no tasks, a missing verify, a verify that cannot fail, or two tasks
+  the parser cannot tell apart all stop the run at exit 2.
+- **Fix rounds.** A failed verify is handed back to the build agent with its
+  real output; a failed review is handed back with its blockers. Default 2
+  rounds each (`--max-fix-rounds`, `--review-fix-rounds`).
+- **Final checks.** `--final-verify` runs one command after the last task;
+  `--final-review` reviews the whole diff from the run's base commit.
+  `.space/summary.md` is written only when both pass.
+- **Checkpoints.** `--branch` and `--commit` commit each finished task and
+  only the paths it touched. `--worktree` runs in `.space/worktrees/<id>` so
+  the project itself is untouched while the run happens.
+- **Route failover inside a run.** A spent or unreachable route no longer
+  marks the task blocked; `work` retries once per other route in the lane
+  chain using `OC_HARNESS_MODEL`, and never on the route that failed.
+- **`oc-harness lanes --suggest`.** Names lanes the telemetry says are not
+  earning a slot. It reads; it never edits `lanes.json` or a profile.
+- **A local profile, `ollama-qwen3-coder`.** Qwen3 Coder 30B served by Ollama
+  on localhost: zero egress, zero-retention by construction, no per-token
+  cost. Pull it with `ollama pull qwen3-coder:30b`.
+- **`npm run test:loop`**, and a named CI step for it: end-to-end scenarios
+  through the real CLI with a stand-in `opencode`, covering a fix round, a
+  review fix, an out-of-scope edit, a vacuous verify, a token budget and a
+  failed final verify.
+
+### Changed
+
+- **`run` no longer marks a task blocked when the model route fails.** The
+  task stays pending so a retry can reach another model. Behaviour that was
+  "exit 4 on a 429" is now "exit 3, retry the next route, stop if every route
+  is spent".
+- **A review failure is a fix round, not a terminal verdict.** It exits 5 only
+  after the review fix budget is spent, or when the reviewer's answer is not a
+  schema'd verdict.
+- **`run --json` exists**, and human progress goes to stderr in that mode. The
+  report is one object: `ok`, `code`, `reason`, `rounds`, `tokens`, `run`,
+  `summary`, `log`.
+- **`--print-verify` and `--trust-verify` gate every verify command**, in
+  `run` as well as `work`. This is the breaking change: non-interactive runs
+  that used to execute a task file's shell commands now exit 2 until they pass
+  `--trust-verify`.
+- **`.space/` is never committed by a checkpoint and never makes a tree
+  dirty** for `--branch`; it is the harness's own bookkeeping, not the change
+  under review.
 
 ### Removed
 

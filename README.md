@@ -239,14 +239,17 @@ it. One file covers ten jobs either way.
 | `nemotron-3.5-lightning-free` | 5 | 262,144 | — | **may train** |
 | `mimo-v2.6-flash-free` | 5 | 200,000 | — | **may train** |
 | `big-pickle` | 5 | 160,000 | — | **may train** |
+| `ollama-qwen3-coder` | 5 | 262,144 | — | zero-retention (local) |
 
 The five-lane profiles run everything on one model, which is the right shape
 when you want one route and want to know exactly which one.
 
 ## Free models are perishable, so check them
 
-Every model in the table above is a **free tier slot**, and free tier slots
-turn over in days. Zen states free models are available "for a limited time"
+Every model in the table above except `ollama-qwen3-coder` is a **free tier
+slot**, and free tier slots turn over in days. The Ollama profile is the one
+row that cannot be withdrawn by a provider: it runs on your machine, and its
+only cost is the memory to hold it. Zen states free models are available "for a limited time"
 with no date attached, so a profile is a snapshot of a moment rather than a
 stable thing.
 
@@ -587,6 +590,9 @@ oc-harness cost      what the kit is doing on this project, in numbers
 oc-harness restore <file>  put one back
 oc-harness baseline   measure the current install
 oc-harness run        build and verify .space/tasks.md, one task at a time
+oc-harness status     what the last run did, from .space/run.json
+oc-harness plan "<request>"  turn a request into .space/tasks.md, and refuse a plan the loop cannot run
+oc-harness work "<request>"  plan when needed, then build, verify, review and finish
 ```
 
 The measurement scripts are in `eval/`, and each one says what it measures
@@ -1081,24 +1087,71 @@ the conversation instead of the requirement.
 Publishing is never a loop step. `space-finish` prepares the change; a human
 decides it ships.
 
-`oc-harness run` automates the build-and-verify half of that loop, not the
-whole loop. It hands one task at a time to an agent, re-runs that task's own
-`verify:` command, and writes the real output back into `.space/tasks.md`. It
-does not plan, commit or push: those stay with `space-plan`, `space-finish`
-and the human. A task with no `verify:` is refused rather than assumed done,
-and so is one whose whole verify line is a command that cannot fail (`true`,
-`echo ok`). A task that edits files outside its `files:` line stops the run
-unless `--allow-extra-files` says otherwise. Because that check reads
-`git status`, `run` itself needs a work tree; outside one it refuses to start
-rather than run unfenced. `--force-unlock` clears a lock held by a live pid
-that has been reused by something else.
+`oc-harness run` is the loop. It hands one task at a time to an agent, runs
+that task's own `verify:` command, and writes the real output back into
+`.space/tasks.md`. A failed verify is not the end: the agent is handed the real
+failure and asked to fix it, up to `--max-fix-rounds` (default 2). A review
+failure works the same way. Only an exhausted fix budget marks a task blocked.
+No task has a verify command that cannot fail without the run refusing before
+the first agent is called.
+
+`oc-harness plan "<request>"` turns a request into `.space/tasks.md`, and
+refuses to write a plan the loop cannot run: every task needs `files:`,
+`change:` and a `verify:` that can fail. The plan is validated before it
+replaces an existing file; a rejected plan never overwrites a good one.
+
+`oc-harness work "<request>"` is the whole sequence in one command: plan if
+there is no executable plan, run the loop, then final verify and final review.
+It stops at the first of: a task that cannot be fixed, a plan that cannot be
+checked, a budget (time, tokens, or per task), a spent route, or a final check
+that fails. `.space/run.json` records every task, attempt, review and
+checkpoint; `.space/summary.md` is written only when the run actually finished.
 
 `--review` closes the review gap without pretending a sentence is a verdict:
 after verify passes, the `reviewer` lane is asked for one JSON object matching
 [`docs/REVIEW-VERDICT.md`](docs/REVIEW-VERDICT.md). A pass marks the task done.
-A fail, a malformed reply or a crashed reviewer marks it blocked and stops the
-run with exit 5. The validated verdict is written to `.space/review/`, so the
+A fail goes back to the build agent with the blockers, then verify and review
+run again. A malformed reply or a crashed reviewer stops the run with exit 5.
+Every verdict is written to `.space/review/`, numbered by round, so the
 decision can be audited after the fact.
+
+### The verify command is code
+
+A `verify:` line is shell, and the driver runs it directly. Handing the loop a
+task file is therefore handing it code, so execution is an explicit decision:
+
+```
+oc-harness run --print-verify     # print the commands, run nothing
+oc-harness run --trust-verify     # run them
+```
+
+On a terminal without `--trust-verify`, `run` lists the commands and asks
+`y/N`. Off a terminal it refuses: a scheduled job that silently ran a task file
+from a branch it did not write is exactly the failure this gate exists for.
+
+### Exit codes
+
+| code | meaning |
+|---|---|
+| 0 | every task done, and any final verify/review that was asked for passed |
+| 1 | no task file |
+| 2 | bad plan, trust refused, scope violation, budget spent, round cap |
+| 3 | the model route failed before it edited anything; `work` tries the next route |
+| 4 | a verify failed after its fix rounds, or a final verify failed |
+| 5 | a review failed after its fix rounds, or the reviewer's answer was not a verdict |
+
+`--final-verify "<cmd>"` runs one command after the last task - the project's
+whole suite, not one task's slice. `--final-review` reviews the whole diff from
+the commit the run started at, not just the last task. `--json` prints one
+machine-readable report on stdout and sends human progress to stderr;
+`oc-harness status` answers "what did the last run do" from the record.
+
+`work` can run on its own branch (`--branch`), commit each finished task and
+only the paths it touched (`--commit`), or do the whole run in a separate
+worktree under `.space/worktrees/` (`--worktree`). It never pushes, opens a
+pull request or publishes. A spent model route is retried once per other route
+in the lane chain, with `OC_HARNESS_MODEL` selecting the next one - never on the
+route that just failed.
 
 ## What it costs, measured
 
