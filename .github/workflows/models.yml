@@ -1,8 +1,12 @@
-# The free tier moves under the kit: a provider withdraws a model, or starts
-# answering a spent route with exit 0 and no text. The suite cannot see that,
-# because it runs against a fixture. This job asks the live catalogue once a
-# day, so a dead base or fallback is a notification on Monday rather than a
-# failed task on a user's machine.
+# The free tier moves under the kit: a provider withdraws a model. The suite
+# cannot see that, because it runs against a fixture. This job asks the live
+# catalogue once a day, so a withdrawn base or fallback is a notification on
+# Monday rather than a failed task on a user's machine.
+#
+# It checks catalogue lifecycle only. A route that answers 200 with no step
+# and no text is invisible here; that needs a real request, which is
+# `node eval/models.mjs --free --check`. The probes it rejects are recorded in
+# eval/unusable-models.json and skipped by --free and research.
 name: models.yml
 
 on:

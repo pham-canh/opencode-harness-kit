@@ -41,6 +41,11 @@ jobs:
       # test:all is deliberately the offline subset: measure/attribute read the
       # install database and ~/.config/opencode, neither of which exists here.
       - run: npm run check
+      # The suite runs from a checkout; the tarball is what a user installs.
+      # Without --release here: a pull request is not expected to have bumped
+      # CHANGELOG.md yet, but its version pair and file list must still agree.
+      - name: release integrity
+        run: npm run release:check
       # The suite says the modules it loads work. The graph says nothing is
       # orphaned by a rename and no module cycle was introduced, and the
       # coverage thresholds keep the failover and trust branches from quietly
@@ -161,6 +166,11 @@ jobs:
             echo "::error::publishing would publish $package_version under a v$tag_version tag."
             exit 1
           fi
+      # The check above compares two fields. This compares the lockfile, the
+      # CHANGELOG and the files actually packed, so a release cannot publish
+      # with a stale lockfile or a tarball missing its documentation.
+      - name: release integrity
+        run: npm run release:check -- --release --tag "$GITHUB_REF_NAME"
       - name: print the OIDC claims npm matches against
         if: ${{ env.NODE_AUTH_TOKEN == '' }}
         run: |

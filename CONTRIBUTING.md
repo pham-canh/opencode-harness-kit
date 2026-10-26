@@ -103,27 +103,38 @@ after — say which test does that.
 The version is set in `package.json` by `npm version`, and the tag is what
 triggers the publish. Keep the two in step: the job publishes the version in
 `package.json`, so a tag that says one version and a file that says another
-is refused by the registry with `EPUBLISHCONFLICT`.
+is refused by the registry with `EPUBLISHCONFLICT`. `npm run release:check`
+checks that pair, the lockfile, the first CHANGELOG heading and the files in
+the tarball.
 
 ## Cutting a release
 
-```bash
-# 1. the version and the changelog entry
-npm version minor            # or major, or patch
-$EDITOR CHANGELOG.md        # the entry for the new version
+Run this from a clean `main`. `npm version --no-git-tag-version` writes the
+version into `package.json` and `package-lock.json` but does not make a commit
+or a tag, so there is exactly one of each below.
 
-# 2. the tag, which is what triggers the publish
-git commit -am "release: <version>"
+```bash
+# 1. the checks a release has to survive
+npm run selfcheck
+
+# 2. bump and write the changelog entry
+npm version patch --no-git-tag-version   # or minor, or major
+$EDITOR CHANGELOG.md                     # the entry for the new version
+
+# 3. the version, lockfile, CHANGELOG and tarball must agree
+npm run release:check -- --release
+
+# 4. commit once, tag once, then check the tag against the tree
+git add package.json package-lock.json CHANGELOG.md
+git commit -m "chore(release): <version>"
 git tag -a v<version> -m "<what the release is>"
+npm run release:check -- --release --tag v<version>
 git push origin main v<version>
 ```
 
 The tag triggers the workflow, the tests run, and the `publish` job publishes
-the tarball. `npm version` writes the version into `package.json`, and the
-publish job publishes the version in `package.json` — so the tag and
-`package.json` have to agree, or the registry refuses the publish with
-`EPUBLISHCONFLICT`. That is the hazard worth guarding: not the bump, but a
-tag that says one version and a file that says another.
+the tarball. The publish job repeats the release check with the pushed tag, so
+a tag that says one version and a file that says another cannot be published.
 
 ### How the publish authenticates
 
@@ -249,7 +260,8 @@ publish **within 2 days**, or it expires and has to be created again.
 > web URL they print is masked in the log — so run them in a terminal, where
 > npm prompts for the code. The token path below needs none of that.
 
-The GitHub release is written by hand from the CHANGELOG entry:
+The GitHub release is optional and is written by hand from the CHANGELOG
+entry after the publish job is green. It is not part of the publish gate:
 
 ```bash
 gh release create v<version> --title "<version> - <what it is>" --notes-file <notes>

@@ -1,6 +1,6 @@
 {
   "name": "opencode-harness-kit",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Harness kit for OpenCode: capability profiles, a fleet of job lanes with one free model each, role-based reasoning effort, context pruning, and measured baselines.",
   "license": "MIT",
   "homepage": "https://github.com/pham-canh/opencode-harness-kit#readme",
@@ -78,6 +78,7 @@
     "doctor": "node bin/oc-harness.mjs doctor",
     "graph": "node eval/graph.mjs --check",
     "selfcheck": "node eval/selfcheck.mjs",
+    "release:check": "node eval/release-check.mjs",
     "baseline": "node bin/baseline.mjs",
     "release:trust": "node bin/oc-harness.mjs trust",
     "eval": "node eval/run.mjs",

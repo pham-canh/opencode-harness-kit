@@ -39,6 +39,7 @@ function run(label, command, args, env = {}) {
 }
 
 run("build", "npm", ["run", "build"])
+run("release", "npm", ["run", "release:check", "--", "--release"])
 run("typecheck", "npm", ["run", "typecheck"])
 run("test", "npm", ["test"])
 run("graph", "npm", ["run", "graph"])

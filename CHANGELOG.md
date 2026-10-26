@@ -12,6 +12,42 @@ is not happening.
 
 ---
 
+## [0.7.2] — 2026-10-26
+
+A patch about the release process itself: the checks that decide whether a
+release is coherent now live in one command and run in CI.
+
+### Added
+
+- **`npm run release:check`.** It compares `package.json` with both versions
+  in `package-lock.json`, the first release heading in this file, an optional
+  tag, and the files `npm pack --dry-run` would publish. `--release` requires
+  the CHANGELOG heading; `--tag v<version>` requires the tag. It is part of
+  `npm run selfcheck`, runs in the test job without `--release`, and runs in
+  the publish job with the pushed tag.
+
+### Fixed
+
+- **`CONTRIBUTING.md` asked for two commits and two tags.** `npm version`
+  already makes both by default, and the steps after it made a second one. The
+  release steps now use `npm version --no-git-tag-version`, verify the tree
+  before committing, and tag once.
+- **`models.yml` claimed a check it did not run.** The scheduled job reads
+  catalogue lifecycle; it cannot see a route that answers 200 with no text.
+  The comment now says so and names `eval/models.mjs --free --check`.
+- **README named `doctor` as the pre-release check.** It is the online check.
+  `npm run selfcheck` is the release gate, and the README now says which is
+  which.
+
+### Documentation
+
+- **`MIGRATION.md` covers 0.4.x → 0.7.x.** The config file format survives, but
+  the compiler now owns more keys: `run` is build + verify, `--review` exits 5
+  on a rejected review, the `build` cap is 120, `doc` and `verify` no longer
+  open bash with `"*": "allow"`, denied tool calls are not retried, the
+  reviewer moved off the retired `nemotron-3-ultra-free`, and `doctor
+  --check-models` checks lifecycle rather than presence.
+
 ## [0.7.1] — 2026-10-26
 
 A release about checks that were green while the thing they check was not:
@@ -2228,7 +2264,8 @@ silent in the worst way:
 
 [0.7.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.6.4...v0.7.0
 [0.7.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.0...v0.7.1
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.1...HEAD
+[0.7.2]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.1...v0.7.2
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.2...HEAD
 [0.5.7]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...v0.5.5

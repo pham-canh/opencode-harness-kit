@@ -275,17 +275,23 @@ withdrawn, and one of them was the **default** at the time:
 The full list, with a reason for each, is in
 [`profiles/index.json`](profiles/index.json).
 
-### The five commands, and when each one runs
+### The commands, and when each one runs
 
 | command | what it checks | when |
 |---|---|---|
 | `oc-harness list` | the profiles this kit ships, with retention and caveats | offline, any time |
-| `oc-harness doctor` | every profile against the live model catalogue, and the installed config against the active profile | **before every release**, and whenever a lane starts failing with a 429 or a "model not found" |
+| `oc-harness doctor` | every profile against the live model catalogue, and the installed config against the active profile | **before a release**, and whenever a lane starts failing with a 429 or a "model not found"; this is the online check, not the release gate |
 | `oc-harness doctor --check-models` | one run, non-zero when a shipped model is no longer in the catalogue | from cron: the shape a scheduler wants |
 | `oc-harness doctor --watch` | keeps watching, and reports only what **changed** | leave it in a terminal for a week |
 | `oc-harness research` | what could **replace** a withdrawn model, and which lanes each candidate could serve | when `doctor` reports a withdrawal, and from cron before it happens |
 | `oc-harness refresh <id>` | re-derives a profile's machine-derived fields from live metadata | when `doctor` reports drift |
 | `oc-harness verify` | the installed config still matches the profile, and the kit's own files are still installed | after every `use` / `install` |
+
+`npm run selfcheck` is the **release gate**: it builds, typechecks, runs the
+suite, checks the import graph and the eval premises, installs into a fresh
+directory, and ends with `npm run release:check -- --release`. `doctor` is the
+online half — it reads models.dev and the installed config — and it is not a
+substitute for that gate.
 
 A cron line that tells you the moment a route disappears, rather than the
 moment a lane starts failing:
