@@ -178,11 +178,31 @@ async function cmdWork() {
     } else {
       const commands = planVerifyCommands(join(process.cwd(), ".space", "tasks.md"), finalVerify)
       if (flag("--print-verify")) {
-        process.stdout.write(`${commands.join("\n")}${commands.length ? "\n" : ""}`)
+        // `--json` promises a JSON body on stdout. Printing the bare command
+        // list there made the flag a trap for scripts that parse every
+        // --json command the same way.
+        if (wantJson) {
+          process.stdout.write(`${JSON.stringify({
+            ok: true,
+            code: 0,
+            phase: "print-verify",
+            reason: "",
+            commands,
+            branch: null,
+            worktree: null,
+            loop: null,
+          }, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${commands.join("\n")}${commands.length ? "\n" : ""}`)
+        }
         return
       }
       await ensureVerifyTrust(commands, wantJson)
-      result = workRequest(common)
+      // The prepare call above already planned, and with --force it already
+      // replaced the valid plan. Passing --force again would ask the planner
+      // for a second plan and could run different tasks than the ones whose
+      // verify commands were just trusted.
+      result = workRequest({ ...common, force: false })
     }
   } else {
     result = workRequest(common)

@@ -48,6 +48,7 @@ const plan = ${JSON.stringify(PLAN)}
 const role = argv[argv.indexOf("--agent") + 1]
 const dir = argv[argv.indexOf("--dir") + 1]
 if (role === "plan") {
+  if (process.env.PLAN_CALL_LOG) fs.appendFileSync(process.env.PLAN_CALL_LOG, "x")
   console.log(JSON.stringify({ type: "text", part: { text: plan } }))
   process.exit(0)
 }
@@ -81,6 +82,26 @@ test("plan writes a task file and refuses to overwrite it", () => {
   const second = spawnSync("node", cli("plan", "again"), { cwd: dir, encoding: "utf8", env })
   assert.equal(second.status, 2)
   assert.match(second.stderr, /already exists/)
+})
+
+test("work --json --print-verify prints JSON, not a bare command list", () => {
+  const bin = fakeOpencode()
+  const { dir, env } = repo(bin)
+  mkdirSync(join(dir, ".space"), { recursive: true })
+  writeFileSync(join(dir, ".space", "tasks.md"), PLAN)
+  const r = spawnSync("node", cli("work", "--json", "--print-verify"), { cwd: dir, encoding: "utf8", env })
+  assert.equal(r.status, 0, r.stderr)
+  const report = JSON.parse(r.stdout)
+  assert.equal(report.ok, true)
+  assert.equal(report.code, 0)
+  assert.equal(report.phase, "print-verify")
+  assert.deepEqual(report.commands, ["test -f answer.txt"])
+  assert.equal(existsSync(join(dir, "answer.txt")), false, "printing verify must not run the loop")
+
+  const text = spawnSync("node", cli("work", "--print-verify"), { cwd: dir, encoding: "utf8", env })
+  assert.equal(text.status, 0, text.stderr)
+  assert.match(text.stdout, /test -f answer\.txt\n$/)
+  assert.doesNotMatch(text.stdout, /"commands"/)
 })
 
 test("run refuses an untrusted task file on a non-tty", () => {
@@ -129,6 +150,29 @@ test("work --plan-only plans without a git repository", () => {
   const r = spawnSync("node", cli("work", "answer the question", "--plan-only"), { cwd: dir, encoding: "utf8", env, timeout: 60_000 })
   assert.equal(r.status, 0, r.stderr)
   assert.match(readFileSync(join(dir, ".space", "tasks.md"), "utf8"), /write the answer/)
+})
+
+test("work --replan replaces a valid plan once and runs the replacement", () => {
+  const bin = fakeOpencode()
+  const { dir, env } = repo(bin)
+  mkdirSync(join(dir, ".space"), { recursive: true })
+  writeFileSync(join(dir, ".space", "tasks.md"), PLAN.replace("write 42 into answer.txt", "write 41 into answer.txt"))
+  const log = join(mkdtempSync(join(tmpdir(), "oc-plan-log-")), "calls")
+  const r = spawnSync("node", cli("work", "answer the question", "--replan", "--trust-verify", "--json", "--max-rounds", "3"), {
+    cwd: dir,
+    encoding: "utf8",
+    env: { ...env, PLAN_CALL_LOG: log },
+    timeout: 60_000,
+  })
+  assert.equal(r.status, 0, r.stderr)
+  const report = JSON.parse(r.stdout)
+  assert.equal(report.ok, true)
+  // The prepare call replans; the run call must not ask the planner for a
+  // second plan, or the tasks whose verify commands were trusted would be
+  // replaced underneath the run.
+  assert.equal(readFileSync(log, "utf8"), "x", "the planner must run exactly once")
+  assert.match(readFileSync(join(dir, ".space", "tasks.md"), "utf8"), /write 42/)
+  assert.equal(readFileSync(join(dir, "answer.txt"), "utf8").trim(), "42")
 })
 
 test("status reads the run record and prints it as JSON", () => {

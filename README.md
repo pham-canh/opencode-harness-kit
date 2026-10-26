@@ -1108,14 +1108,18 @@ It stops at the first of: a task that cannot be fixed, a plan that cannot be
 checked, a budget (time, tokens, or per task), a spent route, or a final check
 that fails. `.space/run.json` records every task, attempt, review and
 checkpoint; `.space/summary.md` is written only when the run actually finished.
+`--force` with a request replaces an existing valid plan before walking it;
+without it, a valid plan is kept. Outside a git repository `work` runs only
+with `--allow-extra-files`, which turns off the scope check it cannot make.
 
 `--review` closes the review gap without pretending a sentence is a verdict:
 after verify passes, the `reviewer` lane is asked for one JSON object matching
 [`docs/REVIEW-VERDICT.md`](docs/REVIEW-VERDICT.md). A pass marks the task done.
 A fail goes back to the build agent with the blockers, then verify and review
 run again. A malformed reply or a crashed reviewer stops the run with exit 5.
-Every verdict is written to `.space/review/`, numbered by round, so the
-decision can be audited after the fact.
+Every verdict is written to `.space/review/`, numbered by review, so the
+failure that caused a fix and the review that replaced it are both kept
+instead of the second overwriting the first.
 
 ### The verify command is code
 
@@ -1130,6 +1134,9 @@ oc-harness run --trust-verify     # run them
 On a terminal without `--trust-verify`, `run` lists the commands and asks
 `y/N`. Off a terminal it refuses: a scheduled job that silently ran a task file
 from a branch it did not write is exactly the failure this gate exists for.
+`--print-verify` with `--json` prints those commands as a JSON object, so a
+script that parses every `--json` result with one reader is not handed a bare
+command list on this one path.
 
 ### Exit codes
 

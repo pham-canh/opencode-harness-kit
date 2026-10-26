@@ -36,8 +36,11 @@ may not put a sentence before or after it.
 ## Where it is kept
 
 The orchestrator validates the verdict and writes it to
-`.space/review/<round>-<task-slug>.json`, atomically. A review that leaves no
-file is a review nobody can audit, and the next run cannot tell it happened.
+`.space/review/<review>-<task-slug>.json`, atomically. The number counts
+reviews, not task rounds: a task that fails review, is fixed, and is reviewed
+again leaves both files, so the failure that caused the fix stays auditable.
+A review that leaves no file is a review nobody can audit, and the next run
+cannot tell it happened.
 
 ```json
 {

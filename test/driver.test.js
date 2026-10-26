@@ -25,7 +25,7 @@ import {
   countSteps,
 } from "../src/driver/run.mjs"
 import { parseTasks, isVacuousVerify } from "../src/tasks.js"
-import { createRun, runTask } from "../src/driver/run-state.mjs"
+import { createRun, redact, redactDeep, runTask } from "../src/driver/run-state.mjs"
 import { mkdtemp } from "./helpers.mjs"
 
 function scratch(doc) {
@@ -1010,6 +1010,36 @@ test("final verify and final review gate the summary", () => {
   assert.match(summary, /Final review: pass/)
   assert.match(summary, /Status: done/, "the summary is written after the run is marked done")
   assert.doesNotMatch(summary, /Status: running/)
+})
+
+test("redaction catches JSON-shaped credentials and credential-named fields", () => {
+  assert.equal(redact("API_KEY=abc123"), "API_KEY=[redacted]")
+  assert.equal(redact('{"api_key": "sk-live-123"}'), '{"api_key": "[redacted]"}')
+  assert.equal(redact(`"client-secret": 's3cr3t'`), `"client-secret": '[redacted]'`)
+  assert.equal(redact("nothing secret here"), "nothing secret here")
+  const record = redactDeep({ apiKey: "sk-live-123", nested: { password: "hunter2" }, note: '{"token": "abc"}' })
+  assert.equal(record.apiKey, "[redacted]")
+  assert.equal(record.nested.password, "[redacted]")
+  assert.equal(record.note, '{"token": "[redacted]"}')
+})
+
+test("the summary redacts the goal and the final verify command", () => {
+  const dir = scratch(oneTask())
+  const r = runLoop({
+    cwd: dir,
+    runAgent: () => ({ ok: true }),
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+    goal: "ship TOKEN=abc123",
+    finalVerify: "check --api-key=sk-live-456",
+  })
+  assert.equal(r.code, 0, r.reason)
+  const summary = readFileSync(join(dir, ".space", "summary.md"), "utf8")
+  assert.doesNotMatch(summary, /abc123/)
+  assert.doesNotMatch(summary, /sk-live-456/)
+  assert.match(summary, /TOKEN=\[redacted\]/)
+  assert.match(summary, /--api-key=\[redacted\]/)
+  const record = JSON.parse(readFileSync(join(dir, ".space", "run.json"), "utf8"))
+  assert.doesNotMatch(JSON.stringify(record), /abc123|sk-live-456/)
 })
 
 test("a preflight refusal finalizes the run record instead of leaving it running", () => {

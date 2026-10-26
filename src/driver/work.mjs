@@ -81,6 +81,7 @@ export function runIdProblem(value) {
  *   branch?: boolean | string,
  *   commit?: boolean,
  *   allowDirty?: boolean,
+ *   allowExtraFiles?: boolean,
  *   worktree?: boolean,
  *   prepareOnly?: boolean,
  *   loop?: any,
@@ -105,7 +106,11 @@ export function workRequest(options) {
 
   // Plan first. A work run with nothing executable has nothing to run, and a
   // request without a plan is the normal entry point, not an error.
-  if (valid.errors.length) {
+  //
+  // `--force`/`--replan` with a request is the same decision even when the
+  // plan on disk is valid: the person asked for a new plan, and keeping the
+  // old one silently made `work --replan "..."` a no-op.
+  if (valid.errors.length || (options.request && options.force === true)) {
     if (!options.request) {
       return {
         ok: false,
@@ -117,9 +122,10 @@ export function workRequest(options) {
     const planned = /** @type {any} */ (plan({
       cwd,
       request: options.request,
-      // A plan already on disk that preflight refused is not a plan `--force`
-      // is protecting: leaving it would make the next command see the same
-      // error. Replacing it needs no second flag.
+      // An invalid plan is not one `--force` is protecting: leaving it would
+      // make the next command see the same error, so replacing it needs no
+      // second flag. A valid plan reaching here was replaced because --force
+      // and a request asked for exactly that.
       force: true,
       // `--dry-run` must not write; `--plan-only` must, or the command has
       // nothing to show for itself.
@@ -155,8 +161,32 @@ export function workRequest(options) {
     if (options.prepareOnly) return { ok: true, code: 0, phase: "prepared", planned: null, loop: null }
   }
 
-  if (!isGitRepo(cwd)) {
-    return { ok: false, code: 2, reason: "work needs a git work tree: the scope check and checkpoints read git status", phase: "preflight" }
+  // Git is what supplies the scope fence and the checkpoints, so a run
+  // outside a repository is allowed only when the fence is explicitly off.
+  // Everything else that needs git - a branch, a worktree, a checkpoint, a
+  // review diff - is refused by name rather than failing halfway through.
+  const gitRepo = isGitRepo(cwd)
+  // The CLI puts the loop flags - including this one - in `loop`; a caller of
+  // `workRequest` may put it at the top level. Both mean the same thing.
+  const allowExtraFiles = options.allowExtraFiles === true || loop.allowExtraFiles === true
+  if (!gitRepo) {
+    if (!allowExtraFiles) {
+      return {
+        ok: false,
+        code: 2,
+        reason: "work needs a git work tree: the scope check and checkpoints read git status; pass --allow-extra-files to run without them",
+        phase: "preflight",
+      }
+    }
+    if (options.branch || options.worktree) {
+      return { ok: false, code: 2, reason: "a branch or worktree needs a git repository", phase: "preflight" }
+    }
+    if (options.commit) {
+      return { ok: false, code: 2, reason: "--commit needs a git repository", phase: "preflight" }
+    }
+    if (loop.review === true || loop.finalReview === true) {
+      return { ok: false, code: 2, reason: "review needs a git repository: it reads the diff", phase: "preflight" }
+    }
   }
 
   const branchName = typeof options.branch === "string" ? options.branch : `oc-harness/${runId}`
@@ -187,21 +217,35 @@ export function workRequest(options) {
   const baseline = changedPaths(runDir)
 
   const prior = readRun(runDir)
-  const run = prior ? { ...prior, status: "running", reason: "", exitCode: null } : createRun({
-    cwd: runDir,
-    id: runId,
-    goal: options.request ?? "",
-    role: "build",
-    branch: options.branch || options.worktree ? branchName : null,
-    worktree: worktreePath,
-  })
-  // A new run reuses only its identity; previous task records are kept so a
-  // resumed run reports total attempts rather than the last one.
+  // A record left by an earlier run is reused for its task history, not for
+  // the facts of the run that is starting. Keeping `finalVerify` from a run
+  // that ended yesterday, or its branch, worktree, role and goal, made
+  // `status` report a check this run never ran and a tree it never used.
+  const run = prior
+    ? {
+        ...createRun({
+          cwd: runDir,
+          id: runId,
+          goal: options.request ?? prior.goal ?? "",
+          role: loop.role ?? "build",
+          branch: options.branch || options.worktree ? branchName : null,
+          worktree: worktreePath,
+        }),
+        // Attempts are cumulative across a resume; every other field belongs
+        // to the run that is starting now and is reset by createRun above.
+        tasks: Array.isArray(prior.tasks) ? prior.tasks : [],
+      }
+    : createRun({
+        cwd: runDir,
+        id: runId,
+        goal: options.request ?? "",
+        role: loop.role ?? "build",
+        branch: options.branch || options.worktree ? branchName : null,
+        worktree: worktreePath,
+      })
+  // A fresh record needs its task list; a reused one already has it.
   const runTasksFile = join(runDir, TASKS)
   if (!prior) for (const t of parseTasks(readFileSync(runTasksFile, "utf8")).tasks) runTask(run, t)
-  run.goal = run.goal || options.request || ""
-  run.status = "running"
-  run.branch = options.branch || options.worktree ? branchName : run.branch ?? null
   // NOT written here. `runLoop` takes the lock before it writes, so a second
   // work run in the same project refuses without overwriting the record of
   // the run that is still going. A record written here made the loser of the
@@ -231,6 +275,7 @@ export function workRequest(options) {
       ...loop,
       cwd: runDir,
       goal: options.request ?? "",
+      allowExtraFiles,
       runState: state,
       finalBaseRef: loop.finalBaseRef ?? null,
       onTaskDone: (info) => {

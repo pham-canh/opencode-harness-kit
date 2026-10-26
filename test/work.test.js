@@ -127,6 +127,28 @@ test("--plan-only with --force actually replaces the plan", () => {
   assert.match(readFileSync(join(dir, ".space", "tasks.md"), "utf8"), /43/)
 })
 
+test("--force with a request replaces a valid plan and then runs it", () => {
+  const dir = repo()
+  writeFileSync(join(dir, ".space", "tasks.md"), planText)
+  let seen = null
+  const r = workRequest({
+    cwd: dir,
+    request: "try again",
+    force: true,
+    plan: (opts) => {
+      seen = opts
+      writeFileSync(join(dir, ".space", "tasks.md"), planText.replace("write 42", "write 43"))
+      return { ok: true, code: 0, path: join(dir, ".space", "tasks.md"), text: "new plan", tasks: 1 }
+    },
+    loop: { runAgent: () => ({ ok: true }), runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }) },
+  })
+  assert.equal(r.code, 0, r.reason)
+  assert.equal(r.phase, "loop")
+  assert.equal(seen.force, true, "an existing valid plan is replaced only because --force asked")
+  assert.equal(seen.print, false)
+  assert.match(readFileSync(join(dir, ".space", "tasks.md"), "utf8"), /write 43/)
+})
+
 test("--allow-dirty does not sweep a pre-existing edit into the checkpoint", () => {
   const dir = repo()
   writeFileSync(join(dir, ".space", "tasks.md"), planText)
@@ -171,6 +193,86 @@ test("--dry-run never calls the loop", () => {
   assert.equal(r.code, 0)
   assert.equal(r.dryRun, true)
   assert.equal(runs, 0)
+})
+
+test("outside git, only --allow-extra-files may run and git-only flags are refused", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-nogit-"))
+  mkdirSync(join(dir, ".space"), { recursive: true })
+  writeFileSync(join(dir, ".space", "tasks.md"), planText)
+  const loop = {
+    runAgent: () => {
+      writeFileSync(join(dir, "answer.txt"), "42\n")
+      return { ok: true }
+    },
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+  }
+
+  const refused = workRequest({ cwd: dir, loop })
+  assert.equal(refused.code, 2)
+  assert.match(refused.reason, /--allow-extra-files/)
+  assert.equal(existsSync(join(dir, "answer.txt")), false)
+
+  for (const extra of [{ commit: true }, { branch: true }, { worktree: true }]) {
+    const r = workRequest({ cwd: dir, allowExtraFiles: true, loop, ...extra })
+    assert.equal(r.code, 2, JSON.stringify(extra))
+    assert.match(r.reason, /git repository/)
+  }
+  const review = workRequest({ cwd: dir, allowExtraFiles: true, loop: { ...loop, review: true } })
+  assert.equal(review.code, 2)
+  assert.match(review.reason, /review needs a git repository/)
+
+  const r = workRequest({ cwd: dir, loop: { ...loop, allowExtraFiles: true } })
+  assert.equal(r.code, 0, r.reason)
+  assert.equal(readFileSync(join(dir, "answer.txt"), "utf8"), "42\n")
+  assert.equal(JSON.parse(readFileSync(join(dir, ".space", "run.json"), "utf8")).status, "done")
+})
+
+test("a new run resets the facts an old record would otherwise report", () => {
+  const dir = repo()
+  writeFileSync(join(dir, ".space", "tasks.md"), planText)
+  writeFileSync(
+    join(dir, ".space", "run.json"),
+    JSON.stringify({
+      schema: "oc-harness/run@1",
+      id: "old-run",
+      cwd: "/somewhere/else",
+      goal: "an old goal",
+      role: "review",
+      branch: "old-branch",
+      worktree: "/tmp/old-worktree",
+      status: "done",
+      reason: "old reason",
+      exitCode: 0,
+      startedAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+      rounds: 99,
+      tokens: 999,
+      seconds: 999,
+      finalVerify: { command: "old-final-check", ok: false },
+      finalReview: { verdict: "fail" },
+      tasks: [{ title: "an earlier task", attempts: 3 }],
+    }),
+  )
+  const r = workRequest({
+    cwd: dir,
+    runId: "new-run",
+    request: "a new goal",
+    loop: { runAgent: () => ({ ok: true }), runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }) },
+  })
+  assert.equal(r.code, 0, r.reason)
+  const run = JSON.parse(readFileSync(join(dir, ".space", "run.json"), "utf8"))
+  assert.equal(run.id, "new-run")
+  assert.equal(run.cwd, dir)
+  assert.equal(run.goal, "a new goal")
+  assert.equal(run.role, "build")
+  assert.equal(run.branch, null)
+  assert.equal(run.worktree, null)
+  assert.equal(run.finalVerify, null)
+  assert.equal(run.finalReview, null)
+  assert.equal(run.tokens, 0)
+  assert.notEqual(run.startedAt, "2020-01-01T00:00:00.000Z")
+  assert.doesNotMatch(JSON.stringify(run), /old-final-check|old-branch|old-worktree/)
+  assert.equal(run.tasks[0].title, "an earlier task", "attempt history survives a resume")
 })
 
 test("a run id cannot walk out of .space/worktrees", () => {

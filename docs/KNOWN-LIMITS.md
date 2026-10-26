@@ -507,7 +507,10 @@ consequences worth knowing:
   point an unattended `work` at a task file you would not run by hand.
 - `--allow-extra-files` disables the scope fence for that run. It exists for a
   plan whose `files:` line was too narrow, not for a plan that did not bother
-  to name one.
+  to name one. It is also the only way to run `work` outside a git repository;
+  `--branch`, `--worktree`, `--commit`, `--review` and `--final-review` still
+  refuse there, because every one of them needs git to supply a diff or a
+  commit.
 
 ## `work` stops at a repository boundary
 

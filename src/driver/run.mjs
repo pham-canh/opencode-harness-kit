@@ -44,7 +44,7 @@ import {
   isVacuousVerify,
 } from "../tasks.js"
 import { gitEnv } from "./git.mjs"
-import { createRun, runPath, runTask, writeRun } from "./run-state.mjs"
+import { createRun, redact, runPath, runTask, writeRun } from "./run-state.mjs"
 
 const TASKS_PATH = join(".space", "tasks.md")
 const LOCK_PATH = join(".space", "run.lock")
@@ -1242,7 +1242,10 @@ function writeSummary(cwd, run, parsed) {
   const path = join(cwd, ".space", "summary.md")
   try {
     mkdirSync(join(cwd, ".space"), { recursive: true })
-    writeFileSync(`${path}.tmp`, lines.join("\n"))
+    // The record is redacted on its way to run.json, but the summary is built
+    // from the in-memory run, so a token in the goal or in the final verify
+    // command reached disk here even though the record did not.
+    writeFileSync(`${path}.tmp`, redact(lines.join("\n")))
     renameSync(`${path}.tmp`, path)
   } catch {
     // The run itself succeeded; a missing summary must not turn it into a failure.

@@ -35,7 +35,10 @@ A task's `files:` line is a scope, not a hint. When the agent changes a file
 the line does not name, the loop marks the task blocked and stops rather than
 letting the next task build on an unplanned edit. `--allow-extra-files` is
 the deliberate way to say the task may go wider; it is also the only way to
-run outside a git work tree, where the check has nothing to read.
+run outside a git work tree, where the check has nothing to read. In that mode
+the run still plans and walks the tasks, but `--branch`, `--worktree`,
+`--commit`, `--review` and `--final-review` are refused with code 2: each one
+needs a diff or a commit that git would have to provide.
 
 A live lock is not cleared automatically. `--force-unlock` breaks one
 explicitly, for the case where the recorded pid now belongs to an unrelated

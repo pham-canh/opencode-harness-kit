@@ -15,7 +15,20 @@ import { dirname, join } from "node:path"
 export const RUN_SCHEMA = "oc-harness/run@1"
 
 /** Same redaction rule as the CLI error path: a token is never persisted. */
-const SECRET = /\b([A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*)\s*[:=]\s*(\S+)/gi
+const SECRET = /\b([A-Z0-9_.-]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_.-]*)\s*[:=]\s*(\S+)/gi
+
+/**
+ * The same rule for JSON-shaped text: `"api_key": "sk-..."`.
+ *
+ * `SECRET` expects the colon straight after the key, which a closing quote
+ * breaks; a token pasted into a reason as JSON used to survive redaction.
+ * Both the key and the value keep their own quotes.
+ */
+const SECRET_JSON =
+  /(["']?)([A-Z0-9_.-]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_.-]*)\1(\s*[:=]\s*)(["'])(.*?)\4/gi
+
+/** A field named like a credential is redacted whatever its value looks like. */
+const SECRET_KEY = /(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)/i
 
 /**
  * Strip anything that looks like a credential before it reaches disk.
@@ -28,7 +41,11 @@ const SECRET = /\b([A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*)\s*[
  * @returns {string}
  */
 export function redact(text) {
-  return String(text ?? "").replace(SECRET, "$1=[redacted]")
+  return String(text ?? "")
+    .replace(SECRET_JSON, (_, keyQuote, key, separator, valueQuote) => {
+      return `${keyQuote}${key}${keyQuote}${separator}${valueQuote}[redacted]${valueQuote}`
+    })
+    .replace(SECRET, "$1=[redacted]")
 }
 
 /**
@@ -47,7 +64,11 @@ export function redactDeep(value) {
   if (Array.isArray(value)) return value.map(redactDeep)
   if (value && typeof value === "object") {
     const out = {}
-    for (const [k, v] of Object.entries(value)) out[k] = redactDeep(v)
+    for (const [k, v] of Object.entries(value)) {
+      // A record may hold `{ apiKey: "..." }` rather than the text
+      // `apiKey=...`; walking values alone would leave that untouched.
+      out[k] = SECRET_KEY.test(k) && typeof v === "string" ? "[redacted]" : redactDeep(v)
+    }
     return out
   }
   return value
