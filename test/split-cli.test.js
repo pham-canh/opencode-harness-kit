@@ -164,6 +164,9 @@ test("a lane's model is written into the config, not into a prompt file", () => 
     const tier = new Set()
     for (const id of listProfileIds()) {
       const p = loadProfile(id)
+      // The tier is the hosted free tier. A local Ollama profile is not on
+      // it, and adding one must not make this look like a missing lane.
+      if ((p.provider ?? "opencode") !== "opencode") continue
       if (p.model) tier.add(p.model)
       for (const rm of Object.values(p.roleModels ?? {})) {
         if (rm?.model) tier.add(rm.model)

@@ -1,6 +1,6 @@
 {
   "name": "opencode-harness-kit",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "description": "Harness kit for OpenCode: capability profiles, a fleet of job lanes with one free model each, role-based reasoning effort, context pruning, and measured baselines.",
   "license": "MIT",
   "homepage": "https://github.com/pham-canh/opencode-harness-kit#readme",
@@ -89,7 +89,8 @@
     "attribute:json": "node eval/attribute.mjs --json",
     "thresholds": "node eval/thresholds.mjs",
     "prepublishOnly": "npm run build",
-    "build:types": "tsc -p tsconfig.types.json"
+    "build:types": "tsc -p tsconfig.types.json",
+    "test:loop": "OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json node --test test/loop-e2e.test.js test/cli-work.test.js test/work.test.js test/plan.test.js"
   },
   "keywords": [
     "opencode",

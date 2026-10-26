@@ -41,6 +41,10 @@ jobs:
       # test:all is deliberately the offline subset: measure/attribute read the
       # install database and ~/.config/opencode, neither of which exists here.
       - run: npm run check
+      # The loop's own scenarios get a named step: they spawn the real CLI with
+      # a stand-in opencode, so a regression in trust, retry, budget or exit
+      # codes fails here by name rather than inside the general suite.
+      - run: npm run test:loop
       # The suite runs from a checkout; the tarball is what a user installs.
       # Without --release here: a pull request is not expected to have bumped
       # CHANGELOG.md yet, but its version pair and file list must still agree.

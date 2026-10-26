@@ -311,22 +311,27 @@ test("doctor --check-models fails when a shipped model is gone", () => {
 
     // A catalogue that still has every shipped model passes.
     const full = join(box.dir, "full-catalog.json")
-    const models = {}
+    // Grouped by provider: a profile may name a provider that is not
+    // `opencode` (a local Ollama model does), and a catalogue that puts it
+    // under the wrong provider is a catalogue that has lost the model.
+    const byProvider = {}
     for (const id of listProfileIds()) {
       const p = loadProfile(id)
       // The utility route is a model the kit runs too, so a catalogue that
       // still has everything has to have it.
       const ids = [p.model, p.utility?.model].filter(Boolean)
+      const provider = p.provider ?? "opencode"
+      byProvider[provider] ??= { models: {} }
       for (const model of ids) {
-        models[model] = {
-        limit: { context: p.limits.context, output: p.limits.output, input: p.limits.input },
+        byProvider[provider].models[model] = {
+          limit: { context: p.limits.context, output: p.limits.output, input: p.limits.input },
           reasoning_options: [{ type: "effort", values: p.effort.levels }],
           temperature: Boolean(p.supports?.temperature),
           attachment: Boolean(p.supports?.attachment),
         }
       }
     }
-    writeFileSync(full, JSON.stringify({ opencode: { models } }))
+    writeFileSync(full, JSON.stringify(byProvider))
     const ok = run(box, ["doctor", "--check-models"], {
       env: { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${full}` },
     })

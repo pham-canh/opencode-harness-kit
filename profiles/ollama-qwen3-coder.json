@@ -1,0 +1,41 @@
+{
+  "$comment": "A local model, for work that must not leave the machine. Ollama serves it on localhost, so there is no provider account, no per-token cost and no network egress. Pull it first: `ollama pull qwen3-coder:30b`.",
+  "id": "ollama-qwen3-coder",
+  "title": "Qwen3 Coder 30B on Ollama (local)",
+  "provider": "ollama",
+  "model": "qwen3-coder:30b",
+  "family": "qwen3",
+  "verified": "2026-10-26",
+  "retention": "zero-retention",
+  "notes": "Runs on your machine. The model is about 19 GB on disk and needs a machine that can hold it; a laptop with less memory will swap and the loop will look broken rather than slow. Tool calling is supported, but it is weaker at long multi-step plans than the hosted models, so use it for locate/verify lanes and small builds first.",
+  "limits": {
+    "context": 262144,
+    "output": 32768
+  },
+  "supports": {
+    "reasoning": false,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": true,
+    "attachment": false
+  },
+  "effort": {
+    "levels": [],
+    "default": null,
+    "reserveShare": 0.1
+  },
+  "roles": {
+    "plan": null,
+    "build": null,
+    "reviewer": null,
+    "locate": null,
+    "verify": null
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": []
+}

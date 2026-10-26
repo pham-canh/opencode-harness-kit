@@ -513,3 +513,64 @@ export function summarize(parsed) {
   }
   return { done, blocked, pending, total: parsed.tasks.length }
 }
+/**
+ * Check a parsed plan before a single agent is called.
+ *
+ * The loop used to discover a bad plan one task at a time: the first task ran,
+ * the second one had no verify command, and the run stopped halfway through a
+ * change that could not be checked. Preflight moves that discovery to the
+ * front, where the cost is a message instead of a half-done repository.
+ *
+ * `strict` is what the planner is held to: every task must name the files it
+ * may touch and say what it changes. The loop itself does not require those -
+ * a hand-written plan whose task line is already precise is allowed - but it
+ * always requires a verify command that can fail.
+ *
+ * @param {TaskFile} parsed
+ * @param {{ strict?: boolean }} [opts]
+ * @returns {{ errors: string[], warnings: string[] }}
+ */
+export function validatePlan(parsed, { strict = false } = {}) {
+  /** @type {string[]} */
+  const errors = []
+  /** @type {string[]} */
+  const warnings = []
+  const tasks = parsed?.tasks ?? []
+
+  if (tasks.length === 0) {
+    errors.push("the plan has no tasks: nothing to run")
+    return { errors, warnings }
+  }
+
+  const seen = new Map()
+  for (const [i, t] of tasks.entries()) {
+    const where = `task ${i + 1} ("${t.title || "(untitled)"}")`
+    if (!t.title.trim()) errors.push(`${where}: the task line is empty`)
+
+    const identity = `${t.title}\u0000${t.change}\u0000${t.files}`
+    if (seen.has(identity)) {
+      errors.push(`${where}: duplicates the identity of task ${seen.get(identity) + 1}; findTask cannot tell them apart`)
+    } else {
+      seen.set(identity, i)
+    }
+
+    if (!t.verify) {
+      errors.push(`${where}: no verify command, so nothing can prove it finished`)
+    } else if (isVacuousVerify(t.verify)) {
+      errors.push(`${where}: verify "${t.verify}" cannot fail, so it proves nothing`)
+    }
+
+    if (!t.files) {
+      const message = `${where}: no files: line, so scope cannot be checked`
+      if (strict) errors.push(message)
+      else warnings.push(message)
+    }
+    if (!t.change) {
+      const message = `${where}: no change: line, so the agent is guessing`
+      if (strict) errors.push(message)
+      else warnings.push(message)
+    }
+  }
+
+  return { errors, warnings }
+}

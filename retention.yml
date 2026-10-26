@@ -101,6 +101,28 @@ models:
     verified: 2026-10-19
     source: https://opencode.ai/docs/zen
 
+  # --- Local models. Nothing leaves the machine; the "provider" is a process
+  # on localhost. ---
+
+  # Both keys are deliberate: the qualified one is what the retention test
+  # reads, the bare one is what a lane resolves against (`modelRetention`
+  # receives the model id without its provider prefix).
+  ollama/qwen3-coder:30b:
+    retention: zero-retention
+    note: >-
+      Ollama serves this on localhost. There is no provider to retain the
+      prompt, and no network call to make one; the only copy is on your disk.
+    verified: 2026-10-26
+    source: https://ollama.com/library/qwen3-coder
+
+  qwen3-coder:30b:
+    retention: zero-retention
+    note: >-
+      Ollama serves this on localhost. There is no provider to retain the
+      prompt, and no network call to make one; the only copy is on your disk.
+    verified: 2026-10-26
+    source: https://ollama.com/library/qwen3-coder
+
   # --- Paid routes, kept because the catalog still serves them and a profile
   # may be pointed at one. ---
 

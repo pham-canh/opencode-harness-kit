@@ -36,3 +36,23 @@ Markdown. No preamble, no restating the request.
 
 See also the `space-plan` skill for the full plan -> build -> review ->
 finish loop and the shared task-file contract.
+
+## The task file contract
+
+The build loop parses `.space/tasks.md`. Answer in exactly this shape, because
+anything else is rejected before an agent is called:
+
+```markdown
+# <goal in one sentence>
+
+## Tasks
+
+- [ ] <task title>
+  - files: <exact paths, comma separated>
+  - change: <what changes, concretely>
+  - verify: <exact command that fails before the change and passes after>
+  - status: pending
+```
+
+`files`, `change` and `verify` are required. `verify` must be a command that can
+fail - `true`, `echo ok` or a bare `exit 0` proves nothing and is refused.

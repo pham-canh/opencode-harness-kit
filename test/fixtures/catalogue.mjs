@@ -14,10 +14,15 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const PROFILES = join(HERE, "..", "..", "profiles")
 
 const byProvider = {}
-const add = (provider, model) => {
+const add = (provider, model, limits) => {
   if (!model) return
   byProvider[provider] ??= { models: {} }
-  byProvider[provider].models[model] = { limit: { context: 200000, output: 32000 } }
+  byProvider[provider].models[model] = {
+    limit: {
+      context: limits?.context ?? 200000,
+      output: limits?.output ?? 32000,
+    },
+  }
 }
 
 for (const file of readdirSync(PROFILES)) {
@@ -29,7 +34,7 @@ for (const file of readdirSync(PROFILES)) {
     continue // not a profile
   }
   const provider = profile.provider ?? "opencode"
-  add(provider, profile.model)
+  add(provider, profile.model, profile.limits)
   for (const spec of Object.values(profile.roleModels ?? {})) {
     for (const entry of spec?.chain ?? []) {
       add(provider, typeof entry === "string" ? entry : entry?.model)

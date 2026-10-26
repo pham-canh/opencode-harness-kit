@@ -111,6 +111,17 @@
       "context": 160000,
       "default": false,
       "note": "Stealth model, no public identity, no effort levels, no image input. The provider may train on it during its free period."
+    },
+    {
+      "id": "ollama-qwen3-coder",
+      "file": "profiles/ollama-qwen3-coder.json",
+      "title": "Qwen3 Coder 30B on Ollama (local)",
+      "retention": "zero-retention",
+      "free": false,
+      "topEffort": null,
+      "context": 262144,
+      "default": false,
+      "note": "Runs on your machine: no provider, no egress, no per-token cost. Pull it with `ollama pull qwen3-coder:30b`."
     }
   ],
   "excluded": [],

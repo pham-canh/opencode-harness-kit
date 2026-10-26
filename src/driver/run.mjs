@@ -38,10 +38,13 @@ import {
   markTask,
   taskPrompt,
   summarize,
+  validatePlan,
   isBlocked,
   isDone,
   isVacuousVerify,
 } from "../tasks.js"
+import { gitEnv } from "./git.mjs"
+import { createRun, runPath, runTask, writeRun } from "./run-state.mjs"
 
 const TASKS_PATH = join(".space", "tasks.md")
 const LOCK_PATH = join(".space", "run.lock")
@@ -195,11 +198,13 @@ export function tail(text, n = 12) {
  */
 export function gitChanges(cwd) {
   const top = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+    env: gitEnv(),
     encoding: "utf8",
   })
   if (top.status !== 0) return null
   const root = top.stdout.trim()
   const res = spawnSync("git", ["-C", cwd, "status", "--porcelain", "-z"], {
+    env: gitEnv(),
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
   })
@@ -398,17 +403,23 @@ export function formatBlockers(blockers) {
  * itself. A diff alone cannot show a new file, and a reviewer that is not told
  * that is a reviewer that passes work it never saw.
  */
-export function reviewDiff(cwd, { maxBytes = 200_000 } = {}) {
+export function reviewDiff(cwd, { maxBytes = 200_000, baseRef = null } = {}) {
   const run = (args) => {
     const res = spawnSync("git", ["-C", cwd, ...args], {
+      env: gitEnv(),
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
     })
     return res.status === 0 ? res.stdout : ""
   }
 
-  const tracked = run(["diff", "--no-color", "--no-ext-diff", "--", "."])
-  const staged = run(["diff", "--cached", "--no-color", "--no-ext-diff", "--", "."])
+  // A final review is the whole change, not what happens to be uncommitted
+  // when it runs. With a base ref the diff is against that commit; without
+  // one it stays the working-tree diff `run` has always used.
+  const tracked = baseRef
+    ? run(["diff", "--no-color", "--no-ext-diff", baseRef, "--", "."])
+    : run(["diff", "--no-color", "--no-ext-diff", "--", "."])
+  const staged = baseRef ? "" : run(["diff", "--cached", "--no-color", "--no-ext-diff", "--", "."])
   const changes = gitChanges(cwd)
   const untracked = changes
     ? [...changes.files].filter(([, value]) => value.code === "??").map(([path]) => path)
@@ -515,9 +526,14 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs }) {
   // `process.env.PWD ?? process.cwd()`. So the agent was handed the right
   // directory and worked in the wrong repository - the one the shell happened
   // to be in. `eval/ab.mjs` documents the same trap and fixes it the same way.
+  // `OC_HARNESS_MODEL` is how `work` moves a lane to the next route in its
+  // chain after a spent one. It is read from the environment because the
+  // driver is already a separate process from the failover decision.
+  const model = process.env.OC_HARNESS_MODEL
+  const modelArgs = model ? ["-m", model] : []
   const res = spawnSync(
     "opencode",
-    ["run", "--agent", role, "--dir", cwd, "--format", "json", prompt],
+    ["run", "--agent", role, "--dir", cwd, "--format", "json", ...modelArgs, prompt],
     {
       cwd,
       encoding: "utf8",
@@ -538,7 +554,38 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs }) {
     output: `${stdout}${res.stderr ?? ""}`.trimEnd(),
     error: res.error ? String(res.error.message) : "",
     steps: countSteps(stdout),
+    tokens: countTokens(stdout),
   }
+}
+
+/**
+ * Tokens a transcript reports, when it reports them.
+ *
+ * `--format json` emits `step_finish` with a `part.tokens` object on current
+ * opencode builds. Older builds omit it, so the answer is 0 rather than a
+ * guess - a budget that fires on invented numbers is worse than no budget.
+ *
+ * @param {string} stdout
+ * @returns {number}
+ */
+export function countTokens(stdout) {
+  let total = 0
+  for (const line of String(stdout ?? "").split("\n")) {
+    const text = line.trim()
+    if (!text) continue
+    try {
+      const event = JSON.parse(text)
+      if (event?.type !== "step_finish") continue
+      const tokens = event?.part?.tokens ?? event?.tokens
+      if (!tokens || typeof tokens !== "object") continue
+      for (const value of Object.values(tokens)) {
+        if (typeof value === "number" && Number.isFinite(value)) total += value
+      }
+    } catch {
+      // Not an event line.
+    }
+  }
+  return total
 }
 
 /**
@@ -626,399 +673,507 @@ export function findTask(parsed, task) {
 /**
  * Run the loop.
  *
- * Stops at the first of: nothing pending, nothing verifiable, a blocked task, a
- * failing verify, the round cap, or the time budget. Whichever it was gets
- * printed, so a run that stops early always says why.
+ * One task at a time: build, verify, review. A verify or review failure is a
+ * FIX ROUND, not the end of the run - the agent is handed the real failure and
+ * asked to correct it, and only an exhausted fix budget blocks the task. That
+ * is the difference between a loop that works when the first attempt is right
+ * and one that works when it is not.
  *
- * The budget is checked BETWEEN rounds. The agent and the verify each get the
- * time that is left, with a floor of half a minute - so a run can overrun the
- * budget by that floor plus the time between the check and the call, and not
- * by the thirty minutes the verify used to be allowed.
+ * Stops at the first of: nothing pending, a plan that cannot be checked, a
+ * blocked task, an exhausted fix budget, the round cap, the time or token
+ * budget, or a final verify/review that fails. Whichever it was gets printed,
+ * so a run that stops early always says why.
+ *
+ * @param {{
+ *   cwd: string,
+ *   role?: string,
+ *   review?: boolean,
+ *   maxRounds?: number,
+ *   budgetMinutes?: number,
+ *   verifyTimeoutMs?: number,
+ *   allowExtraFiles?: boolean,
+ *   forceUnlock?: boolean,
+ *   maxFixRounds?: number,
+ *   reviewFixRounds?: number,
+ *   maxTokens?: number | null,
+ *   maxTaskMinutes?: number | null,
+ *   finalVerify?: string | null,
+ *   finalReview?: boolean,
+ *   finalBaseRef?: string | null,
+ *   state?: boolean,
+ *   goal?: string,
+ *   runId?: string,
+ *   runState?: any,
+ *   branch?: string | null,
+ *   stepCap?: number,
+ *   log?: (line: string) => void,
+ *   runAgent?: (role: string, prompt: string, opts: object) => any,
+ *   runVerify?: (command: string, opts: object) => any,
+ *   runReviewer?: (role: string, prompt: string, opts: object) => any,
+ *   onTaskDone?: (info: object) => void,
+ * }} [options]
  */
-export function runLoop({
-  cwd = process.cwd(),
-  role = "build",
-  maxRounds = 20,
-  budgetMinutes = 120,
-  allowExtraFiles = false,
-  forceUnlock = false,
-  /** The role's configured step cap, or 0 when it is unknown. */
-  stepCap = 0,
-  review = false,
-  runAgent = invokeAgent,
-  runReviewer = invokeAgent,
-  runVerify = sh,
-} = {}) {
+export function runLoop(options) {
+  const o = /** @type {any} */ (options ?? {})
+  const cwd = resolve(o.cwd ?? process.cwd())
+  const role = o.role ?? "build"
+  const review = o.review === true
+  const maxRounds = o.maxRounds ?? 20
+  const budgetMs = (o.budgetMinutes ?? 45) * 60_000
+  const maxFixRounds = Number.isInteger(o.maxFixRounds) ? o.maxFixRounds : 2
+  const reviewFixRounds = Number.isInteger(o.reviewFixRounds) ? o.reviewFixRounds : 2
+  const maxTokens = o.maxTokens ?? null
+  const maxTaskMs = o.maxTaskMinutes ? o.maxTaskMinutes * 60_000 : null
+  const log = o.log ?? ((line) => console.log(line))
+  const runAgent = o.runAgent ?? invokeAgent
+  const runVerify = o.runVerify ?? sh
+  const runReviewer = o.runReviewer ?? invokeAgent
+  const allowExtraFiles = o.allowExtraFiles === true
   const started = Date.now()
-  const budgetMs = budgetMinutes * 60_000
-  const log = []
-
-  if (!existsSync(join(cwd, TASKS_PATH))) {
-    return stop(log, {
-      reason: `no task file at ${TASKS_PATH}. Run space-plan first -- this loop needs a plan to walk.`,
-      code: 1,
-    })
-  }
-
-  let text = readFileSync(join(cwd, TASKS_PATH), "utf8")
+  // The diff a final review looks at starts HERE. Captured before the first
+  // task, because a commit made between tasks would otherwise shrink the
+  // change a reviewer sees to only the uncommitted tail.
+  const finalBaseRef = o.finalBaseRef ?? gitHead(cwd)
+  /** @type {any[]} */
+  const entries = []
   let rounds = 0
+  let tokens = 0
+  let run = null
+  let lock = null
 
-  // One writer per task file. The lock is taken before the first read of the
-  // file and released on EVERY exit, including a throw from a custom runner.
-  const lock = acquireLock(cwd, { force: forceUnlock })
-  if (lock.busy) {
-    return stop(log, {
-      reason: `another run is already in progress in this project (pid ${lock.busy.pid}). Wait for it, or remove ${LOCK_PATH} if it is gone.`,
-      code: 2,
-    })
+  const elapsed = () => (Date.now() - started) / 1000
+  const record = () => {
+    if (!run) return
+    run.rounds = rounds
+    run.tokens = tokens
+    run.seconds = Math.round(elapsed())
+    writeRun(cwd, run)
   }
-  if (lock.error) {
-    return stop(log, { reason: lock.error, code: 2 })
+  const finish = (stopArgs) => {
+    const result = stop(entries, { ...stopArgs, rounds, tokens, run })
+    if (run) {
+      run.status = result.code === 0 ? "done" : stopArgs.status ?? "stopped"
+      run.reason = result.reason
+      run.exitCode = result.code
+      run.endedAt = new Date().toISOString()
+      record()
+    }
+    return result
+  }
+
+  mkdirSync(join(cwd, ".space"), { recursive: true })
+  lock = acquireLock(cwd, { force: o.forceUnlock === true })
+  if (lock.error || lock.busy) {
+    const holder = lock.busy
+    const reason = holder
+      ? `a run is already in progress in this project (${LOCK_PATH}, pid ${holder.pid} since ${holder.at}); wait for it, or pass --force-unlock if that process is gone`
+      : lock.error
+    return { reason, code: 3, rounds: 0, log: entries, error: reason }
   }
 
   try {
+    const file = join(cwd, TASKS_PATH)
+    if (!existsSync(file)) {
+      return finish({ reason: "no task file: run the space-plan skill or `oc-harness plan` first", code: 1 })
+    }
 
-  /**
-   * The task file, read fresh, and the task we were working on inside it.
-   *
-   * The file is read once at the start and every write used that copy, so
-   * anything the agent wrote - a new task, a corrected verify command, a note
-   * about a blocker - was silently erased by the loop's own write. A human
-   * editing the file while the loop ran lost the same way.
-   *
-   * So the file is read again before every write, and the change is applied to
-   * the CURRENT text. The task is matched by its title, because a line number
-   * from the old copy means nothing in the new one.
-   */
-  const reload = (task) => {
-    let fresh = ""
-    try {
-      fresh = readFileSync(join(cwd, TASKS_PATH), "utf8")
-    } catch {
-      // The file is gone. Writing the copy we read at the start would recreate
-      // it from stale state, including any task the agent or a human removed.
+    let parsed = parseTasks(readFileSync(file, "utf8"))
+    const preflight = validatePlan(parsed)
+    for (const warning of preflight.warnings) log(`preflight: ${warning}`)
+    if (preflight.errors.length) {
+      const ids = new Set()
+      for (const t of parsed.tasks) {
+        if (!t.verify || isVacuousVerify(t.verify)) ids.add(`${t.index}`)
+      }
+      if (ids.size) {
+        let text = readFileSync(file, "utf8")
+        for (const t of parsed.tasks) {
+          if (ids.has(`${t.index}`)) {
+            const bad = !t.verify ? "no verify command" : `verify "${t.verify}" cannot fail`
+            text = markTask(text, t, { status: "blocked", verifyOutput: `blocked before the agent ran: ${bad}` })
+          }
+        }
+        writeFileSync(file, text)
+      }
+      const reason = `plan preflight failed: ${preflight.errors.join("; ")}`
+      for (const line of preflight.errors) log(`preflight: ${line}`)
+      return finish({ reason, code: 2, status: "preflight-failed" })
+    }
+
+    if (o.state !== false) {
+      run = o.runState ?? createRun({
+        cwd,
+        id: o.runId,
+        goal: o.goal ?? parsed.goal ?? "",
+        role,
+        branch: o.branch ?? null,
+      })
+      for (const t of parsed.tasks) runTask(run, t)
+      writeRun(cwd, run)
+    }
+
+    const budgetStop = () => {
+      if (Date.now() - started >= budgetMs) return "time budget exhausted"
+      if (maxTokens !== null && tokens >= maxTokens) return `token budget exhausted (${tokens} >= ${maxTokens})`
       return null
     }
-    const parsed = parseTasks(fresh)
-    const same = findTask(parsed, task)
-    if (!same) return null
-    return { text: fresh, task: same }
-  }
 
-  /**
-   * Apply an outcome to the CURRENT file and write it back atomically.
-   *
-   * Returns false when the file changed underneath us: the caller must stop
-   * rather than write a stale list. The write goes through a temporary file so
-   * a reader never sees half a task file, and so a crash cannot leave a
-   * truncated plan behind.
-   */
-  const writeBack = (task, outcome) => {
-    const fresh = reload(task)
-    if (!fresh) return false
-    text = markTask(fresh.text, fresh.task, outcome)
-    const target = join(cwd, TASKS_PATH)
-    const tmp = `${target}.tmp`
-    try {
-      writeFileSync(tmp, text)
-      renameSync(tmp, target)
-    } catch {
-      try {
-        unlinkSync(tmp)
-      } catch {
-        // There is nothing to clean up if the temporary file was never made.
+    for (;;) {
+      const first = budgetStop()
+      if (first) return finish({ reason: first, code: 2, status: "budget" })
+
+      parsed = parseTasks(readFileSync(file, "utf8"))
+      // Order matters: a blocked task stops the run where it sits, after the
+      // pending work already done before it. Skipping it would let a plan run
+      // past the one task a human must look at.
+      const next = parsed.tasks.find((t) => !isDone(t))
+      if (!next) break
+      if (isBlocked(next)) {
+        return finish({ reason: `a task is already blocked: ${next.title}; unblock it or remove it before running again`, code: 2, status: "blocked" })
       }
-      return false
-    }
-    return true
-  }
+      const task = next
+      if (rounds >= maxRounds) {
+        return finish({ reason: `round cap reached (${maxRounds}); the plan may not be converging`, code: 2, status: "round-cap" })
+      }
 
-  const changedUnderneath = (task) =>
-    stop(log, {
-      reason: `the task file changed or disappeared while "${task.title}" was in flight. Not writing a stale task list -- check ${TASKS_PATH} and run again.`,
-      code: 2,
-      rounds,
-    })
+      rounds++
+      const stateTask = run ? runTask(run, task) : null
+      if (stateTask && !stateTask.startedAt) stateTask.startedAt = new Date().toISOString()
+      const taskStarted = Date.now()
+      let fixNote = ""
+      let verifyFixes = 0
+      let reviewFixes = 0
+      let lastVerify = null
+      let blocked = null
 
-  for (;;) {
-    const parsed = parseTasks(text)
+      for (;;) {
+        const budget = budgetStop()
+        if (budget) return finish({ reason: budget, code: 2, status: "budget" })
+        if (maxTaskMs !== null && Date.now() - taskStarted >= maxTaskMs) {
+          return finish({
+            reason: `${task.title}: task time budget exhausted (${o.maxTaskMinutes} minute(s))`,
+            code: 2,
+            status: "budget",
+          })
+        }
 
-    // An empty plan is not a finished plan. It used to fall through to
-    // `nextPending()`, find nothing, and print "every task is done (0/0)" --
-    // a green result for a file that holds no tasks at all.
-    if (parsed.tasks.length === 0) {
-      return stop(log, {
-        reason: `no tasks found in ${TASKS_PATH}. Run space-plan first -- this loop needs a plan to walk.`,
-        code: 2,
-        rounds,
-      })
-    }
+        if (stateTask) {
+          stateTask.attempts++
+          stateTask.status = "running"
+          record()
+        }
+        const changesBefore = gitChanges(cwd)
+        const prompt = fixNote ? `${buildPrompt(task)}\n\nThis is a FIX round. The previous attempt did not pass.\n\n${fixNote}` : buildPrompt(task)
+        const agent = runAgent(role, prompt, { cwd, timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
+        tokens += Number(agent?.tokens ?? 0) || 0
 
-    // Work is done in file order. `nextPending()` skips blocked tasks, so
-    // checking it alone ran every task AFTER a blocker and only reported the
-    // blocker at the end. Find the first task that is not done and stop if it
-    // is blocked; pending work before it still runs.
-    const firstOpen = parsed.tasks.find((t) => !isDone(t))
-    if (firstOpen && isBlocked(firstOpen)) {
-      return stop(log, {
-        reason: `task is blocked and needs a person: ${firstOpen.title}`,
-        code: 2,
-        rounds,
-      })
-    }
+        const said = String(agent?.stdout ?? "")
+        const timedOut = /ETIMEDOUT|timed out/i.test(String(agent?.error ?? ""))
+        // Two shapes are the ROUTE failing rather than the edit: a process
+        // that timed out, and `opencode run` exiting 0 on a spent free route
+        // with no events at all. Both leave the task pending, because a retry
+        // on another model may well finish it. A build agent that took steps
+        // and then failed is a failed edit, and is handled as one.
+        const deadRoute =
+          timedOut ||
+          (agent?.ok === true && Object.hasOwn(agent, "stdout") && !said.trim() && Number(agent?.steps ?? 0) === 0)
+        if (deadRoute) {
+          const why = tail(agent?.stderr || agent?.error || agent?.output || "", 8)
+          const hint = timedOut
+            ? "The agent timed out: it did not answer within the budget allowed. That is what a spent or unreachable model route looks like: check it with `opencode run --print-logs -m <model> hi`, and lower --budget if you would rather fail sooner."
+            : "The agent exited without a word. That is what a spent or unreachable model route looks like: check it with `opencode run --print-logs -m <model> hi`."
+          const output = `blocked by the loop: the ${role} agent ${agent?.ok ? "exited 0 without producing a word" : "timed out"}.\n${why}${why ? "\n\n" : ""}${hint}`
+          if (existsSync(file)) {
+            const text = readFileSync(file, "utf8")
+            const current = findTask(parseTasks(text), task)
+            if (current && !isDone(current)) {
+              writeFileSync(file, markTask(text, current, { status: "pending", verifyOutput: output }))
+            }
+          }
+          if (stateTask) {
+            stateTask.note = output
+            record()
+          }
+          return finish({ reason: `${agentFailure(agent, task)}\n${hint}`, code: 3, status: "route-failed" })
+        }
+        if (!agent?.ok) {
+          blocked = {
+            code: 3,
+            reason: `${agentFailure(agent, task)}\n${tail(agent?.stderr || agent?.error || agent?.output || "", 8)}`,
+            // The route answered; the build failed. That is a failed edit,
+            // and a retry on another model would not change it.
+            routeFailure: false,
+          }
+          break
+        }
+        if (task.verify && !allowExtraFiles && changesBefore) {
+          const outside = outOfScope(task, cwd, changesBefore)
+          if (outside?.outside?.length) {
+            blocked = {
+              code: 2,
+              reason: `${task.title}: the agent changed files outside its scope (\`files:\`) - ${outside.outside.join(", ")}. Rejected; pass --allow-extra-files only on a plan that names the wider scope.`,
+            }
+            break
+          }
+        }
 
-    const task = nextPending(parsed)
+        const verify = task.verify
+          ? runVerify(task.verify, {
+              cwd,
+              timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))),
+              env: process.env,
+            })
+          : { ok: false, status: null, output: "no verify command", seconds: 0 }
+        lastVerify = verify
 
-    if (!task) {
-      const s = summarize(parsed)
-      return stop(log, {
-        reason:
-          s.blocked > 0
-            ? `nothing left to run: ${s.done} done, ${s.blocked} blocked.`
-            : `every task is done (${s.done}/${s.total}).`,
-        code: s.blocked > 0 ? 2 : 0,
-        summary: s,
-        rounds,
-      })
-    }
+        if (verify.ok) {
+          if (!review) break
+          const diff = reviewDiff(cwd, { baseRef: null })
+          const verdict = readVerdict(runReviewer, cwd, task, rounds, diff, verify, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
+          if (stateTask) {
+            stateTask.reviews.push({ round: rounds, verdict: verdict.verdict ?? "invalid", at: new Date().toISOString(), note: verdict.error ?? "" })
+          }
+          if (verdict.error) {
+            blocked = { code: 5, reason: `${task.title}: reviewer did not return a schema'd verdict: ${verdict.error}` }
+            break
+          }
+          writeVerdict(cwd, task, rounds, verdict.parsed, verify)
+          if (verdict.parsed.verdict === "pass") break
+          if (reviewFixes < reviewFixRounds) {
+            reviewFixes++
+            if (stateTask) stateTask.reviewFailures++
+            fixNote = `The reviewer failed this change. Fix every blocker, then run the verify command again:\n${formatBlockers(verdict.parsed.blockers)}`
+            continue
+          }
+          blocked = {
+            code: 5,
+            reason: `${task.title}: review failed after ${reviewFixes} fix round(s)\n${formatBlockers(verdict.parsed.blockers)}`,
+            verifyOutput: `review: fail\n${verdict.parsed.blockers.map((b) => `  - ${b.file}:${b.line} ${b.issue}`).join("\n")}`,
+          }
+          break
+        }
 
-    if (!task.verify) {
-      const wrote = writeBack(task, {
-        status: "blocked",
-        verifyOutput: "blocked by the loop: this task has no verify command, so nothing could prove it finished.",
-      })
-      if (!wrote) return changedUnderneath(task)
-      return stop(log, {
-        reason: `"${task.title}" has no verify command. It cannot be checked, so it cannot be run unattended. Add one, or do it yourself.`,
-        code: 2,
-        rounds,
-      })
-    }
+        if (verifyFixes < maxFixRounds) {
+          verifyFixes++
+          if (stateTask) stateTask.verifyFailures++
+          fixNote = `The verify command failed (exit ${verify.status ?? "?"}): ${task.verify}\nIts real output was:\n${verify.output || "(no output)"}`
+          continue
+        }
+        const capped = o.stepCap > 0 && Number(agent?.steps ?? 0) >= o.stepCap
+        const capNote = capped
+          ? `the agent used its whole ${o.stepCap}-step allowance before the check ran. Raise agent.${role}.steps, or split the task.`
+          : ""
+        blocked = {
+          code: 4,
+          reason: `${task.title}: verify failed after ${verifyFixes} fix round(s): ${task.verify}${capNote ? `\n${capNote}` : ""}`,
+          verifyOutput: `verify failed after ${verifyFixes} fix rounds: ${task.verify}\n${verify.output || "(no output)"}${capNote ? `\n\n${capNote}` : ""}`,
+        }
+        break
+      }
 
-    // `verify: true` and `verify: echo ok` exit 0 whether the change landed or
-    // not. A command that cannot fail is not a check, and running it would
-    // mark the task done on no evidence at all.
-    if (isVacuousVerify(task.verify)) {
-      const wrote = writeBack(task, {
-        status: "blocked",
-        verifyOutput: `blocked by the loop: "${task.verify}" cannot fail, so it proves nothing.`,
-      })
-      if (!wrote) return changedUnderneath(task)
-      return stop(log, {
-        reason: `"${task.title}" has a verify command that cannot fail ("${task.verify}"). Replace it with a command that fails when the change is wrong.`,
-        code: 2,
-        rounds,
-      })
-    }
+      if (blocked) {
+        // A spent route is not a verdict on the task. Marking it blocked here
+        // is what made failover impossible: the retry saw a blocked task and
+        // refused before it could reach another model. Leave it pending, and
+        // let `work` decide whether another route is worth trying.
+        if (blocked.routeFailure === true) {
+          if (stateTask) {
+            stateTask.note = blocked.reason
+            record()
+          }
+          return finish({ reason: blocked.reason, code: 3, status: "route-failed" })
+        }
+        if (!existsSync(file)) {
+          return finish({ reason: `${task.title}: the task file disappeared while the agent ran`, code: 2, status: "lost-task" })
+        }
+        const text = readFileSync(file, "utf8")
+        const current = findTask(parseTasks(text), task)
+        if (current && !isBlocked(current) && !isDone(current)) {
+          writeFileSync(file, markTask(text, current, {
+            status: "blocked",
+            verifyOutput: blocked.verifyOutput ?? lastVerify?.output ?? blocked.reason,
+          }))
+        }
+        if (stateTask) {
+          stateTask.status = "blocked"
+          stateTask.note = blocked.reason
+          stateTask.endedAt = new Date().toISOString()
+          stateTask.seconds = Math.round((Date.now() - taskStarted) / 1000)
+          record()
+        }
+        return finish({ reason: blocked.reason, code: blocked.code, status: "blocked" })
+      }
 
-    if (rounds >= maxRounds) {
-      return stop(log, { reason: `stopped at the round cap (${maxRounds}). Raise it with --max-rounds, or run fewer tasks.`, code: 2, rounds })
-    }
+      if (!existsSync(file)) {
+        return finish({ reason: `${task.title}: the task file disappeared while the agent ran`, code: 2, status: "lost-task" })
+      }
+      const text = readFileSync(file, "utf8")
+      const current = findTask(parseTasks(text), task)
+      if (!current) {
+        return finish({ reason: `${task.title}: the task disappeared from the plan while it ran`, code: 2, status: "lost-task" })
+      }
+      if (isBlocked(current)) {
+        return finish({ reason: `${task.title}: an agent marked the task blocked`, code: 4, status: "blocked" })
+      }
+      if (!isDone(current)) {
+        const output = review ? "review: pass" : lastVerify?.output || ""
+        writeFileSync(file, markTask(text, current, { status: "done", verifyOutput: output }))
+      }
 
-    const elapsed = Date.now() - started
-    if (elapsed >= budgetMs) {
-      return stop(log, { reason: `stopped at the time budget (${budgetMinutes} min, ${Math.round(elapsed / 60000)} min used).`, code: 2, rounds })
-    }
-
-    // The time that is left, with a floor so a nearly-spent budget still gets
-    // a command that can actually finish.
-    const remaining = () => Math.max(30_000, budgetMs - (Date.now() - started))
-
-    rounds++
-    console.log(`\n  ${bold(`[${rounds}]`)} ${task.title}`)
-    if (task.files) console.log(`      ${stamp(task.files)}`)
-
-    // What the tree looked like before the agent touched it. The scope check
-    // compares against this, so a repository that was already dirty does not
-    // blame the agent for someone else's changes.
-    const beforeAgent = allowExtraFiles ? null : gitChanges(cwd)
-
-    const agentTimeoutMs = remaining()
-    const agent = runAgent(role, buildPrompt(task), {
-      cwd,
-      timeoutMs: agentTimeoutMs,
-    })
-    if (!agent.ok) {
-      const why = agent.error || agent.output || `exit ${agent.status}`
-      // A route that never answers is a timeout, not a failed edit: it hangs
-      // until the ceiling kills it. The ceiling is the budget, so at the
-      // default that is two hours spent on one task with nothing to show for
-      // it, and the stop message is the only place that says why.
-      const timedOut = /ETIMEDOUT|timed out/i.test(String(agent.error ?? ""))
-      const limit =
-        agentTimeoutMs >= 60_000
-          ? `${Math.round(agentTimeoutMs / 60_000)} min`
-          : `${Math.round(agentTimeoutMs / 1000)}s`
-      const capNote = timedOut
-        ? `The agent did not answer within the ${limit} the budget allowed. ` +
-          `That is what a spent or unreachable model route looks like: check it with \`opencode run --print-logs -m <model> hi\`, ` +
-          `and lower --budget if you would rather fail sooner.`
-        : ""
-      const wrote = writeBack(task, {
-        status: "blocked",
-        verifyOutput: `blocked by the loop: the ${role} agent failed.\n${tail(why)}${capNote ? `\n\n${capNote}` : ""}`,
-      })
-      if (!wrote) return changedUnderneath(task)
-      return stop(log, {
-        reason: timedOut
-          ? `the ${role} agent timed out on "${task.title}". ${capNote}`
-          : `the ${role} agent failed on "${task.title}": ${tail(why, 3).split("\n")[0]}`,
-        code: 3,
-        rounds,
-      })
-    }
-
-    // Exit 0 with nothing at all on stdout is not an agent that chose to do
-    // nothing: it is the shape of a route that never answered. A spent free
-    // route makes `opencode run` print the provider's reason on stderr (only
-    // with --print-logs) and exit 0, so without this the loop runs the verify
-    // against an untouched tree and blocks the task for a change the model
-    // never attempted. `stdout` is checked rather than `steps` because a
-    // custom runner in a test has no event stream to count.
-    if (agent.ok && typeof agent.stdout === "string" && agent.stdout.trim() === "") {
-      const why = agent.stderr || agent.error || "(nothing on stderr either)"
-      const wrote = writeBack(task, {
-        status: "blocked",
-        verifyOutput: `blocked by the loop: the ${role} agent exited 0 without producing a word.\n${tail(why)}`,
-      })
-      if (!wrote) return changedUnderneath(task)
-      return stop(log, {
-        reason:
-          `the ${role} agent answered nothing on "${task.title}". The model route is probably spent or unreachable; ` +
-          `run \`opencode run --print-logs -m <model> hi\` to see the provider's reason. Nothing was verified, so no task was scored.`,
-        code: 3,
-        rounds,
-      })
-    }
-
-    // A task names the files it may touch. An agent that edits outside that
-    // list has gone beyond the plan, and an unattended loop that lets that
-    // pass is an unattended loop that can rewrite the repository one task at
-    // a time. `--allow-extra-files` is the deliberate escape hatch.
-    if (!allowExtraFiles) {
-      const scope = outOfScope(task, cwd, beforeAgent)
-      if (scope) {
-        const listed = scope.outside.map((p) => `  - ${p}`).join("\n")
-        const wrote = writeBack(task, {
-          status: "blocked",
-          verifyOutput: `blocked by the loop: the agent changed files the task did not name.\n${listed}`,
-        })
-        if (!wrote) return changedUnderneath(task)
-        return stop(log, {
-          reason: `"${task.title}" changed files outside its scope:\n${listed}\nAdd them to the task's files: line, or rerun with --allow-extra-files.`,
-          code: 2,
-          rounds,
-        })
+      if (stateTask) {
+        stateTask.status = "done"
+        stateTask.endedAt = new Date().toISOString()
+        stateTask.seconds = Math.round((Date.now() - taskStarted) / 1000)
+        stateTask.note = ""
+        record()
+      }
+      entries.push({ round: rounds, task: task.title, verify: task.verify, seconds: lastVerify?.seconds ?? 0, attempts: fixNote ? undefined : 1 })
+      if (o.onTaskDone) {
+        const hook = o.onTaskDone({ cwd, task, verify: lastVerify })
+        if (hook && hook.ok === false) {
+          return finish({ reason: `checkpoint failed: ${hook.reason}`, code: hook.code ?? 2, status: "checkpoint-failed" })
+        }
       }
     }
 
-    // The agent's claim is not the evidence. Re-run the verify here, because a
-    // loop that trusts the agent's own word about whether it passed is a loop
-    // that reports success it never checked.
-    console.log(`      ${stamp(`verify: ${task.verify}`)}`)
-    const check = runVerify(task.verify, { cwd, timeoutMs: remaining() })
-    log.push({ round: rounds, task: task.title, ok: check.ok, seconds: check.seconds })
-
-    if (!check.ok) {
-      // A lane at its step cap is forced into a text-only answer. opencode
-      // exits 0, so without this the run reports a plain verify failure and
-      // the actual cause - a cap nobody looked at - stays in the log.
-      const capped = stepCap > 0 && (agent.steps ?? 0) >= stepCap
-      const capNote = capped
-        ? `the agent used its whole ${stepCap}-step allowance before the check ran. Raise agent.${role}.steps, or split the task.`
-        : ""
-      const wrote = writeBack(task, {
-        status: "blocked",
-        verifyOutput: `verify failed (exit ${check.status}, ${check.seconds}s)\n${tail(check.output)}${capNote ? `\n\n${capNote}` : ""}`,
-      })
-      if (!wrote) return changedUnderneath(task)
-      return stop(log, {
-        reason:
-          `verify failed on "${task.title}". Marked blocked -- the real output is in ${TASKS_PATH}.` +
-          (capNote ? `\n  ${capNote}` : ""),
-        code: 4,
-        rounds,
-      })
+    if (o.finalVerify) {
+      const final = runVerify(o.finalVerify, { cwd, timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))), env: process.env })
+      if (run) {
+        run.finalVerify = { command: o.finalVerify, exit: final.status ?? null, ok: final.ok === true, seconds: final.seconds ?? 0 }
+        record()
+      }
+      if (!final.ok) {
+        return finish({
+          reason: `final verify failed: ${o.finalVerify}\n${tail(final.output, 4_000) || "(no output)"}`,
+          code: 4,
+          status: "final-verify-failed",
+        })
+      }
+      entries.push({ round: rounds, task: "final verify", verify: o.finalVerify, seconds: final.seconds ?? 0 })
+      log(`final verify passed: ${o.finalVerify}`)
     }
 
-    let reviewNote = ""
-    if (review) {
-      // A separate lane reviews, and it is asked for one JSON object. The
-      // verdict is validated here rather than trusted, and the file it is
-      // written to is the record a human can audit afterwards. The reviewer
-      // cannot edit, so the orchestrator is the one that persists the verdict.
-      console.log(`      ${stamp("review: reviewer")}`)
-      const diff = reviewDiff(cwd)
-      const reviewed = runReviewer("reviewer", buildReviewPrompt(task, diff, check.output), {
-        cwd,
-        timeoutMs: remaining(),
-      })
-
-      if (!reviewed.ok) {
-        const why = reviewed.error || reviewed.output || `exit ${reviewed.status}`
-        const wrote = writeBack(task, {
-          status: "blocked",
-          verifyOutput: `review failed: the reviewer agent failed.\n${tail(why)}`,
-        })
-        if (!wrote) return changedUnderneath(task)
-        return stop(log, {
-          reason: `the reviewer agent failed on "${task.title}": ${tail(why, 3).split("\n")[0]}`,
+    if (o.finalReview) {
+      const diff = reviewDiff(cwd, { baseRef: finalBaseRef })
+      const wholePlan = {
+        title: "the whole plan",
+        files: planDigest(parseTasks(readFileSync(file, "utf8"))),
+        change: "every task in the plan, reviewed as one change",
+        verify: o.finalVerify ?? "(see tasks.md)",
+      }
+      const verdict = readVerdict(runReviewer, cwd, wholePlan, "final", diff, { status: 0, output: "final verify passed" }, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
+      if (run) {
+        run.finalReview = verdict.error
+          ? { verdict: "invalid", error: verdict.error }
+          : { verdict: verdict.parsed.verdict, blockers: verdict.parsed.blockers }
+        record()
+      }
+      if (verdict.error) {
+        return finish({ reason: `final reviewer did not return a schema'd verdict: ${verdict.error}`, code: 5, status: "final-review-failed" })
+      }
+      writeVerdict(cwd, wholePlan, "final", verdict.parsed, { status: 0, seconds: 0 })
+      if (verdict.parsed.verdict !== "pass") {
+        return finish({
+          reason: `final review failed\n${formatBlockers(verdict.parsed.blockers)}`,
           code: 5,
-          rounds,
+          status: "final-review-failed",
         })
       }
-
-      const verdict = parseVerdict(agentText(reviewed.stdout))
-      if (!verdict.ok) {
-        const said = tail(agentText(reviewed.stdout) || reviewed.stdout || reviewed.output)
-        const wrote = writeBack(task, {
-          status: "blocked",
-          verifyOutput: `review failed: ${verdict.error}\n${said}`,
-        })
-        if (!wrote) return changedUnderneath(task)
-        return stop(log, {
-          reason: `the reviewer did not return a schema'd verdict on "${task.title}": ${verdict.error}`,
-          code: 5,
-          rounds,
-        })
-      }
-
-      const saved = writeVerdict(cwd, task, rounds, verdict, check)
-      if (saved.error) {
-        return stop(log, {
-          reason: `the review verdict could not be written: ${saved.error}`,
-          code: 5,
-          rounds,
-        })
-      }
-
-      if (verdict.verdict === "fail") {
-        const blockers = formatBlockers(verdict.blockers)
-        const wrote = writeBack(task, {
-          status: "blocked",
-          verifyOutput: `review failed (${relative(cwd, saved.path)})\n${blockers}`,
-        })
-        if (!wrote) return changedUnderneath(task)
-        return stop(log, {
-          reason: `review failed on "${task.title}":\n${blockers}\nThe verdict is in ${relative(cwd, saved.path)}.`,
-          code: 5,
-          rounds,
-        })
-      }
-
-      reviewNote = `\nreview: pass (${relative(cwd, saved.path)})`
-      console.log(`      ${green("reviewed")} ${stamp(relative(cwd, saved.path))}`)
+      log("final review passed")
     }
 
-    const wrote = writeBack(task, {
+    const summary = summarize(parseTasks(readFileSync(file, "utf8")))
+    if (run) writeSummary(cwd, run, parseTasks(readFileSync(file, "utf8")))
+    return finish({
+      reason: `every task is done: ${summary.done}/${summary.total} (${rounds} rounds, ${elapsed().toFixed(0)}s)`,
+      code: 0,
+      summary,
       status: "done",
-      verifyOutput: `exit ${check.status} in ${check.seconds}s\n${tail(check.output)}${reviewNote}`,
     })
-    if (!wrote) return changedUnderneath(task)
-    console.log(`      ${green("done")} ${stamp(`${check.seconds}s`)}`)
-  }
   } finally {
-    lock.release()
+    lock?.release?.()
+  }
+}
+
+
+/**
+ * Ask the reviewer once and turn its answer into a verdict or an error.
+ *
+ * The stdout protocol is the source of truth, so text is read from the event
+ * stream rather than scraped from whatever the process printed last. A
+ * reviewer that crashed and one that answered in prose are different failures,
+ * and the message says which.
+ */
+function readVerdict(runReviewer, cwd, task, round, diff, verify, { timeoutMs }) {
+  const result = runReviewer("reviewer", buildReviewPrompt(task, diff, verify.output), { cwd, timeoutMs })
+  if (!result?.ok) {
+    return {
+      error: `reviewer agent failed (exit ${result?.status ?? "?"}): ${result?.error || result?.output || "no output"}`.slice(0, 2_000),
+    }
+  }
+  const parsed = parseVerdict(agentText(result.stdout ?? result.output ?? ""))
+  if (!parsed.ok) return { error: parsed.error }
+  return { parsed }
+}
+
+/** Why the build agent did not run, in the terms the report uses. */
+function agentFailure(agent, task) {
+  const steps = Number(agent?.steps ?? 0)
+  const detail = tail(agent?.error || agent?.output || "", 6)
+  if (!agent?.ok) {
+    if (steps === 0) {
+      return `the build agent failed on "${task.title}" without taking a step. The model route is probably spent or unreachable; run \`opencode run --print-logs -m <model> hi\` to see the provider's reason. Nothing was verified, so no task was scored.\n${detail}`
+    }
+    return `the build agent failed on "${task.title}" (exit ${agent?.status ?? "?"}).\n${detail || "(no output)"}`
+  }
+  return `the build agent answered nothing on "${task.title}". The model route is probably spent or unreachable; run \`opencode run --print-logs -m <model> hi\` to see the provider's reason. Nothing was verified, so no task was scored.\n${detail || "(nothing on stderr either)"}`
+}
+
+/** A plan in one line per task, for the whole-change review prompt. */
+function planDigest(parsed) {
+  return parsed.tasks
+    .map((t) => `- [${isDone(t) ? "x" : " "}] ${t.title}${t.files ? ` (files: ${t.files})` : ""}`)
+    .join("\n")
+}
+
+/**
+ * `.space/summary.md` - what a run did, in the order a human reads it.
+ *
+ * Written only when every task is done. A summary that exists after a failed
+ * run is a summary somebody will mistake for a completed one.
+ */
+function writeSummary(cwd, run, parsed) {
+  const counts = summarize(parsed)
+  const lines = [
+    `# Run ${run.id}`,
+    ``,
+    `Goal: ${run.goal || "(none recorded)"}`,
+    `Status: ${run.status} | ${counts.done}/${counts.total} tasks | ${run.rounds} rounds | ${run.seconds ?? 0}s`,
+    `Started: ${run.startedAt}`,
+    `Finished: ${run.endedAt ?? ""}`,
+    ...(run.finalVerify
+      ? [`Final verify: ${run.finalVerify.ok ? "pass" : "FAIL"} - ${run.finalVerify.command}`]
+      : [`Final verify: skipped (no --final-verify)`]),
+    ...(run.finalReview ? [`Final review: ${run.finalReview.verdict}`] : [`Final review: skipped (no --final-review)`]),
+    ``,
+    `## Tasks`,
+    ``,
+    `| task | status | attempts | verify |`,
+    `|---|---|---:|---|`,
+    ...run.tasks.map((t) => `| ${t.title.replace(/\|/g, "\\|")} | ${t.status} | ${t.attempts} | \`${(t.verify || "").replace(/\|/g, "\\|")}\` |`),
+    ``,
+    `## Notes`,
+    ``,
+    ...(run.tasks.filter((t) => t.note).map((t) => `- ${t.title}: ${t.note}`) || ["- none"]),
+    ``,
+  ]
+  const path = join(cwd, ".space", "summary.md")
+  try {
+    mkdirSync(join(cwd, ".space"), { recursive: true })
+    writeFileSync(`${path}.tmp`, lines.join("\n"))
+    renameSync(`${path}.tmp`, path)
+  } catch {
+    // The run itself succeeded; a missing summary must not turn it into a failure.
   }
 }
 
@@ -1026,15 +1181,34 @@ export function runLoop({
  * The outcome of a run.
  *
  * @param {any[]} log
- * @param {{ reason: string, code?: number, summary?: any, rounds?: number }} stop
- * @returns {{ reason: string, code: number, rounds: number, log: any[], summary?: any }}
+ * @param {{ reason: string, code?: number, summary?: any, rounds?: number, tokens?: number, run?: any, status?: string }} stopped
+ * @returns {{ reason: string, code: number, rounds: number, log: any[], summary?: any, tokens: number, run?: any }}
  */
-function stop(log, { reason, code, summary, rounds }) {
+function stop(log, { reason, code, summary, rounds, tokens, run }) {
   // `rounds` is the number of rounds the loop RAN, not the number of
   // entries in the log. The log only gets an entry after a verify that
   // passed, so a run whose agent died on the first round reported zero
   // rounds - which reads as "it did nothing" when it did one.
-  return { reason, code: code ?? 0, rounds: rounds ?? log.length, log, summary }
+  return {
+    reason,
+    code: code ?? 0,
+    rounds: rounds ?? log.length,
+    log,
+    summary,
+    tokens: tokens ?? 0,
+    run: run ? { id: run.id, status: run.status, path: runPath(run.cwd ?? process.cwd()) } : undefined,
+  }
+}
+
+/** The commit a run started from, or null outside git / before a first commit. */
+function gitHead(cwd) {
+  const res = spawnSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 10_000, env: gitEnv() })
+  return res.status === 0 ? String(res.stdout).trim() : null
+}
+
+/** The run record carries its project, so the report can point at the file. */
+function cwdForRun(run) {
+  return run?.cwd ?? process.cwd()
 }
 
 export { TASKS_PATH }

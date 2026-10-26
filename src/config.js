@@ -609,9 +609,8 @@ export function generateConfig(p, opts = {}) {
       // A denial is a stop, not a prompt. With this on, opencode hands the
       // guard's refusal back to the model and continues the same loop; the
       // measured session made 138 requests and 7,559,016 context tokens in 29
-      // minutes on six `shared token window` denials, each retry carrying
-      // the whole prompt. Off, the denial ends the turn and the error is what
-      // the user sees.
+      // minutes on six guard denials, each retry carrying the whole prompt.
+      // Off, the denial ends the turn and the error is what the user sees.
       continue_loop_on_deny: false,
       ...(base.experimental ?? {}),
     },

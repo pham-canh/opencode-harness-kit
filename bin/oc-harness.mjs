@@ -48,9 +48,10 @@ import { generateConfig, globalInstructionsPath, utilityModel, withMemoryPlugin,
 import { ruleNames, BASH_RULES, WRITE_RULES } from "../src/rules.js"
 import { readHealth, unhealthyRoutes, writeHealth } from "../src/health.js"
 import { planEffort } from "../src/effort.js"
-import { findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
+import { findTelemetryFiles, readLaneUsage, averageMs, suggestLanes } from "../src/lane-usage.js"
 import { researchModels, isWithdrawn, pruneWithdrawnChains } from "../src/research.js"
 import { main as trustMain } from "../src/trust.js"
+import { createLoopCommands } from "../src/cli/loop.mjs"
 
 const CONFIG_DIR =
   process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config/opencode")
@@ -168,18 +169,24 @@ const opt = (f) => {
 const flag = (f) => has(f) || args.some((a) => a.startsWith(`${f}=`))
 
 /**
- * A number from a flag, or the default.
+ * An optional whole number: absent means "use the run's default".
  *
- * `Number("abc")` is NaN, and every comparison against NaN is false - so a
- * typo in `--max-rounds` silently disabled the round cap AND the time
- * budget, which are the two limits that keep an unattended loop from
- * running forever.
+ * @param {string | undefined} raw
+ * @returns {number | undefined}
+ */
+const optionalNumber = (raw) => {
+  if (raw === undefined) return undefined
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 0) fail(`${raw} is not a whole number >= 0`)
+  return n
+}
+
+/**
+ * A positive number from a flag, or the default.
  *
- * A mistyped cap is refused, not replaced with a default. The cap is the
- * limit the operator chose, and a substitute is a different limit wearing
- * the same name - the one thing a cap cannot be. So the run stops here,
- * before a loop is started, instead of starting one under a limit nobody
- * asked for.
+ * A mistyped cap is refused, not replaced with a default: the cap is the limit
+ * the operator chose, and a substitute is a different limit wearing the same
+ * name.
  *
  * @param {string | undefined} raw
  * @param {number} fallback
@@ -3350,6 +3357,7 @@ function cmdLanes() {
   const files = findTelemetryFiles(process.cwd())
   const { lanes: stats, requests, ignored } = readLaneUsage(files)
   const lanes = Object.keys(profile.roles ?? {})
+  const suggestions = flag("--suggest") ? suggestLanes(stats, lanes) : null
 
   // The machine-readable form, because "which lanes earn their place" is a
   // question a script answers, not a person.
@@ -3373,7 +3381,13 @@ function cmdLanes() {
     // up reading the wrong one.
     console.log(
       JSON.stringify(
-        { profile: activeId, requests, ignored, usage: out },
+        {
+          profile: activeId,
+          requests,
+          ignored,
+          usage: out,
+          ...(suggestions ? { suggestions } : {}),
+        },
         null,
         2,
       ),
@@ -3588,121 +3602,33 @@ function cmdAgents() {
  * @param {string} msg
  * @param {boolean} [wantJson]
  */
-function fail(msg, wantJson = false) {
+function fail(msg, wantJson = false, code = 1) {
   if (wantJson) {
     // `process.stdout.write`, not `console.log`: a JSON command silences
     // `console.log` so the report is the only thing on stdout, and the error
     // has to survive that.
     process.stdout.write(`${JSON.stringify({ ok: false, error: plain(msg) }, null, 2)}\n`)
     console.error(`\n  ${red("error")} ${msg}\n`)
-    process.exit(1)
+    process.exit(code)
   }
   console.error(`\n  ${red("error")} ${msg}\n`)
-  process.exit(1)
+  process.exit(code)
 }
 
-/**
- * Drive the task file to done without a human at the keyboard.
- *
- * Every stop condition is printed, and the exit code says which kind of stop it
- * was: 0 finished, 1 nothing to plan, 2 needs a person, 3 the agent died,
- * 4 verify failed. A caller can therefore tell "done" from "gave up" without
- * reading the transcript.
- */
-async function cmdRun() {
-  // Read the caps before anything is started. A mistyped cap has to stop the
-  // run here, while the answer is still "that is not a number" - not after a
-  // loop has been stood up under a limit nobody asked for.
-  const maxRounds = positiveNumber(opt("--max-rounds"), 20)
-  const budgetMinutes = positiveNumber(opt("--budget"), 120)
-
-  const { runLoop } = await import("../src/driver/run.mjs")
-
-  // A role that is not a lane is a typo, and the loop would fail every round
-  // on it. It is refused here, while the answer is still "that is not a lane".
-  //
-  // A `--role` with no value is refused too, rather than falling back to the
-  // default. `oc-harness run --role --max-rounds 5` used to set the role to
-  // the literal string "--max-rounds" - and the loop then ran
-  // `opencode run --agent --max-rounds ...`, which failed on every round and
-  // marked every task blocked. A typo that quietly becomes the default is
-  // still a typo that quietly becomes the wrong agent.
-  const lanes = laneNames()
-  const roleGiven = args.includes("--role") || args.some((a) => a.startsWith("--role="))
-  const roleValue = opt("--role")
-  if (roleGiven && roleValue === undefined) {
-    fail(`--role needs a lane: ${lanes.join(", ")}`)
-  }
-  const role = roleValue ?? "build"
-  if (!lanes.includes(role)) {
-    fail(`--role ${role} is not one of ${lanes.join(", ")}`)
-  }
-
-  // `spawnSync("opencode", ...)` in the driver reports a missing binary as a
-  // failed agent, which marks the FIRST task blocked and blames the task. The
-  // install is the thing that is broken, so say that here, before any task is
-  // touched.
-  try {
-    execFileSync("opencode", ["--version"], { stdio: "ignore", timeout: 15_000 })
-  } catch (err) {
-    const code = err && typeof err === "object" && "code" in err ? err.code : undefined
-    fail(
-      code === "ENOENT"
-        ? "opencode is not on PATH. Install it first: https://opencode.ai/docs"
-        : "opencode --version failed. Fix the install before running the loop.",
-    )
-  }
-
-  // The files: scope check reads `git status`. Outside a work tree it cannot
-  // see anything, so it used to switch itself off in silence -- an unattended
-  // run believing it was fenced while it was not. The one honest place to say
-  // that is here, before the first task, and the explicit override is the same
-  // flag that already means "no scope check".
-  const allowExtraFiles = flag("--allow-extra-files")
-  if (!allowExtraFiles) {
-    const git = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    })
-    if (git.status !== 0 || String(git.stdout ?? "").trim() !== "true") {
-      fail(
-        "oc-harness run needs a git work tree, because the files: scope check reads git status. Run it inside a repository, or pass --allow-extra-files to run without the check.",
-      )
-    }
-  }
-
-  // A lane's step cap is the other way an agent stops mid-task. When it is
-  // reached opencode exits 0 with a text-only answer, so the loop sees a
-  // failed verify and has no idea why. Reading the cap here lets the stop say
-  // "it ran out of steps" instead of leaving that to the log.
-  let stepCap = 0
-  try {
-    const cfg = existsSync(CONFIG_FILE) ? parseJsonc(readFileSync(CONFIG_FILE, "utf8")) : null
-    const configured = cfg?.agent?.[role]?.steps
-    if (Number.isInteger(configured) && configured > 0) stepCap = configured
-  } catch {
-    // An unreadable config is opencode's failure to report, and it will. A
-    // label on a stop is not worth turning into a second reason to fail.
-  }
-
-  const result = runLoop({
-    cwd: process.cwd(),
-    role,
-    maxRounds,
-    budgetMinutes,
-    allowExtraFiles,
-    forceUnlock: flag("--force-unlock"),
-    review: flag("--review"),
-    stepCap,
-  })
-
-  const s = result.summary
-  console.log(`\n  ${bold(result.code === 0 ? "done" : "stopped")} ${result.reason}`)
-  if (s) {
-    console.log(`  ${stamp(`${s.done} done, ${s.blocked} blocked, ${s.pending} pending`)}`)
-  }
-  if (result.code !== 0) process.exitCode = result.code
-}
+const loopCommands = createLoopCommands({
+  args,
+  flag,
+  opt,
+  fail,
+  optionalNumber,
+  positiveNumber,
+  bold,
+  stamp,
+  red,
+  laneNames,
+  configFile: CONFIG_FILE,
+  parseJsonc,
+})
 
 try {
   switch (cmd) {
@@ -3770,7 +3696,16 @@ try {
       await import("./baseline.mjs")
       break
     case "run":
-      await cmdRun()
+      await loopCommands.run()
+      break
+    case "plan":
+      await loopCommands.plan()
+      break
+    case "work":
+      await loopCommands.work()
+      break
+    case "status":
+      await loopCommands.status()
       break
     case "--version":
     case "-v":
@@ -3796,7 +3731,8 @@ try {
     verify    check the install still matches the profile and its rules are loaded
     link          symlink the built plugin into ~/.config/opencode/plugins
     agents        report agents the effort tiering does not reach
-    lanes         report which lanes the fleet actually used
+    lanes         report which lanes the fleet actually used; --suggest names
+                  lanes the telemetry says are not earning a slot
     trust         set up npm trusted publishing for this package
     doctor    re-check profiles against models.dev and the installed config
     research  find the live free models the kit could use, and the ones in
@@ -3808,6 +3744,10 @@ try {
     restore <file>  put one back
     baseline  measure the current opencode install
     run       build and verify .space/tasks.md one task at a time
+    plan <request>  turn a request into .space/tasks.md, refusing a plan the
+              loop cannot run
+    work <request>  plan when needed, then build/verify/review/finish
+    status    what the last run did, from .space/run.json
 
   options
     --print        write the config to stdout instead of disk
@@ -3836,8 +3776,27 @@ try {
     --force-unlock  clear a lock held by a live pid. Only for a lock left by
                    a pid that was reused; two real runs must not overlap.
     --review       after verify, ask the reviewer lane for a schema'd verdict.
-                   The run stops on fail or on any malformed verdict. The
+                   A fail is handed back to the build agent as a fix round; the
                    verdict is written to .space/review/.
+    --trust-verify  run the plan's verify commands as shell. Required when
+                   stdin is not a terminal; --print-verify shows them instead.
+    --max-fix-rounds N     fix rounds after a failed verify (default: 2)
+    --review-fix-rounds N  fix rounds after a failed review (default: 2)
+    --max-tokens N  stop before the next round once the run spent N tokens
+    --max-task-minutes N  stop a single task that runs longer than N minutes
+    --final-verify "cmd"  run one command after the last task; failure stops
+    --final-review  review the whole diff, not just the last task
+    --base-ref <ref>  the commit the final review diffs against (default: HEAD
+                   from before the first task)
+    --json         print one machine-readable report on stdout
+
+  work-only flags:
+    --plan-only    write the plan and stop
+    --dry-run      check the plan is runnable and stop; writes nothing
+    --worktree     run in .space/worktrees/<id> on its own branch
+    --branch [name]  run on a new branch (default: oc-harness/<id>)
+    --commit       commit each finished task, and only its paths
+    --allow-dirty  leave pre-existing uncommitted work alone instead of refusing
 `)
     // An unknown command is a typo, not a request for help. Without this
     // `oc-harness tsl` prints help and exits 0, so a script calling it never

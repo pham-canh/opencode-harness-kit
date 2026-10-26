@@ -167,7 +167,9 @@ test("an agent that exits 0 with no output is a dead route, not a failed change"
   assert.match(r.reason, /print-logs/)
   assert.equal(verifyCalls, 0, "an untouched tree is not a failed verify")
   const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
-  assert.equal(after.tasks[0].status, "blocked")
+  // A spent route is not a verdict on the task: it stays pending so a retry
+  // can reach another model. The reason is written down either way.
+  assert.equal(after.tasks[0].status, "pending")
   assert.match(after.tasks[0].output, /Free usage limit reached/)
   rmSync(dir, { recursive: true, force: true })
 })
@@ -238,7 +240,7 @@ test("the agent's claim is not trusted: verify is re-run by the loop", () => {
       return { ok: false, status: 1, output: "actually broken", seconds: 1 }
     },
   })
-  assert.equal(verifyCalls, 1)
+  assert.equal(verifyCalls, 3, "each fix round re-runs the same verify command")
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -572,7 +574,7 @@ test("a second run in the same project is refused while the first holds the lock
     },
     runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
   })
-  assert.equal(r.code, 2)
+  assert.equal(r.code, 3)
   assert.equal(agentCalls, 0, "the second run must not touch the task file")
   assert.match(r.reason, /already in progress/)
   rmSync(dir, { recursive: true, force: true })
@@ -906,4 +908,111 @@ test("without --review the reviewer is not asked", () => {
   assert.equal(r.code, 0)
   assert.equal(reviewed, 0)
   rmSync(dir, { recursive: true, force: true })
+})
+
+// --- The autonomous loop -----------------------------------------------------
+
+test("a plan with a task that cannot fail is refused before the agent runs", () => {
+  const dir = scratch(oneTask("true"))
+  let called = 0
+  const r = runLoop({ cwd: dir, runAgent: () => (called++, { ok: true }), runVerify: () => ({ ok: true }) })
+  assert.equal(r.code, 2)
+  assert.equal(called, 0, "preflight must run before the first agent call")
+  assert.match(r.reason, /cannot fail|preflight/i)
+})
+
+test("a verify failure is handed back and a second pass finishes the task", () => {
+  const dir = scratch(oneTask())
+  let verifies = 0
+  const prompts = []
+  const r = runLoop({
+    cwd: dir,
+    runAgent: (_role, prompt) => (prompts.push(prompt), { ok: true }),
+    runVerify: () => (++verifies === 1 ? { ok: false, status: 1, output: "boom", seconds: 0 } : { ok: true, status: 0, output: "ok", seconds: 0 }),
+  })
+  assert.equal(r.code, 0)
+  assert.equal(verifies, 2)
+  assert.match(prompts[1], /FIX round/)
+  assert.match(prompts[1], /boom/)
+})
+
+test("a review failure becomes a fix round, and only the last verdict decides", () => {
+  const dir = scratch(oneTask())
+  let reviews = 0
+  const r = runLoop({
+    cwd: dir,
+    review: true,
+    runAgent: () => ({ ok: true }),
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+    runReviewer: () => {
+      reviews++
+      return { ok: true, status: 0, stdout: verdictEvent(reviews === 1 ? failVerdict : passVerdict), output: "" }
+    },
+  })
+  assert.equal(r.code, 0)
+  assert.equal(reviews, 2)
+  const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+  assert.equal(after.tasks[0].status, "done")
+})
+
+test("final verify runs after the last task and its failure is not success", () => {
+  const dir = scratch(oneTask())
+  const r = runLoop({
+    cwd: dir,
+    runAgent: () => ({ ok: true }),
+    runVerify: (command) => command === "whole-suite"
+      ? { ok: false, status: 1, output: "one test failed", seconds: 0 }
+      : { ok: true, status: 0, output: "ok", seconds: 0 },
+    finalVerify: "whole-suite",
+  })
+  assert.equal(r.code, 4)
+  assert.match(r.reason, /final verify failed/)
+  assert.equal(existsSync(join(dir, ".space", "summary.md")), false, "a failed run must not leave a success summary")
+})
+
+test("final verify and final review gate the summary", () => {
+  const dir = scratch(oneTask())
+  const r = runLoop({
+    cwd: dir,
+    review: false,
+    runAgent: () => ({ ok: true }),
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+    runReviewer: () => ({ ok: true, status: 0, stdout: verdictEvent(passVerdict), output: "" }),
+    finalVerify: "whole-suite",
+    finalReview: true,
+  })
+  assert.equal(r.code, 0)
+  const summary = readFileSync(join(dir, ".space", "summary.md"), "utf8")
+  assert.match(summary, /Final verify: pass/)
+  assert.match(summary, /Final review: pass/)
+})
+
+test("the run record holds the attempts and survives a redaction", () => {
+  const dir = scratch(oneTask())
+  runLoop({
+    cwd: dir,
+    runAgent: () => ({ ok: true }),
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+    goal: "ship TOKEN=abc123",
+  })
+  const record = JSON.parse(readFileSync(join(dir, ".space", "run.json"), "utf8"))
+  assert.equal(record.schema, "oc-harness/run@1")
+  assert.equal(record.status, "done")
+  assert.equal(record.tasks[0].attempts, 1)
+  assert.equal(record.tasks[0].status, "done")
+  assert.equal(record.goal.includes("abc123"), false, "a token in the goal must not be persisted")
+})
+
+test("the token budget stops before the next round", () => {
+  const dir = scratch(twoTasks)
+  let calls = 0
+  const r = runLoop({
+    cwd: dir,
+    maxTokens: 5,
+    runAgent: () => (calls++, { ok: true, tokens: 7 }),
+    runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+  })
+  assert.equal(r.code, 2)
+  assert.match(r.reason, /token budget/)
+  assert.equal(calls, 1, "the second task must not start after the budget is spent")
 })

@@ -19,7 +19,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { findTelemetryFile, findTelemetryFiles, readLaneUsage, averageMs } from "../src/lane-usage.js"
+import { findTelemetryFile, findTelemetryFiles, readLaneUsage, averageMs, suggestLanes } from "../src/lane-usage.js"
 import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -216,4 +216,32 @@ test("`oc-harness lanes` counts a call once, from a subdirectory", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// --- suggestLanes ------------------------------------------------------------
+
+test("a lane with no traffic is named even from a short history", () => {
+  const r = suggestLanes({ plan: { requests: 1 } }, ["plan", "locate"], { minRequests: 20 })
+  assert.equal(r.enough, false)
+  assert.deepEqual(r.suggestions.map((s) => s.lane), ["locate"])
+})
+
+test("an under-used lane is named once the history is long enough", () => {
+  const usage = { plan: { requests: 95 }, locate: { requests: 1 }, build: { requests: 4 } }
+  const r = suggestLanes(usage, ["plan", "locate", "build"], { minRequests: 20, share: 0.02 })
+  assert.equal(r.enough, true)
+  assert.deepEqual(r.suggestions.map((s) => s.lane), ["locate"])
+})
+
+test("a short history never calls a used lane under-used", () => {
+  const usage = { plan: { requests: 5 }, locate: { requests: 1 } }
+  const r = suggestLanes(usage, ["plan", "locate"], { minRequests: 20, share: 0.02 })
+  assert.deepEqual(r.suggestions, [])
+})
+
+test("suggestLanes never mutates the usage it is given", () => {
+  const usage = { plan: { requests: 5 } }
+  const before = JSON.stringify(usage)
+  suggestLanes(usage, ["plan"], { minRequests: 1 })
+  assert.equal(JSON.stringify(usage), before)
 })

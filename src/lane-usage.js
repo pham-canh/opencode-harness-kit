@@ -193,6 +193,44 @@ export function readLaneUsage(file) {
 }
 
 /**
+ * Which lanes the telemetry says are not earning their place.
+ *
+ * A suggestion, never an edit: lane table changes are a human decision and a
+ * scheduled job that rewrote `lanes.json` from a few days of traffic would
+ * cut a lane that a release week needs. The numbers are useful only once
+ * there is enough traffic to mean something, so a short history returns
+ * `enough: false` rather than a confident guess.
+ *
+ * A lane with no requests is always worth naming - it is installed and never
+ * used, which is a configuration question, not a sampling one.
+ *
+ * @param {Record<string, { requests: number }>} usage
+ * @param {string[]} lanes
+ * @param {{ minRequests?: number, share?: number }} [opts]
+ */
+export function suggestLanes(usage, lanes, { minRequests = 20, share = 0.02 } = {}) {
+  const total = lanes.reduce((sum, lane) => sum + (usage?.[lane]?.requests ?? 0), 0)
+  const enough = total >= minRequests
+  const suggestions = []
+  for (const lane of lanes) {
+    const requests = usage?.[lane]?.requests ?? 0
+    if (requests === 0) {
+      suggestions.push({ lane, requests, share: 0, why: "never used in this project's telemetry" })
+      continue
+    }
+    if (enough && requests / total < share) {
+      suggestions.push({
+        lane,
+        requests,
+        share: Math.round((requests / total) * 1000) / 1000,
+        why: "under-used: below the share that justifies a separate lane",
+      })
+    }
+  }
+  return { total, enough, minRequests, share, suggestions }
+}
+
+/**
  * The mean of a set of durations, rounded.
  * @param {number[]} ms
  * @returns {number | null}
