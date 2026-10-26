@@ -417,8 +417,9 @@ counts the context a request reads instead of only its uncached part.
 - `oc-harness run --review`: after verify passes, ask the reviewer lane for
   a schema'd verdict, `oc-harness/review@1`. A fail, prose, a malformed
   object or a crashed reviewer stops the run with exit 5 and marks the task
-  blocked. The verdict is kept at `.space/review/<round>-<slug>.json`; the
-  contract is in `docs/REVIEW-VERDICT.md`.
+  blocked. The verdict is kept at `.space/review/<review>-<slug>.json`, keyed
+  by review rather than task round so a fix keeps both the failing and the
+  passing verdict; the contract is in `docs/REVIEW-VERDICT.md`.
 - `.space/run.lock`: one writer per task file. A lock whose pid is gone is
   cleared; a live one is not. `--force-unlock` breaks one explicitly.
 - `run --allow-extra-files`: documented escape hatch for the scope check.
