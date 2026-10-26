@@ -1,7 +1,9 @@
 # Migrating
 
-Four upgrades change what a user has to do. The most recent one first.
+Five upgrades change what a user has to do. The most recent one first.
 
+- [0.8.x → 0.9.x](#migrating-from-08x-to-09x) — `work` is strict by default,
+  and a worktree run is resumed and cleaned up explicitly.
 - [0.7.x → 0.8.x](#migrating-from-07x-to-08x) — verify commands are trusted
   explicitly, and a failed review is now a fix round.
 - [0.4.x → 0.7.x](#migrating-from-04x-to-07x) — rerun the install, because
@@ -10,6 +12,42 @@ Four upgrades change what a user has to do. The most recent one first.
   things it used to only suggest, and the config says which kit wrote it.
 - [0.2.x → 0.3.0](#migrating-from-02x-to-030) — the single-model profile
   became a fleet.
+
+---
+
+# Migrating from 0.8.x to 0.9.x
+
+One default changed, and two new commands replace what used to be done by
+hand.
+
+```bash
+# before: a bare work run on a dirty tree
+oc-harness work "fix the parser"
+# after: say you mean the local, non-strict run
+oc-harness work --no-strict "fix the parser"
+
+# after: or meet the contract, which is now the default
+oc-harness work "fix the parser" --review --final-verify "npm test" \
+  --final-review --worktree --commit
+```
+
+## What changed
+
+| Area | 0.8.x | 0.9.x |
+|---|---|---|
+| `work` defaults | plain run, no gate | strict: `--review`, `--final-verify`, `--final-review`, `--worktree`, `--commit` and a git repository are required. `--no-strict` is the old behaviour |
+| an interrupted run | start over | `oc-harness resume` keeps the id, attempts, tokens and budget; it refuses a finished run or an edited plan |
+| a worktree run | the record lived only in the worktree | `resume` finds it, `work --cleanup` removes it after it is finished |
+| what a run leaves | `run.json` | plus `run-events.jsonl` (1MB rotation), `evidence.json`, and OTLP spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is set |
+| verify execution | on the host | unchanged by default; `--sandbox container` runs it in Docker with no network |
+| agent | `opencode` | unchanged by default; `--adapter exec` runs another command, prompt on stdin |
+
+The `run.json` schema is `run@2`. A `run@1` file is upgraded in memory when it
+is read, and written as `run@2` the next time the driver checkpoints. No manual
+migration is needed.
+
+`--strict` still exists and is now redundant; keep passing it if a script
+already does. `--no-strict` is the one new flag scripts need.
 
 ---
 

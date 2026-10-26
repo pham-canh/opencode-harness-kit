@@ -123,16 +123,60 @@ function loopFlags() {
     maxRounds: positiveNumber(opt("--max-rounds"), 20),
     budgetMinutes: positiveNumber(opt("--budget"), 120),
     allowExtraFiles: flag("--allow-extra-files"),
+    allowCompoundVerify: flag("--allow-compound-verify"),
     forceUnlock: flag("--force-unlock"),
     review: flag("--review"),
     maxFixRounds: optionalNumber(opt("--max-fix-rounds")),
     reviewFixRounds: optionalNumber(opt("--review-fix-rounds")),
     maxTokens: optionalNumber(opt("--max-tokens")),
+    maxTaskTokens: optionalNumber(opt("--max-task-tokens")),
     maxTaskMinutes: optionalNumber(opt("--max-task-minutes")),
     finalVerify: opt("--final-verify") ?? null,
     finalReview: flag("--final-review"),
     finalBaseRef: opt("--base-ref") ?? null,
+    sandbox: opt("--sandbox") ?? process.env.OC_HARNESS_SANDBOX ?? "none",
+    sandboxImage: opt("--sandbox-image") ?? process.env.OC_HARNESS_SANDBOX_IMAGE ?? null,
+    adapter: opt("--adapter") ?? process.env.OC_HARNESS_ADAPTER ?? "opencode",
+    agentCommand: opt("--agent-command") ?? process.env.OC_HARNESS_AGENT_CMD ?? null,
   }
+}
+
+/**
+ * `report`: the run as numbers, from the files the driver already wrote.
+ */
+async function cmdReport() {
+  const { cmdReport: report } = await import("./report.mjs")
+  const code = await report(process.argv.slice(2), { json: flag("--json") })
+  if (code) process.exitCode = code
+}
+
+/**
+ * Print the context ceiling of every lane in the active profile.
+ *
+ * Numbers come from the profile the run would actually use, so the answer is
+ * the one the guard will apply rather than the one in the README.
+ */
+async function showBudget() {
+  const { profileIdFromConfig, loadProfile } = await import("../profile.js")
+  const { budgetTable } = await import("../driver/lane-budget.mjs")
+  const id = profileIdFromConfig()
+  if (!id) {
+    console.error("no profile configured; set OPENCODE_HARNESS_PROFILE or run `oc-harness setup`")
+    process.exitCode = 2
+    return
+  }
+  const profile = loadProfile(id)
+  const roles = ["plan", "build", "reviewer", "verify", "locate"]
+  const rows = budgetTable(profile, roles)
+  if (flag("--json")) {
+    process.stdout.write(`${JSON.stringify({ profile: id, roles: rows }, null, 2)}\n`)
+    return
+  }
+  console.log(`\n  profile ${id}\n`)
+  for (const row of rows) {
+    console.log(`  ${row.role.padEnd(9)} ${String(row.input).padStart(8)} in  ${String(row.output).padStart(7)} out  ${String(row.usable).padStart(8)} usable  ${row.chain.join(", ") || "(base model)"}`)
+  }
+  console.log("")
 }
 
 /**
@@ -140,13 +184,33 @@ function loopFlags() {
  */
 async function cmdWork() {
   const wantJson = flag("--json")
+  if (flag("--show-budget")) return showBudget()
+  if (flag("--cleanup")) {
+    const { cleanupRun } = await import("../driver/work.mjs")
+    const cleaned = cleanupRun(process.cwd(), { force: flag("--force-cleanup") })
+    if (wantJson) process.stdout.write(`${JSON.stringify(cleaned, null, 2)}\n`)
+    else if (cleaned.ok) console.log(`\n  removed worktree ${cleaned.worktree} (run ${cleaned.runId})\n`)
+    else console.error(`\n  ${cleaned.reason}\n`)
+    if (!cleaned.ok) process.exitCode = cleaned.code ?? 2
+    return
+  }
   const request = positionalRequest()
   const planOnly = flag("--plan-only")
   const dryRun = flag("--dry-run")
   const { workRequest } = await import("../driver/work.mjs")
   const finalVerify = opt("--final-verify") ?? null
 
-  if (!dryRun) requireOpencode()
+  if (!dryRun) {
+    // A previous crash leaves a stale lock and a record that still says
+    // `running`. Clearing it here is what lets the next `work` start without
+    // the human having to find and delete a file first.
+    const { reconcileRunLock } = await import("../driver/run-state.mjs")
+    const reconciled = reconcileRunLock(process.cwd(), { force: flag("--force-unlock") })
+    if (reconciled.busy) {
+      fail(`run ${reconciled.busy.pid ?? "?"} still holds .space/run.lock; wait for it or pass --force-unlock`, wantJson, 2)
+    }
+    requireOpencode()
+  }
 
   const runId = opt("--run-id") ?? undefined
   const branchFlag = flag("--branch")
@@ -154,6 +218,7 @@ async function cmdWork() {
     cwd: process.cwd(),
     request,
     force: flag("--force") || flag("--replan"),
+    strict: flag("--no-strict") ? false : true,
     planOnly,
     dryRun,
     runId,
@@ -235,7 +300,84 @@ async function cmdWork() {
 }
 
 /**
- * The request is the one argument that is not a flag or a flag's value.
+ * Continue the record in `.space/run.json`.
+ *
+ * Resume is deliberately a different command from `work`: it has no request
+ * and no planning step, because the plan is what it is resuming. A stale lock
+ * is reconciled first, which is how a killed run becomes resumable instead of
+ * staying `running` forever.
+ */
+async function cmdResume() {
+  const wantJson = flag("--json")
+  const cwd = process.cwd()
+  if (flag("--cleanup")) {
+    const { cleanupRun } = await import("../driver/work.mjs")
+    const cleaned = cleanupRun(cwd, { force: flag("--force-cleanup") })
+    if (wantJson) process.stdout.write(`${JSON.stringify(cleaned, null, 2)}\n`)
+    else if (cleaned.ok) console.log(`\n  removed worktree ${cleaned.worktree} (run ${cleaned.runId})\n`)
+    else console.error(`\n  ${cleaned.reason}\n`)
+    if (!cleaned.ok) process.exitCode = cleaned.code ?? 2
+    return
+  }
+  const { reconcileRunLock } = await import("../driver/run-state.mjs")
+  const reconciled = reconcileRunLock(cwd, { force: flag("--force-unlock") })
+  if (reconciled.busy) {
+    fail(
+      `run ${reconciled.busy.pid ?? "?"} still holds ${join(".space", "run.lock")}; wait for it or pass --force-unlock`,
+      wantJson,
+      2,
+    )
+  }
+
+  requireOpencode()
+  const finalVerify = opt("--final-verify") ?? null
+  // A worktree run keeps its tasks file in the worktree; checking the project
+  // directory instead would trust an empty command list.
+  const { readRun } = await import("../driver/run-state.mjs")
+  const recorded = readRun(cwd)
+  const taskDir = recorded?.worktree && existsSync(join(recorded.worktree, ".space", "tasks.md")) ? recorded.worktree : cwd
+  const commands = planVerifyCommands(join(taskDir, ".space", "tasks.md"), finalVerify)
+  if (flag("--print-verify")) {
+    process.stdout.write(`${commands.join("\n")}${commands.length ? "\n" : ""}`)
+    return
+  }
+  await ensureVerifyTrust(commands, wantJson)
+
+  const { workRequest } = await import("../driver/work.mjs")
+  const result = workRequest({
+    cwd,
+    resume: true,
+    replan: flag("--replan"),
+    log: wantJson ? (line) => console.error(line) : undefined,
+    loop: {
+      role: opt("--role") ?? "build",
+      ...loopFlags(),
+    },
+  })
+
+  if (wantJson) {
+    process.stdout.write(`${JSON.stringify({
+      ok: result.ok,
+      code: result.code,
+      phase: result.phase,
+      reason: result.reason ?? "",
+      branch: result.branch ?? null,
+      worktree: result.worktree ?? null,
+      loop: result.loop ?? null,
+    }, null, 2)}\n`)
+  } else if (!result.loop) {
+    if (result.code !== 0) console.error(`\n  ${red("error")} ${result.reason}\n`)
+    else console.log("\n  nothing to resume\n")
+  } else {
+    console.log(`\n  ${bold(result.code === 0 ? "done" : "stopped")} ${result.reason}`)
+    if (result.loop.summary) {
+      console.log(`  ${stamp(`${result.loop.summary.done} done, ${result.loop.summary.blocked} blocked, ${result.loop.summary.pending} pending`)}`)
+    }
+  }
+  if (result.code !== 0) process.exitCode = result.code
+}
+
+/** The request is the one argument that is not a flag or a flag's value.
  *
  * `work --review "fix the parser"` is how a person writes a flag before the
  * request, and reading only `args[1]` turned that into "no request" - which
@@ -271,14 +413,27 @@ function positionalRequest() {
 }
 
 async function cmdStatus() {
-  const { readRun } = await import("../driver/run-state.mjs")
+  const { inspectRunLock, readRun } = await import("../driver/run-state.mjs")
   const cwd = process.cwd()
   const run = readRun(cwd)
   const tasksFile = join(cwd, ".space", "tasks.md")
   const parsed = /** @type {any} */ (existsSync(tasksFile) ? parseTasks(readFileSync(tasksFile, "utf8")) : { tasks: [] })
   const summary = summarize(parsed)
+  // Status reports; it does not repair. A stale lock is shown as
+  // `interrupted` and left on disk for `resume` (or a person) to reconcile.
+  const lock = inspectRunLock(cwd)
+  const interrupted = Boolean(run && run.status === "running" && lock.stale)
+  const phase = interrupted ? "interrupted" : run?.phase ?? null
+  const terminal = interrupted ? "interrupted" : run?.terminal ?? null
+  const next = terminal
+    ? terminal === "done"
+      ? ""
+      : "oc-harness resume"
+    : run
+      ? "oc-harness resume"
+      : "oc-harness work"
   // `run` is null when a plan has never been run: still a useful answer.
-  const report = { ok: true, run, tasks: summary }
+  const report = { ok: true, run, tasks: summary, phase, terminal, next, lock }
 
   if (flag("--json")) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
@@ -287,8 +442,11 @@ async function cmdStatus() {
   if (!run) {
     console.log(`\n  no run recorded in ${join(cwd, ".space", "run.json")}`)
   } else {
-    console.log(`\n  run ${run.id}  ${run.status}  ${run.reason || ""}`)
+    console.log(`\n  run ${run.id}  ${interrupted ? "interrupted" : run.status}  ${run.reason || ""}`)
     console.log(`  ${stamp(`${summary.done} done, ${summary.blocked} blocked, ${summary.pending} pending`)}`)
+    if (phase) console.log(`  ${stamp(`phase: ${phase}`)}`)
+    if (terminal) console.log(`  ${stamp(`terminal: ${terminal}`)}`)
+    if (next) console.log(`  ${stamp(`next: ${next}`)}`)
     for (const t of run.tasks ?? []) {
       console.log(`    ${t.status.padEnd(8)} ${t.title}  (${t.attempts} attempt(s)${t.commit ? `, ${t.commit.slice(0, 7)}` : ""})`)
     }
@@ -306,6 +464,19 @@ async function cmdRun() {
   const maxFixRounds = optionalNumber(opt("--max-fix-rounds"))
   const reviewFixRounds = optionalNumber(opt("--review-fix-rounds"))
   const maxTokens = optionalNumber(opt("--max-tokens"))
+  const maxTaskTokens = optionalNumber(opt("--max-task-tokens"))
+
+  const { parseAdapter } = await import("../driver/adapter.mjs")
+  const adapter = parseAdapter(opt("--adapter") ?? process.env.OC_HARNESS_ADAPTER ?? "opencode")
+  if ("reason" in adapter) fail(adapter.reason)
+
+  const { parseSandbox, dockerAvailable } = await import("../driver/sandbox.mjs")
+  const sandbox = parseSandbox(opt("--sandbox") ?? process.env.OC_HARNESS_SANDBOX ?? "none")
+  if ("reason" in sandbox) fail(sandbox.reason)
+  if (/** @type {any} */ (sandbox).kind === "container") {
+    const docker = dockerAvailable({ docker: process.env.OC_HARNESS_DOCKER })
+    if (!docker.ok) fail(`${docker.reason}. Verify-only container runs need Docker; pass --sandbox none to run on the host.`)
+  }
 
   const { runLoop } = await import("../driver/run.mjs")
   const commands = planVerifyCommands(join(process.cwd(), ".space", "tasks.md"), opt("--final-verify") ?? null)
@@ -394,9 +565,14 @@ async function cmdRun() {
     maxFixRounds,
     reviewFixRounds,
     maxTokens,
+    maxTaskTokens,
     finalVerify: opt("--final-verify") ?? null,
     finalReview: flag("--final-review"),
     finalBaseRef: opt("--base-ref") ?? null,
+    sandbox: /** @type {any} */ (sandbox).kind,
+    sandboxImage: opt("--sandbox-image") ?? null,
+    adapter: /** @type {any} */ (adapter).adapter,
+    agentCommand: opt("--agent-command") ?? process.env.OC_HARNESS_AGENT_CMD ?? null,
     log: wantJson ? (line) => console.error(line) : undefined,
   })
 
@@ -423,5 +599,5 @@ async function cmdRun() {
   if (report.code !== 0) process.exitCode = report.code
 }
 
-  return { run: cmdRun, plan: cmdPlan, work: cmdWork, status: cmdStatus }
+  return { run: cmdRun, plan: cmdPlan, work: cmdWork, resume: cmdResume, status: cmdStatus, report: cmdReport }
 }

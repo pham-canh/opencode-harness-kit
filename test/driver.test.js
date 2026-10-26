@@ -113,7 +113,9 @@ test("a failing verify stops the loop and blocks the task", () => {
     runAgent: () => ({ ok: true, status: 0, output: "" }),
     runVerify: () => ({ ok: false, status: 1, output: "# fail 1\nassert failed", seconds: 3 }),
   })
-  assert.equal(r.code, 4)
+  // The retry guard stops the second identical failure before the third
+  // verify, so this is a needs-human stop (2), not a spent fix budget (4).
+  assert.equal(r.code, 2)
   assert.equal(r.rounds, 1)
   const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
   assert.equal(after.tasks[0].status, "blocked")
@@ -211,7 +213,7 @@ test("a verify failure below the cap is not blamed on it", () => {
     runAgent: () => ({ ok: true, status: 0, output: "", steps: 12 }),
     runVerify: () => ({ ok: false, status: 1, output: "broken", seconds: 1 }),
   })
-  assert.equal(r.code, 4)
+  assert.equal(r.code, 2, "the repeated failure is a needs-human stop")
   assert.doesNotMatch(r.reason, /step allowance/)
   rmSync(dir, { recursive: true, force: true })
 })
@@ -241,7 +243,7 @@ test("the agent's claim is not trusted: verify is re-run by the loop", () => {
       return { ok: false, status: 1, output: "actually broken", seconds: 1 }
     },
   })
-  assert.equal(verifyCalls, 3, "each fix round re-runs the same verify command")
+  assert.equal(verifyCalls, 2, "the retry guard stops before a third identical run")
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -899,7 +901,7 @@ test("a failed verify never reaches the reviewer", () => {
       return { ok: true, stdout: verdictEvent(passVerdict) }
     },
   })
-  assert.equal(r.code, 4)
+  assert.equal(r.code, 2)
   assert.equal(reviewed, 0)
   rmSync(dir, { recursive: true, force: true })
 })
@@ -1076,7 +1078,7 @@ test("the run record holds the attempts and survives a redaction", () => {
     goal: "ship TOKEN=abc123",
   })
   const record = JSON.parse(readFileSync(join(dir, ".space", "run.json"), "utf8"))
-  assert.equal(record.schema, "oc-harness/run@1")
+  assert.equal(record.schema, "oc-harness/run@2")
   assert.equal(record.status, "done")
   assert.equal(record.tasks[0].attempts, 1)
   assert.equal(record.tasks[0].status, "done")

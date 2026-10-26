@@ -3704,9 +3704,25 @@ try {
     case "work":
       await loopCommands.work()
       break
+    case "resume":
+      await loopCommands.resume()
+      break
     case "status":
       await loopCommands.status()
       break
+    case "report":
+      await loopCommands.report()
+      break
+    case "health":
+      process.exitCode = await (await import("../src/cli/health.mjs")).cmdHealth(process.argv.slice(2), {
+        json: process.argv.includes("--json"),
+      })
+      break
+    case "mcp": {
+      const { serveStdio } = await import("../src/mcp/server.mjs")
+      await serveStdio()
+      break
+    }
     case "--version":
     case "-v":
     case "version":
@@ -3747,7 +3763,11 @@ try {
     plan <request>  turn a request into .space/tasks.md, refusing a plan the
               loop cannot run
     work <request>  plan when needed, then build/verify/review/finish
+    resume    continue the run in .space/run.json after a stop or crash
     status    what the last run did, from .space/run.json
+    report    the last run as numbers: phases, tokens, verifies, failures
+    health    spent routes; --probe asks every route once
+    mcp       read-only MCP server over stdio (run.json, events, evidence)
 
   options
     --print        write the config to stdout instead of disk

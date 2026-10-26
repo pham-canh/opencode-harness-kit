@@ -12,6 +12,60 @@ is not happening.
 
 ---
 
+## [Unreleased]
+
+The loop is now observable and resumable rather than only restartable: a run
+leaves evidence, an event log and a record a script can read; a worktree run
+can be found after the terminal closes; and a route that died is not retried
+blind.
+
+### Added
+
+- **`oc-harness report [--json]`.** One run as numbers: phases and their
+  tokens, verify count and failures, routes used, recorded error codes, and
+  the next action.
+- **`oc-harness resume`.** Continues the recorded run, keeps its id, tokens,
+  attempts and budget, and refuses a finished run or an edited plan. It finds a
+  run inside `.space/worktrees/` when the project directory has no record, and
+  refuses if that worktree is gone.
+- **Worktree cleanup.** `work --cleanup` / `resume --cleanup` remove a finished
+  worktree; a run that is still going is refused unless `--force-cleanup`.
+- **`oc-harness health [--probe]`.** Lists spent routes. `--probe` asks every
+  route once, clears one that answers, records a quota or withdrawn failure,
+  and ignores an unclassified blip rather than poisoning the route for a day.
+- **`--sandbox container`.** Verify commands run in Docker with the project
+  mounted at `/work`, no network unless asked for, and the image configured by
+  `--sandbox-image` or `OC_HARNESS_SANDBOX_IMAGE`.
+- **`--adapter exec`.** Any command-line agent can serve a lane with
+  `--agent-command` (or `OC_HARNESS_AGENT_CMD`); `{prompt}`, `{role}` and
+  `{cwd}` are substituted, and the prompt goes on stdin otherwise.
+- **`oc-harness mcp`.** A read-only MCP server over stdio: status, report,
+  evidence, events and health. There is no tool that starts or changes a run.
+- **OTLP export.** With `OTEL_EXPORTER_OTLP_ENDPOINT` set, each run event is
+  also sent as an OTLP/HTTP span. A collector that is down never fails the run.
+- **`run.schema.json`.** The written `run@2` record, so a script can validate
+  what it reads.
+- **`npm run gate:loop`.** Four offline loop scenarios: a pass, a repeated
+  verify failure, a destructive verify command, and a spent task budget.
+
+### Changed
+
+- **`work` is strict by default.** It refuses to start without the review,
+  final-verify, final-review, worktree and commit parts of the contract. Pass
+  `--no-strict` for a local run on a dirty tree.
+- **Per-lane prompt budget.** A prompt larger than the lane's narrowest model
+  can hold is refused before it is sent, instead of being truncated by the
+  provider.
+
+### Fixed
+
+- `readEvents` no longer lets a torn JSONL line consume one of the requested
+  slots.
+- Worktree cleanup ignores the harness's own `.space/` when deciding whether a
+  worktree is dirty.
+
+---
+
 ## [0.8.0] — 2026-10-26
 
 The loop becomes something you can leave running. `run` now fixes a failed

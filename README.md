@@ -591,9 +591,24 @@ oc-harness restore <file>  put one back
 oc-harness baseline   measure the current install
 oc-harness run        build and verify .space/tasks.md, one task at a time
 oc-harness status     what the last run did, from .space/run.json
+oc-harness report     the last run as numbers: phases, tokens, verifies, failures
+oc-harness resume     continue an interrupted run, including one inside a worktree
+oc-harness work --cleanup  remove a finished worktree run; --force-cleanup discards one
+oc-harness health     routes recorded as spent; --probe asks every route once
+oc-harness mcp        read-only MCP server over stdio for editors
 oc-harness plan "<request>"  turn a request into .space/tasks.md, and refuse a plan the loop cannot run
 oc-harness work "<request>"  plan when needed, then build, verify, review and finish
 ```
+
+`work` is strict by default: it wants `--review`, `--final-verify`,
+`--final-review`, `--worktree` and `--commit` (and a git repository). For a
+quick local run on a dirty tree, pass `--no-strict`.
+
+Two flags change where the work happens rather than what it does:
+`--sandbox container` runs verify commands in a Docker container with the
+project mounted at `/work` and no network; `--adapter exec --agent-command
+"<cmd>"` runs an agent other than `opencode`, with the prompt on stdin when the
+command has no `{prompt}` placeholder.
 
 The measurement scripts are in `eval/`, and each one says what it measures
 at the top of the file:

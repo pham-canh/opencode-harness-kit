@@ -44,7 +44,15 @@ import {
   isVacuousVerify,
 } from "../tasks.js"
 import { gitEnv } from "./git.mjs"
-import { createRun, redact, runPath, runTask, writeRun } from "./run-state.mjs"
+import { appendVerify, verifyEntry } from "./evidence.mjs"
+import { appendEvent } from "./events.mjs"
+import { agentInvocation } from "./adapter.mjs"
+import { sandboxCommand } from "./sandbox.mjs"
+import { exportSpan } from "./otel.mjs"
+import { assertPromptFits } from "./lane-budget.mjs"
+import { inspectVerify } from "./policy.mjs"
+import { failureFingerprint, recordFailure } from "./retry.mjs"
+import { createRun, nextActionFor, redact, runPath, runTask, terminalForStatus, writeRun } from "./run-state.mjs"
 
 const TASKS_PATH = join(".space", "tasks.md")
 const LOCK_PATH = join(".space", "run.lock")
@@ -539,8 +547,12 @@ export function writeVerdict(cwd, task, round, verdict, verify) {
 /**
  * Ask `opencode` to do the task. Returns the transcript so a human can read
  * what the agent actually did rather than being told about it.
+ *
+ * @param {string} role
+ * @param {string} prompt
+ * @param {{ cwd: string, timeoutMs: number, adapter?: "opencode" | "exec", command?: string | null }} opts
  */
-export function invokeAgent(role, prompt, { cwd, timeoutMs }) {
+export function invokeAgent(role, prompt, { cwd, timeoutMs, adapter = "opencode", command = null }) {
   // `--dir` is not optional, and neither is PWD.
   //
   // `spawnSync`'s `cwd` sets the child's working directory but does NOT update
@@ -551,19 +563,35 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs }) {
   // `OC_HARNESS_MODEL` is how `work` moves a lane to the next route in its
   // chain after a spent one. It is read from the environment because the
   // driver is already a separate process from the failover decision.
-  const model = process.env.OC_HARNESS_MODEL
-  const modelArgs = model ? ["-m", model] : []
-  const res = spawnSync(
-    "opencode",
-    ["run", "--agent", role, "--dir", cwd, "--format", "json", ...modelArgs, prompt],
-    {
-      cwd,
-      encoding: "utf8",
-      timeout: timeoutMs,
-      maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, PWD: cwd },
-    },
-  )
+  const invocation = agentInvocation({
+    adapter,
+    role,
+    prompt,
+    cwd,
+    model: process.env.OC_HARNESS_MODEL ?? null,
+    command,
+  })
+  if ("reason" in invocation) {
+    return {
+      ok: false,
+      status: null,
+      stdout: "",
+      stderr: "",
+      output: invocation.reason,
+      error: invocation.reason,
+      steps: 0,
+      tokens: 0,
+    }
+  }
+  const res = spawnSync(invocation.command, invocation.args, {
+    cwd,
+    encoding: "utf8",
+    timeout: timeoutMs,
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, PWD: cwd },
+    shell: invocation.shell,
+    ...(invocation.input === undefined ? {} : { input: invocation.input }),
+  })
   const stdout = res.stdout ?? ""
   return {
     ok: res.status === 0,
@@ -719,6 +747,15 @@ export function findTask(parsed, task) {
  *   reviewFixRounds?: number,
  *   maxTokens?: number | null,
  *   maxTaskMinutes?: number | null,
+ *   maxTaskTokens?: number | null,
+ *   sandbox?: "none" | "container",
+ *   sandboxImage?: string | null,
+ *   adapter?: "opencode" | "exec",
+ *   agentCommand?: string | null,
+ *   laneBudget?: any,
+ *   events?: boolean,
+ *   otel?: boolean,
+ *   otelEndpoint?: string | null,
  *   finalVerify?: string | null,
  *   finalReview?: boolean,
  *   finalBaseRef?: string | null,
@@ -733,6 +770,7 @@ export function findTask(parsed, task) {
  *   runVerify?: (command: string, opts: object) => any,
  *   runReviewer?: (role: string, prompt: string, opts: object) => any,
  *   onTaskDone?: (info: object) => void,
+ *   onPhase?: (event: { at: string, phase: string, run: any, task: string | null, attempt: number | null, round: number, [key: string]: any }) => any,
  * }} [options]
  */
 export function runLoop(options) {
@@ -745,11 +783,28 @@ export function runLoop(options) {
   const maxFixRounds = Number.isInteger(o.maxFixRounds) ? o.maxFixRounds : 2
   const reviewFixRounds = Number.isInteger(o.reviewFixRounds) ? o.reviewFixRounds : 2
   const maxTokens = o.maxTokens ?? null
+  const maxTaskTokens = Number.isFinite(o.maxTaskTokens) && o.maxTaskTokens > 0 ? o.maxTaskTokens : null
   const maxTaskMs = o.maxTaskMinutes ? o.maxTaskMinutes * 60_000 : null
   const log = o.log ?? ((line) => console.log(line))
-  const runAgent = o.runAgent ?? invokeAgent
+  const agentAdapter = o.adapter ?? "opencode"
+  const agentCommand = o.agentCommand ?? null
+  const runAgent = o.runAgent ?? ((role, prompt, agentOpts) => invokeAgent(role, prompt, { ...agentOpts, adapter: agentAdapter, command: agentCommand }))
   const runVerify = o.runVerify ?? sh
-  const runReviewer = o.runReviewer ?? invokeAgent
+  // The verify command is the same in both modes; only the command line that
+  // carries it changes. Evidence records the original, because that is what a
+  // human has to be able to re-run.
+  const sandboxKind = o.sandbox ?? "none"
+  const sandboxed = (command) => {
+    if (sandboxKind === "none" || !command) return command
+    const wrapped = sandboxCommand(command, {
+      kind: /** @type {"none" | "container"} */ (sandboxKind),
+      cwd,
+      image: o.sandboxImage ?? null,
+    })
+    return wrapped.ok ? wrapped.command : command
+  }
+  const runReviewer =
+    o.runReviewer ?? ((role, prompt, agentOpts) => invokeAgent(role, prompt, { ...agentOpts, adapter: agentAdapter, command: agentCommand }))
   const allowExtraFiles = o.allowExtraFiles === true
   const started = Date.now()
   // The diff a final review looks at starts HERE. Captured before the first
@@ -758,20 +813,77 @@ export function runLoop(options) {
   const finalBaseRef = o.finalBaseRef ?? gitHead(cwd)
   /** @type {any[]} */
   const entries = []
-  let rounds = 0
+  // A resumed run continues the count it stopped at. Starting from zero made
+  // the round cap and the token budget a per-process limit instead of a
+  // per-run one, so resuming was a way to spend both twice.
+  let rounds = Number.isInteger(o.runState?.rounds) ? o.runState.rounds : 0
   let reviewCount = 0
-  let tokens = 0
+  let tokens = typeof o.runState?.tokens === "number" ? o.runState.tokens : 0
   let run = null
   let lock = null
 
   const elapsed = () => (Date.now() - started) / 1000
-  const record = () => {
-    if (!run) return
+  const onPhase = typeof o.onPhase === "function" ? o.onPhase : null
+  /**
+   * Announce a phase and persist the record.
+   *
+   * `work` passes an `onPhase` callback, and that callback is the only writer
+   * of `run.json`: the loop does not write behind it with a second copy of the
+   * record, because the last writer wins and a second writer loses the
+   * checkpoint's commit SHA. Without a callback - `oc-harness run` - the loop
+   * writes the record itself, so the standalone command still leaves one.
+   */
+  const checkpoint = (phase, { task = null, attempt = null, taskState = null, data = {} } = {}) => {
+    if (!run) return null
     run.rounds = rounds
     run.tokens = tokens
+    run.budget = {
+      ...(run.budget ?? {}),
+      maxMinutes: o.budgetMinutes ?? run.budget?.maxMinutes ?? null,
+      maxTokens: maxTokens ?? run.budget?.maxTokens ?? null,
+      maxTaskTokens: maxTaskTokens ?? run.budget?.maxTaskTokens ?? null,
+      spentTokens: tokens,
+      spentCacheTokens: run.budget?.spentCacheTokens ?? 0,
+    }
     run.seconds = Math.round(elapsed())
-    writeRun(cwd, run)
+    if (phase) run.phase = phase
+    if (taskState && phase) taskState.phase = phase
+    const event = {
+      at: new Date().toISOString(),
+      phase: run.phase,
+      run,
+      task,
+      attempt,
+      round: rounds,
+      ...data,
+    }
+    const wrote = onPhase ? onPhase(event) : writeRun(cwd, run)
+    if (wrote && wrote.ok === false) log(`checkpoint: ${wrote.error}`)
+    if (o.events !== false) {
+      const extra = /** @type {any} */ (data)
+      const logged = {
+        runId: run.id,
+        event: extra.event ?? "phase",
+        task,
+        attempt,
+        phase: run.phase,
+        route: run.routes?.current ?? null,
+        tokens,
+        ms: extra.ms ?? 0,
+        code: extra.code ?? null,
+        terminal: extra.terminal ?? run.terminal ?? null,
+        detail: extra.detail,
+      }
+      appendEvent(cwd, logged)
+      if (o.otel !== false && (o.otelEndpoint || process.env.OTEL_EXPORTER_OTLP_ENDPOINT)) {
+        // Fire and forget: a collector that is down must not slow a run down,
+        // let alone stop it. The promise rejection is handled inside.
+        void exportSpan({ ...logged, ts: new Date().toISOString() }, { endpoint: o.otelEndpoint ?? null })
+      }
+    }
+    return wrote
   }
+  const record = () => checkpoint(run?.phase ?? null)
   const finish = (stopArgs) => {
     const result = stop(entries, { ...stopArgs, rounds, tokens, run })
     if (run) {
@@ -779,7 +891,15 @@ export function runLoop(options) {
       run.reason = result.reason
       run.exitCode = result.code
       run.endedAt = new Date().toISOString()
-      record()
+      // One vocabulary on disk: the writer-local status stays for compatibility,
+      // and `terminal` is the name a reader switches on. A successful run ends
+      // in `finish`; a stopped one stays in the phase that stopped it, so
+      // `status` keeps saying where the run got to.
+      run.terminal = result.code === 0 ? "done" : stopArgs.terminal ?? terminalForStatus(run.status) ?? "needs-human"
+      run.next = nextActionFor(run)
+      checkpoint(result.code === 0 ? "finish" : run.phase, {
+        data: { code: result.code, reason: result.reason, terminal: run.terminal },
+      })
     }
     return result
   }
@@ -818,7 +938,7 @@ export function runLoop(options) {
       run.endedAt = null
       run.goal = run.goal || o.goal || parsed.goal || ""
       for (const t of parsed.tasks) runTask(run, t)
-      writeRun(cwd, run)
+      checkpoint(run.phase ?? "intake", { data: { event: "run-start" } })
     }
 
     const preflight = validatePlan(parsed)
@@ -881,6 +1001,7 @@ export function runLoop(options) {
       let reviewFixes = 0
       let lastVerify = null
       let blocked = null
+      let taskTokens = 0
 
       for (;;) {
         const budget = budgetStop()
@@ -896,12 +1017,36 @@ export function runLoop(options) {
         if (stateTask) {
           stateTask.attempts++
           stateTask.status = "running"
-          record()
+          checkpoint("build", {
+            task: task.title,
+            attempt: stateTask.attempts,
+            taskState: stateTask,
+            data: { fixRound: verifyFixes + reviewFixes },
+          })
+        } else if (run) {
+          checkpoint("build", { task: task.title, data: { fixRound: verifyFixes + reviewFixes } })
         }
         const changesBefore = gitChanges(cwd)
         const prompt = fixNote ? `${buildPrompt(task)}\n\nThis is a FIX round. The previous attempt did not pass.\n\n${fixNote}` : buildPrompt(task)
+        if (o.laneBudget) {
+          const fits = assertPromptFits(prompt, o.laneBudget)
+          if (!fits.ok) {
+            return finish({ reason: fits.reason, code: 2, status: "budget" })
+          }
+        }
         const agent = runAgent(role, prompt, { cwd, timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
-        tokens += Number(agent?.tokens ?? 0) || 0
+        const spent = Number(agent?.tokens ?? 0) || 0
+        tokens += spent
+        taskTokens += spent
+        // A per-task cap stops the one task that is looping before it can
+        // spend the whole run's budget on its own.
+        if (maxTaskTokens !== null && taskTokens > maxTaskTokens) {
+          return finish({
+            reason: `${task.title}: task token budget exhausted (${taskTokens} > ${maxTaskTokens})`,
+            code: 2,
+            status: "budget",
+          })
+        }
 
         const said = String(agent?.stdout ?? "")
         const timedOut = /ETIMEDOUT|timed out/i.test(String(agent?.error ?? ""))
@@ -977,14 +1122,79 @@ export function runLoop(options) {
           }
         }
 
+        const policy = inspectVerify(task.verify, { allowCompound: o.allowCompoundVerify === true })
+        if (!policy.ok) {
+          blocked = {
+            code: 2,
+            terminal: "needs-human",
+            reason: `${task.title}: verify policy rejected the command: ${policy.reason} (${task.verify ?? ""})`,
+          }
+          break
+        }
+        if (stateTask) stateTask.phase = "verify"
+        if (run) run.phase = "verify"
         const verify = task.verify
-          ? runVerify(task.verify, {
+          ? runVerify(sandboxed(task.verify), {
               cwd,
               timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))),
               env: process.env,
             })
           : { ok: false, status: null, output: "no verify command", seconds: 0 }
         lastVerify = verify
+        const evidence = verifyEntry({
+          runId: run?.id ?? null,
+          planHash: run?.planHash ?? null,
+          task: task.title,
+          phase: "verify",
+          command: task.verify ?? "",
+          result: verify,
+          route: run?.routes?.current ?? null,
+          attempt: stateTask?.attempts ?? null,
+        })
+        if (stateTask) stateTask.verifyRuns = [...(stateTask.verifyRuns ?? []), evidence]
+        appendVerify(cwd, evidence)
+        checkpoint("verify", {
+          task: task.title,
+          attempt: stateTask?.attempts ?? null,
+          taskState: stateTask,
+          data: {
+            command: task.verify ?? "",
+            exit: verify.status ?? null,
+            ok: verify.ok === true,
+            seconds: verify.seconds ?? 0,
+          },
+        })
+
+        // A cap-exhausted agent is a different diagnosis from a repeated bug:
+        // its failure must be reported as the cap, not swallowed by the guard.
+        const cappedNow = o.stepCap > 0 && Number(agent?.steps ?? 0) >= o.stepCap
+        if (!verify.ok && stateTask && !cappedNow) {
+          // The same command failing with the same output over the same paths
+          // is not new information; a fix round spent on it is a round the
+          // budget cannot get back.
+          const changed = gitChanges(cwd)
+          const fingerprint = failureFingerprint(
+            "verify",
+            task.verify ?? "",
+            verify.output ?? "",
+            changed?.files ? [...changed.files.keys()] : [],
+          )
+          const failure = recordFailure(stateTask, {
+            fingerprint,
+            phase: "verify",
+            command: task.verify ?? "",
+            exit: verify.status ?? null,
+          })
+          if (failure.stop) {
+            blocked = {
+              code: 2,
+              terminal: "needs-human",
+              reason: `${task.title}: the same verify failure repeated ${failure.count} times with no new change; stopping instead of spending another fix round. Run \`oc-harness resume\` after changing the code or the command.`,
+              verifyOutput: verify.output ?? "",
+            }
+            break
+          }
+        }
 
         if (verify.ok) {
           if (!review) break
@@ -994,10 +1204,16 @@ export function runLoop(options) {
           // verdict file by `rounds` alone made the second write overwrite the
           // first, so the audit trail lost the failure that caused the fix.
           const reviewRound = ++reviewCount
-          const verdict = readVerdict(runReviewer, cwd, task, reviewRound, diff, verify, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
+          const verdict = readVerdict(runReviewer, cwd, task, reviewRound, diff, verify, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)), budget: o.laneBudget ?? null })
           if (stateTask) {
             stateTask.reviews.push({ round: reviewRound, verdict: verdict.verdict ?? "invalid", at: new Date().toISOString(), note: verdict.error ?? "" })
           }
+          checkpoint("review", {
+            task: task.title,
+            attempt: stateTask?.attempts ?? null,
+            taskState: stateTask,
+            data: { round: reviewRound, verdict: verdict.verdict ?? "invalid", error: verdict.error ?? "" },
+          })
           if (verdict.error) {
             blocked = { code: 5, reason: `${task.title}: reviewer did not return a schema'd verdict: ${verdict.error}` }
             break
@@ -1008,10 +1224,17 @@ export function runLoop(options) {
             reviewFixes++
             if (stateTask) stateTask.reviewFailures++
             fixNote = `The reviewer failed this change. Fix every blocker, then run the verify command again:\n${formatBlockers(verdict.parsed.blockers)}`
+            checkpoint("fix", {
+              task: task.title,
+              attempt: stateTask?.attempts ?? null,
+              taskState: stateTask,
+              data: { reason: "review", round: reviewFixes },
+            })
             continue
           }
           blocked = {
             code: 5,
+            terminal: "review-failed",
             reason: `${task.title}: review failed after ${reviewFixes} fix round(s)\n${formatBlockers(verdict.parsed.blockers)}`,
             verifyOutput: `review: fail\n${verdict.parsed.blockers.map((b) => `  - ${b.file}:${b.line} ${b.issue}`).join("\n")}`,
           }
@@ -1022,6 +1245,12 @@ export function runLoop(options) {
           verifyFixes++
           if (stateTask) stateTask.verifyFailures++
           fixNote = `The verify command failed (exit ${verify.status ?? "?"}): ${task.verify}\nIts real output was:\n${verify.output || "(no output)"}`
+          checkpoint("fix", {
+            task: task.title,
+            attempt: stateTask?.attempts ?? null,
+            taskState: stateTask,
+            data: { reason: "verify", round: verifyFixes },
+          })
           continue
         }
         const capped = o.stepCap > 0 && Number(agent?.steps ?? 0) >= o.stepCap
@@ -1030,6 +1259,7 @@ export function runLoop(options) {
           : ""
         blocked = {
           code: 4,
+          terminal: "verify-failed",
           reason: `${task.title}: verify failed after ${verifyFixes} fix round(s): ${task.verify}${capNote ? `\n${capNote}` : ""}`,
           verifyOutput: `verify failed after ${verifyFixes} fix rounds: ${task.verify}\n${verify.output || "(no output)"}${capNote ? `\n\n${capNote}` : ""}`,
         }
@@ -1066,7 +1296,7 @@ export function runLoop(options) {
           stateTask.seconds = Math.round((Date.now() - taskStarted) / 1000)
           record()
         }
-        return finish({ reason: blocked.reason, code: blocked.code, status: "blocked" })
+        return finish({ reason: blocked.reason, code: blocked.code, status: "blocked", terminal: blocked.terminal })
       }
 
       if (!existsSync(file)) {
@@ -1085,12 +1315,24 @@ export function runLoop(options) {
         writeFileSync(file, markTask(text, current, { status: "done", verifyOutput: output }))
       }
 
+      const doneData = {
+        verify: lastVerify
+          ? { command: task.verify ?? "", exit: lastVerify.status ?? null, ok: lastVerify.ok === true, seconds: lastVerify.seconds ?? 0 }
+          : null,
+      }
       if (stateTask) {
         stateTask.status = "done"
         stateTask.endedAt = new Date().toISOString()
         stateTask.seconds = Math.round((Date.now() - taskStarted) / 1000)
         stateTask.note = ""
-        record()
+        checkpoint("task-done", {
+          task: task.title,
+          attempt: stateTask.attempts,
+          taskState: stateTask,
+          data: doneData,
+        })
+      } else if (run) {
+        checkpoint("task-done", { task: task.title, data: doneData })
       }
       entries.push({ round: rounds, task: task.title, verify: task.verify, seconds: lastVerify?.seconds ?? 0, attempts: fixNote ? undefined : 1 })
       if (o.onTaskDone) {
@@ -1102,10 +1344,36 @@ export function runLoop(options) {
     }
 
     if (o.finalVerify) {
-      const final = runVerify(o.finalVerify, { cwd, timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))), env: process.env })
+      const finalPolicy = inspectVerify(o.finalVerify, { allowCompound: o.allowCompoundVerify === true })
+      if (!finalPolicy.ok) {
+        return finish({
+          reason: `final verify policy rejected the command: ${finalPolicy.reason} (${o.finalVerify})`,
+          code: 2,
+          status: "blocked",
+          terminal: "needs-human",
+        })
+      }
+      if (run) run.phase = "final-verify"
+      const final = runVerify(sandboxed(o.finalVerify), { cwd, timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))), env: process.env })
+      appendVerify(
+        cwd,
+        verifyEntry({
+          runId: run?.id ?? null,
+          planHash: run?.planHash ?? null,
+          task: "final verify",
+          phase: "final-verify",
+          command: o.finalVerify,
+          result: final,
+          route: run?.routes?.current ?? null,
+          attempt: null,
+        }),
+      )
       if (run) {
         run.finalVerify = { command: o.finalVerify, exit: final.status ?? null, ok: final.ok === true, seconds: final.seconds ?? 0 }
-        record()
+        checkpoint("final-verify", {
+          task: "final verify",
+          data: { command: o.finalVerify, exit: final.status ?? null, ok: final.ok === true, seconds: final.seconds ?? 0 },
+        })
       }
       if (!final.ok) {
         return finish({
@@ -1119,6 +1387,7 @@ export function runLoop(options) {
     }
 
     if (o.finalReview) {
+      if (run) run.phase = "final-review"
       const diff = reviewDiff(cwd, { baseRef: finalBaseRef })
       const wholePlan = {
         title: "the whole plan",
@@ -1131,7 +1400,14 @@ export function runLoop(options) {
         run.finalReview = verdict.error
           ? { verdict: "invalid", error: verdict.error }
           : { verdict: verdict.parsed.verdict, blockers: verdict.parsed.blockers }
-        record()
+        checkpoint("final-review", {
+          task: "final review",
+          data: {
+            verdict: run.finalReview.verdict,
+            error: verdict.error ?? "",
+            blockers: run.finalReview.blockers ?? [],
+          },
+        })
       }
       if (verdict.error) {
         return finish({ reason: `final reviewer did not return a schema'd verdict: ${verdict.error}`, code: 5, status: "final-review-failed" })
@@ -1174,8 +1450,13 @@ export function runLoop(options) {
  * reviewer that crashed and one that answered in prose are different failures,
  * and the message says which.
  */
-function readVerdict(runReviewer, cwd, task, round, diff, verify, { timeoutMs }) {
-  const result = runReviewer("reviewer", buildReviewPrompt(task, diff, verify.output), { cwd, timeoutMs })
+function readVerdict(runReviewer, cwd, task, round, diff, verify, { timeoutMs, budget = null }) {
+  const prompt = buildReviewPrompt(task, diff, verify.output)
+  if (budget) {
+    const fits = assertPromptFits(prompt, budget)
+    if (!fits.ok) return { error: fits.reason }
+  }
+  const result = runReviewer("reviewer", prompt, { cwd, timeoutMs })
   if (!result?.ok) {
     return {
       error: `reviewer agent failed (exit ${result?.status ?? "?"}): ${result?.error || result?.output || "no output"}`.slice(0, 2_000),

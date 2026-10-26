@@ -53,6 +53,7 @@
     "retention.yml",
     "lanes.json",
     "lanes.schema.json",
+    "run.schema.json",
     "GLOBAL.md",
     "CHANGELOG.md",
     "MIGRATION.md",
@@ -90,7 +91,8 @@
     "thresholds": "node eval/thresholds.mjs",
     "prepublishOnly": "npm run build",
     "build:types": "tsc -p tsconfig.types.json",
-    "test:loop": "OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json node --test test/loop-e2e.test.js test/cli-work.test.js test/work.test.js test/plan.test.js"
+    "test:loop": "OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json node --test test/loop-e2e.test.js test/cli-work.test.js test/work.test.js test/plan.test.js",
+    "gate:loop": "node eval/loop-gate.mjs"
   },
   "keywords": [
     "opencode",

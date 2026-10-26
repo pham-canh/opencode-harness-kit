@@ -89,7 +89,7 @@ test("work --json --print-verify prints JSON, not a bare command list", () => {
   const { dir, env } = repo(bin)
   mkdirSync(join(dir, ".space"), { recursive: true })
   writeFileSync(join(dir, ".space", "tasks.md"), PLAN)
-  const r = spawnSync("node", cli("work", "--json", "--print-verify"), { cwd: dir, encoding: "utf8", env })
+  const r = spawnSync("node", cli("work", "--no-strict", "--json", "--print-verify"), { cwd: dir, encoding: "utf8", env })
   assert.equal(r.status, 0, r.stderr)
   const report = JSON.parse(r.stdout)
   assert.equal(report.ok, true)
@@ -98,7 +98,7 @@ test("work --json --print-verify prints JSON, not a bare command list", () => {
   assert.deepEqual(report.commands, ["test -f answer.txt"])
   assert.equal(existsSync(join(dir, "answer.txt")), false, "printing verify must not run the loop")
 
-  const text = spawnSync("node", cli("work", "--print-verify"), { cwd: dir, encoding: "utf8", env })
+  const text = spawnSync("node", cli("work", "--no-strict", "--print-verify"), { cwd: dir, encoding: "utf8", env })
   assert.equal(text.status, 0, text.stderr)
   assert.match(text.stdout, /test -f answer\.txt\n$/)
   assert.doesNotMatch(text.stdout, /"commands"/)
@@ -147,7 +147,7 @@ test("work --plan-only plans without a git repository", () => {
   const bin = fakeOpencode()
   const dir = mkdtempSync(join(tmpdir(), "oc-cli-nogit-"))
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` }
-  const r = spawnSync("node", cli("work", "answer the question", "--plan-only"), { cwd: dir, encoding: "utf8", env, timeout: 60_000 })
+  const r = spawnSync("node", cli("work", "--no-strict", "answer the question", "--plan-only"), { cwd: dir, encoding: "utf8", env, timeout: 60_000 })
   assert.equal(r.status, 0, r.stderr)
   assert.match(readFileSync(join(dir, ".space", "tasks.md"), "utf8"), /write the answer/)
 })
@@ -158,7 +158,7 @@ test("work --replan replaces a valid plan once and runs the replacement", () => 
   mkdirSync(join(dir, ".space"), { recursive: true })
   writeFileSync(join(dir, ".space", "tasks.md"), PLAN.replace("write 42 into answer.txt", "write 41 into answer.txt"))
   const log = join(mkdtempSync(join(tmpdir(), "oc-plan-log-")), "calls")
-  const r = spawnSync("node", cli("work", "answer the question", "--replan", "--trust-verify", "--json", "--max-rounds", "3"), {
+  const r = spawnSync("node", cli("work", "--no-strict", "answer the question", "--replan", "--trust-verify", "--json", "--max-rounds", "3"), {
     cwd: dir,
     encoding: "utf8",
     env: { ...env, PLAN_CALL_LOG: log },

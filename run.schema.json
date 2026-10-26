@@ -1,0 +1,302 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/opencode-ai/opencode-harness/main/run.schema.json",
+  "title": "oc-harness run record (run@2)",
+  "description": "The file at .space/run.json. A run@1 record is upgraded in memory by readRun and rewritten as run@2 by writeRun; this schema describes the written form.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "cwd",
+    "status",
+    "phase",
+    "startedAt",
+    "updatedAt",
+    "tasks"
+  ],
+  "properties": {
+    "schema": {
+      "const": "oc-harness/run@2"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cwd": {
+      "type": "string",
+      "minLength": 1
+    },
+    "goal": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "branch": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "worktree": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "enum": [
+        "running",
+        "done",
+        "blocked",
+        "budget",
+        "interrupted",
+        "failed"
+      ]
+    },
+    "phase": {
+      "enum": [
+        "intake",
+        "plan",
+        "preflight",
+        "build",
+        "verify",
+        "review",
+        "fix",
+        "task-done",
+        "final-verify",
+        "final-review",
+        "finish",
+        "cleanup"
+      ]
+    },
+    "terminal": {
+      "enum": [
+        null,
+        "done",
+        "needs-human",
+        "budget",
+        "interrupted",
+        "failed"
+      ]
+    },
+    "next": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "exitCode": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finishedAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resumeCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "planHash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rounds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "maxMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxTokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTaskTokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "spentTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "spentCacheTokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "routes": {
+      "type": "object",
+      "properties": {
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tried": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "checkpoint": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "finalVerify": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "finalReview": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "files": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string"
+          },
+          "verify": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "done",
+              "blocked"
+            ]
+          },
+          "phase": {
+            "enum": [
+              "pending",
+              "build",
+              "verify",
+              "review",
+              "fix",
+              "done",
+              "blocked"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reviews": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "failureHistory": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "verifyRuns": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "verifyFailures": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reviewFailures": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -6,7 +6,7 @@
 // else is a separate, human decision.
 
 import { spawnSync } from "node:child_process"
-import { mkdirSync } from "node:fs"
+import { existsSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 
 /**
@@ -194,6 +194,52 @@ export function createWorktree(cwd, branch, name) {
     return { ok: false, reason: `cannot create a worktree: ${String(made.stderr ?? "").trim() || "git failed"}` }
   }
   return { ok: true, path }
+}
+
+/**
+ * Remove a worktree the harness made.
+ *
+ * Only paths under `.space/worktrees/` are accepted: this function deletes a
+ * directory and runs `git worktree remove`, and `--run-id` is user input, so a
+ * path outside the harness's own directory must be refused rather than
+ * trusted.
+ *
+ * @param {string} cwd
+ * @param {string} path
+ * @param {{ force?: boolean }} [options]
+ */
+export function removeWorktree(cwd, path, { force = false } = {}) {
+  if (!isGitRepo(cwd)) return { ok: false, reason: "not a git repository" }
+  const root = `${cwd}/.space/worktrees/`
+  if (!path || !String(path).startsWith(root) || String(path).includes("..")) {
+    return { ok: false, reason: `refusing to remove ${JSON.stringify(path)}: not a harness worktree` }
+  }
+  if (!existsSync(path)) return { ok: true, path, removed: false }
+  const status = git(path, ["status", "--porcelain"])
+  // `.space/` is the harness's own state, not the user's work. A finished run
+  // always leaves it untracked, and counting it as a dirty tree made cleanup
+  // refuse every worktree the harness had ever made.
+  const dirtyLines = String(status.stdout ?? "")
+    .split("\n")
+    .filter(Boolean)
+    .filter((line) => !/(^|[\s/])\.space\//.test(line))
+  if (status.status === 0 && dirtyLines.length && !force) {
+    return {
+      ok: false,
+      reason: `${path} has uncommitted changes; commit them first or pass --force-cleanup`,
+      dirty: true,
+    }
+  }
+  // `git worktree remove` refuses any untracked file, including the harness's
+  // own `.space/`. Once the user's work is known clean, forcing past that is
+  // safe and is the only way cleanup can ever succeed.
+  const args = ["worktree", "remove", ...(force || !dirtyLines.length ? ["--force"] : []), path]
+  const removed = git(cwd, args)
+  if (removed.status !== 0) {
+    return { ok: false, reason: `cannot remove worktree: ${String(removed.stderr ?? "").trim() || "git failed"}` }
+  }
+  git(cwd, ["worktree", "prune"])
+  return { ok: true, path, removed: true }
 }
 
 /** The current branch, or null on a detached HEAD / outside git. */

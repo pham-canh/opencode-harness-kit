@@ -44,6 +44,46 @@ A live lock is not cleared automatically. `--force-unlock` breaks one
 explicitly, for the case where the recorded pid now belongs to an unrelated
 process. Do not use it to start a second run alongside a real one.
 
+## `oc-harness resume`
+
+Continue the record in `.space/run.json` instead of starting a new run. It
+keeps the run id, start time, goal, rounds, tokens, budget, routes and every
+task's attempt history, and it skips the tasks the plan has ticked. It never
+plans, so `resume` needs an existing record.
+
+| Code | Meaning |
+|---|---|
+| 0 | The resumed run finished: every task done and any final gate that was asked for passed. |
+| 2 | Nothing to resume, the run already finished, the plan changed since the run started (`--replan` resumes against the new plan), another process holds the lock, or the loop stopped and needs a person. |
+| 3, 4, 5 | Same meanings as `run`: route exhausted, verify failed, review failed. |
+
+A stale lock - one whose pid is gone - is cleared by `resume` (and by `work`)
+before the run starts, and the record it guarded is marked `interrupted` with
+code 2. That is how a killed process becomes resumable instead of leaving
+`run.json` saying `running` forever. `status` shows the same thing without
+writing a file.
+
+A run started with `--worktree` keeps its record inside the worktree. `resume`
+finds it, continues inside it, and refuses with code 2 if the worktree has been
+deleted - the work only exists there. `resume --cleanup` (and `work --cleanup`)
+removes a finished worktree; a run that is still going is refused with code 2
+unless `--force-cleanup` is given, because its worktree is the only copy of its
+edits.
+
+## `oc-harness report`, `health` and `mcp`
+
+These read files the driver already wrote; none of them start, resume or
+change a run.
+
+| Code | Meaning |
+|---|---|
+| 0 | The report/answer was produced. |
+| 1 | `report`: no run is recorded. `health --probe`: at least one route did not answer. |
+| 2 | A malformed flag, or no models to probe. |
+
+`mcp` is a long-running stdio server: it exits when stdin closes, and its exit
+code is whatever ended the process - a client disconnect is not a failure.
+
 ## `oc-harness doctor`
 
 | Code | Meaning |
