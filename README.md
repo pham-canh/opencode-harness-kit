@@ -287,11 +287,12 @@ The full list, with a reason for each, is in
 | `oc-harness refresh <id>` | re-derives a profile's machine-derived fields from live metadata | when `doctor` reports drift |
 | `oc-harness verify` | the installed config still matches the profile, and the kit's own files are still installed | after every `use` / `install` |
 
-`npm run selfcheck` is the **release gate**: it builds, typechecks, runs the
-suite, checks the import graph and the eval premises, installs into a fresh
-directory, and ends with `npm run release:check -- --release`. `doctor` is the
-online half — it reads models.dev and the installed config — and it is not a
-substitute for that gate.
+`npm run selfcheck` is the **release gate**: it builds, runs
+`npm run release:check -- --release` against the tarball that build produced,
+then typechecks, runs the suite, checks the import graph and the eval
+premises, and installs into a fresh directory. `doctor` is the online half —
+it reads models.dev and the installed config — and it is not a substitute for
+that gate.
 
 A cron line that tells you the moment a route disappears, rather than the
 moment a lane starts failing:
