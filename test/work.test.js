@@ -20,6 +20,7 @@ function gitEnv() {
 import { changedPaths, checkpoint, createBranch } from "../src/driver/git.mjs"
 import { createRun, readRun, writeRun } from "../src/driver/run-state.mjs"
 import { isRouteFailure, workRequest } from "../src/driver/work.mjs"
+import { parseTasks } from "../src/tasks.js"
 
 const planText = `# Ship it
 
@@ -256,6 +257,37 @@ test("a route failure is retried once per other route and never on the same one"
   const record = readRun(dir)
   assert.equal(record.status, "done", "the retry's record is the one that is written")
   assert.ok(record.tasks[0].commit, "the checkpoint from the retry is recorded")
+})
+
+test("a timeout that already changed the tree blocks the task instead of retrying", () => {
+  const dir = repo()
+  writeFileSync(join(dir, ".space", "tasks.md"), planText)
+  const models = []
+  let calls = 0
+  // The agent got far enough to write the answer, then the route timed out.
+  // Retrying on model-b would stack a second attempt on a partial edit.
+  const spent = { ok: false, status: null, stdout: "", stderr: "", error: "spawnSync opencode ETIMEDOUT" }
+  const r = workRequest({
+    cwd: dir,
+    routes: ["model-a", "model-b"],
+    loop: {
+      runAgent: () => {
+        models.push(process.env.OC_HARNESS_MODEL ?? null)
+        calls++
+        writeFileSync(join(dir, "answer.txt"), "partial\n")
+        return spent
+      },
+      runVerify: () => ({ ok: true }),
+    },
+  })
+  assert.equal(r.code, 2, r.reason)
+  assert.equal(calls, 1, "a partial edit must not be retried on another route")
+  assert.deepEqual(models, [null])
+  assert.match(r.reason, /timed out after changing answer\.txt/)
+  const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+  assert.equal(after.tasks[0].status, "blocked")
+  assert.match(after.tasks[0].output, /answer\.txt/)
+  assert.match(after.tasks[0].output, /Check the diff/)
 })
 
 test("isRouteFailure separates a provider failure from a failed edit", () => {

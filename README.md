@@ -1062,9 +1062,11 @@ A spent model route is the other way a run looks like a failure and is not
 one. It shows up as an empty transcript - some providers exit 0 with it, others
 hang until the ceiling kills them. In the first shape `run` stops with exit 3
 and "the agent answered nothing" rather than verifying an untouched tree; in
-the second it names the route and the limit it waited out. Either way the
-advice is `opencode run --print-logs -m <model> hi`, and a smaller `--budget`
-fails sooner.
+the second it names the route and the limit it waited out, unless the agent
+had already edited files: then the task is blocked with exit 2 rather than
+retried, because a second route would start on top of a partial change. Either
+way the advice is `opencode run --print-logs -m <model> hi`, and a smaller
+`--budget` fails sooner.
 
 ## The skill loop
 
@@ -1151,7 +1153,8 @@ only the paths it touched (`--commit`), or do the whole run in a separate
 worktree under `.space/worktrees/` (`--worktree`). It never pushes, opens a
 pull request or publishes. A spent model route is retried once per other route
 in the lane chain, with `OC_HARNESS_MODEL` selecting the next one - never on the
-route that just failed.
+route that just failed. A timeout that already changed files is not retried:
+the task is blocked so the partial edit cannot be stacked under a second route.
 
 ## What it costs, measured
 

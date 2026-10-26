@@ -291,6 +291,28 @@ export function outOfScope(task, cwd, before) {
 }
 
 /**
+ * Paths that differ between two `gitChanges` reads.
+ *
+ * `.space/` is the loop's own bookkeeping, so it is not an agent edit. A
+ * change in code or an mtime counts: an agent that rewrites an already-dirty
+ * file has still touched the work the task is judged on.
+ *
+ * @param {ReturnType<typeof gitChanges>} before
+ * @param {ReturnType<typeof gitChanges>} after
+ * @returns {string[]}
+ */
+function changedSince(before, after) {
+  if (!before || !after) return []
+  return [...after.files]
+    .filter(([path, now]) => {
+      if (path === ".space" || path.startsWith(".space/")) return false
+      const was = before.files.get(path)
+      return !was || was.code !== now.code || was.mtimeMs !== now.mtimeMs
+    })
+    .map(([path]) => path)
+}
+
+/**
  * The reviewer's final words, from `opencode run --format json`.
  *
  * `--format json` emits one JSON event per line. Only the LAST text part is
@@ -883,16 +905,40 @@ export function runLoop(options) {
 
         const said = String(agent?.stdout ?? "")
         const timedOut = /ETIMEDOUT|timed out/i.test(String(agent?.error ?? ""))
+        // A timeout is a route failure only if it left the tree alone. If the
+        // agent edited files before it was killed, the next route would start
+        // on top of a partial change; that tree needs a person, not a retry.
+        const timedOutEdits = timedOut ? changedSince(changesBefore, gitChanges(cwd)) : []
         // Two shapes are the ROUTE failing rather than the edit: a process
         // that timed out, and `opencode run` exiting 0 on a spent free route
-        // with no events at all. Both leave the task pending, because a retry
-        // on another model may well finish it. A build agent that took steps
-        // and then failed is a failed edit, and is handled as one.
+        // with no events at all. Both leave the task pending when they left
+        // the tree untouched, because a retry on another model may well
+        // finish it. A timeout after edits is blocked above. A build agent
+        // that took steps and then failed is a failed edit, and is handled as
+        // one.
         const deadRoute =
           timedOut ||
           (agent?.ok === true && Object.hasOwn(agent, "stdout") && !said.trim() && Number(agent?.steps ?? 0) === 0)
         if (deadRoute) {
           const why = tail(agent?.stderr || agent?.error || agent?.output || "", 8)
+          if (timedOutEdits.length) {
+            const output = `blocked by the loop: the ${role} agent timed out after changing ${timedOutEdits.join(", ")}. The tree is partially edited, so another route would start on top of it. Check the diff and unblock the task.\n${why}${why ? "\n\n" : ""}The agent timed out: it did not answer within the budget allowed.`
+            if (existsSync(file)) {
+              const text = readFileSync(file, "utf8")
+              const current = findTask(parseTasks(text), task)
+              if (current && !isDone(current)) {
+                writeFileSync(file, markTask(text, current, { status: "blocked", verifyOutput: output }))
+              }
+            }
+            if (stateTask) {
+              stateTask.status = "blocked"
+              stateTask.note = output
+              stateTask.endedAt = new Date().toISOString()
+              stateTask.seconds = Math.round((Date.now() - taskStarted) / 1000)
+              record()
+            }
+            return finish({ reason: output, code: 2, status: "blocked" })
+          }
           const hint = timedOut
             ? "The agent timed out: it did not answer within the budget allowed. That is what a spent or unreachable model route looks like: check it with `opencode run --print-logs -m <model> hi`, and lower --budget if you would rather fail sooner."
             : "The agent exited without a word. That is what a spent or unreachable model route looks like: check it with `opencode run --print-logs -m <model> hi`."
