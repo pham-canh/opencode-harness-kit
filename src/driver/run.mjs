@@ -53,6 +53,7 @@ import { assertPromptFits } from "./lane-budget.mjs"
 import { inspectVerify } from "./policy.mjs"
 import { failureFingerprint, recordFailure } from "./retry.mjs"
 import { createRun, nextActionFor, redact, runPath, runTask, terminalForStatus, writeRun } from "./run-state.mjs"
+import { applyTransition, terminalEventFor } from "./transitions.mjs"
 
 const TASKS_PATH = join(".space", "tasks.md")
 const LOCK_PATH = join(".space", "run.lock")
@@ -721,6 +722,30 @@ export function findTask(parsed, task) {
 }
 
 /**
+ * Write `.space/tasks.md` the same way every other state file is written:
+ * redact first, write a temporary file in the same directory, rename it, and
+ * clean the temporary file up on failure. The plan is the resume's ground
+ * truth, so a torn write must not be able to lose a task or a status.
+ */
+function writeTasks(file, text) {
+  const tmp = `${file}.${process.pid}.tmp`
+  try {
+    writeFileSync(tmp, redact(text))
+    renameSync(tmp, file)
+    return { ok: true }
+  } catch (err) {
+    try {
+      unlinkSync(tmp)
+    } catch {
+      // Nothing to remove when the temporary file was never created.
+    }
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`tasks: could not write ${file}: ${message}`)
+    return { ok: false, error: message }
+  }
+}
+
+/**
  * Run the loop.
  *
  * One task at a time: build, verify, review. A verify or review failure is a
@@ -846,8 +871,19 @@ export function runLoop(options) {
       spentCacheTokens: run.budget?.spentCacheTokens ?? 0,
     }
     run.seconds = Math.round(elapsed())
-    if (phase) run.phase = phase
-    if (taskState && phase) taskState.phase = phase
+    // Every phase change goes through the table. A checkpoint that names the
+    // phase the run is already in is a status update, not a transition, and
+    // only the destination is passed: the table, not the caller, decides
+    // whether the edge exists.
+    if (phase && phase !== run.phase) {
+      applyTransition(run, phase, {
+        task,
+        route: run.routes?.current ?? null,
+        detail: Object.keys(data).length ? data : undefined,
+      })
+    }
+    // `task-done` belongs to the run, not to a task: the task itself is done.
+    if (taskState && phase) taskState.phase = phase === "task-done" ? "done" : phase
     const event = {
       at: new Date().toISOString(),
       phase: run.phase,
@@ -887,17 +923,38 @@ export function runLoop(options) {
   const finish = (stopArgs) => {
     const result = stop(entries, { ...stopArgs, rounds, tokens, run })
     if (run) {
-      run.status = result.code === 0 ? "done" : stopArgs.status ?? "stopped"
-      run.reason = result.reason
-      run.exitCode = result.code
-      run.endedAt = new Date().toISOString()
+      const status = result.code === 0 ? "done" : stopArgs.status ?? "stopped"
       // One vocabulary on disk: the writer-local status stays for compatibility,
       // and `terminal` is the name a reader switches on. A successful run ends
       // in `finish`; a stopped one stays in the phase that stopped it, so
       // `status` keeps saying where the run got to.
-      run.terminal = result.code === 0 ? "done" : stopArgs.terminal ?? terminalForStatus(run.status) ?? "needs-human"
+      const terminal = result.code === 0 ? "done" : stopArgs.terminal ?? terminalForStatus(status) ?? "needs-human"
+      // A route failure is provisional: `work` will retry on the next route and
+      // reuse this record, so the phase must stay where the task stopped. Only
+      // `work` knows whether the last route was tried, and it writes
+      // `needs-human` then. Every other stop moves through the table.
+      const event = status === "route-failed" ? null : terminalEventFor(terminal)
+      // The table owns the phase and the edge. A stop the current phase cannot
+      // reach is a caller bug, not a reason to lose the record: log it and keep
+      // the writer-local fields, so a run still ends exactly once.
+      try {
+        if (!event) {
+          if (status !== "route-failed") throw new Error(`no terminal event for ${JSON.stringify(terminal)}`)
+        } else applyTransition(run, event, {
+          reason: result.reason,
+          exitCode: result.code,
+          detail: { code: result.code, terminal },
+        })
+      } catch (err) {
+        log(`run: ${errorText(err)}; keeping ${run.phase ?? "unknown"} as the last phase`)
+      }
+      run.status = status
+      run.terminal = terminal
+      run.reason = result.reason
+      run.exitCode = result.code
+      run.endedAt = new Date().toISOString()
       run.next = nextActionFor(run)
-      checkpoint(result.code === 0 ? "finish" : run.phase, {
+      checkpoint(run.phase ?? null, {
         data: { code: result.code, reason: result.reason, terminal: run.terminal },
       })
     }
@@ -939,6 +996,9 @@ export function runLoop(options) {
       run.goal = run.goal || o.goal || parsed.goal || ""
       for (const t of parsed.tasks) runTask(run, t)
       checkpoint(run.phase ?? "intake", { data: { event: "run-start" } })
+      // A fresh record starts in `intake`; the plan is next. A resumed one
+      // already left intake, so its history keeps the preflight it ran before.
+      if (run.phase === "intake") checkpoint("preflight", { data: { event: "preflight" } })
     }
 
     const preflight = validatePlan(parsed)
@@ -961,7 +1021,7 @@ export function runLoop(options) {
             }
           }
         }
-        writeFileSync(file, text)
+        writeTasks(file, text)
       }
       const reason = `plan preflight failed: ${preflight.errors.join("; ")}`
       for (const line of preflight.errors) log(`preflight: ${line}`)
@@ -1072,7 +1132,7 @@ export function runLoop(options) {
               const text = readFileSync(file, "utf8")
               const current = findTask(parseTasks(text), task)
               if (current && !isDone(current)) {
-                writeFileSync(file, markTask(text, current, { status: "blocked", verifyOutput: output }))
+                writeTasks(file, markTask(text, current, { status: "blocked", verifyOutput: output }))
               }
             }
             if (stateTask) {
@@ -1092,7 +1152,7 @@ export function runLoop(options) {
             const text = readFileSync(file, "utf8")
             const current = findTask(parseTasks(text), task)
             if (current && !isDone(current)) {
-              writeFileSync(file, markTask(text, current, { status: "pending", verifyOutput: output }))
+              writeTasks(file, markTask(text, current, { status: "pending", verifyOutput: output }))
             }
           }
           if (stateTask) {
@@ -1132,7 +1192,7 @@ export function runLoop(options) {
           break
         }
         if (stateTask) stateTask.phase = "verify"
-        if (run) run.phase = "verify"
+        if (run) applyTransition(run, "verify", { task: task.title, detail: { attempt: stateTask?.attempts ?? null } })
         const verify = task.verify
           ? runVerify(sandboxed(task.verify), {
               cwd,
@@ -1284,7 +1344,7 @@ export function runLoop(options) {
         const text = readFileSync(file, "utf8")
         const current = findTask(parseTasks(text), task)
         if (current && !isBlocked(current) && !isDone(current)) {
-          writeFileSync(file, markTask(text, current, {
+          writeTasks(file, markTask(text, current, {
             status: "blocked",
             verifyOutput: blocked.verifyOutput ?? lastVerify?.output ?? blocked.reason,
           }))
@@ -1312,7 +1372,7 @@ export function runLoop(options) {
       }
       if (!isDone(current)) {
         const output = review ? "review: pass" : lastVerify?.output || ""
-        writeFileSync(file, markTask(text, current, { status: "done", verifyOutput: output }))
+        writeTasks(file, markTask(text, current, { status: "done", verifyOutput: output }))
       }
 
       const doneData = {
@@ -1353,7 +1413,7 @@ export function runLoop(options) {
           terminal: "needs-human",
         })
       }
-      if (run) run.phase = "final-verify"
+      if (run) applyTransition(run, "final-verify", { task: "final verify" })
       const final = runVerify(sandboxed(o.finalVerify), { cwd, timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))), env: process.env })
       appendVerify(
         cwd,
@@ -1387,7 +1447,7 @@ export function runLoop(options) {
     }
 
     if (o.finalReview) {
-      if (run) run.phase = "final-review"
+      if (run) applyTransition(run, "final-review", { task: "final review" })
       const diff = reviewDiff(cwd, { baseRef: finalBaseRef })
       const wholePlan = {
         title: "the whole plan",
@@ -1436,6 +1496,29 @@ export function runLoop(options) {
     // just succeeded.
     if (run) writeSummary(cwd, run, finalParsed)
     return result
+  } catch (err) {
+    // A crash is a stop, not an abandoned record. Without this the process
+    // exits on the exception and `run.json` still says `running`, so the next
+    // resume believes a dead run is live. `needs-human` is the honest answer:
+    // the loop does not know what the last agent got through.
+    const reason = `loop crashed: ${errorText(err)}`
+    log(reason)
+    try {
+      return finish({ reason, code: 2, status: "blocked", terminal: "needs-human" })
+    } catch (again) {
+      log(`run: could not finish after a crash: ${errorText(again)}`)
+      if (run) {
+        run.status = "blocked"
+        run.terminal = "needs-human"
+        run.exitCode = 2
+        run.reason = reason
+        run.next = nextActionFor(run)
+        run.endedAt = new Date().toISOString()
+        const wrote = writeRun(cwd, run)
+        if (wrote && wrote.ok === false) log(`run: could not write the crashed record: ${wrote.error}`)
+      }
+      return { reason, code: 2, rounds, log: entries, run }
+    }
   } finally {
     lock?.release?.()
   }

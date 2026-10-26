@@ -54,6 +54,13 @@ test("the happy path walks intake to finish without skipping a gate", () => {
   })
 })
 
+test("a verified task can checkpoint task-done before the next build", () => {
+  const done = advance(runAt("verify"), "task-done", { task: "one" })
+  assert.equal(done.phase, "task-done")
+  assert.equal(done.history.at(-1).event, "task-done")
+  assert.throws(() => advance(runAt("build"), "task-done"), TransitionError)
+})
+
 test("intake can skip planning and go straight to preflight", () => {
   const run = advance(runAt("intake"), "preflight")
   assert.equal(run.phase, "preflight")

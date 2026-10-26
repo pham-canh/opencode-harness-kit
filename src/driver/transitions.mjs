@@ -22,11 +22,12 @@ export class TransitionError extends Error {
 export const FORWARD = Object.freeze({
   intake: Object.freeze(["plan", "preflight"]),
   plan: Object.freeze(["preflight"]),
-  preflight: Object.freeze(["build"]),
+  preflight: Object.freeze(["build", "final-verify", "final-review"]),
   build: Object.freeze(["verify", "fix"]),
-  verify: Object.freeze(["review", "fix", "final-verify", "finish"]),
-  review: Object.freeze(["fix", "final-verify", "finish"]),
+  verify: Object.freeze(["review", "fix", "task-done", "final-verify", "finish"]),
+  review: Object.freeze(["fix", "task-done", "final-verify", "finish"]),
   fix: Object.freeze(["build", "verify"]),
+  "task-done": Object.freeze(["build", "final-verify", "final-review", "finish"]),
   "final-verify": Object.freeze(["final-review", "finish"]),
   "final-review": Object.freeze(["finish"]),
   finish: Object.freeze([]),
@@ -54,13 +55,13 @@ const TERMINAL_EVENTS = Object.freeze({
 
 /** The phases a terminal event is allowed to fire from. `null` means any live phase. */
 const TERMINAL_SCOPE = Object.freeze({
-  finish: Object.freeze(["verify", "review", "final-verify", "final-review"]),
+  finish: Object.freeze(["preflight", "verify", "review", "task-done", "final-verify", "final-review"]),
   "preflight-failed": Object.freeze(["preflight"]),
   "verify-failed": Object.freeze(["verify", "final-verify"]),
   "review-failed": Object.freeze(["review", "final-review"]),
 })
 
-const LIVE = new Set(["intake", "plan", "preflight", "build", "verify", "review", "fix", "final-verify", "final-review"])
+const LIVE = new Set(["intake", "plan", "preflight", "build", "verify", "review", "fix", "task-done", "final-verify", "final-review"])
 const HISTORY_LIMIT = 200
 
 export const EVENTS = Object.freeze([...new Set([...Object.values(FORWARD).flat(), ...Object.keys(TERMINAL_EVENTS)])])
@@ -128,11 +129,46 @@ export function advance(run, event, detail = {}) {
   }
 }
 
+/**
+ * Advance a run record in place.
+ *
+ * `advance` returns a copy so the table can be tested without side effects.
+ * The driver, however, hands the same object to `work`'s `onPhase` callback
+ * and to its resume bookkeeping; replacing that object would lose fields the
+ * callback just added (the checkpoint SHA in particular). This is the one
+ * place that applies a transition to the live record, so every phase change
+ * still goes through the table.
+ *
+ * @param {any} run
+ * @param {string} event
+ * @param {Parameters<typeof advance>[2]} [detail]
+ * @returns {any} the same object, mutated
+ */
+export function applyTransition(run, event, detail = {}) {
+  Object.assign(run, advance(run, event, detail))
+  return run
+}
+
 /** The event that would move a run from `phase` to `to`, or null. */
 export function eventFor(phase, to) {
   if ((FORWARD[phase] ?? []).includes(to)) return to
   for (const [event, terminal] of Object.entries(TERMINAL_EVENTS)) {
     if (terminal.terminal === to && canAdvance(phase, event)) return event
+  }
+  return null
+}
+
+/**
+ * The terminal event that produces a given terminal name.
+ *
+ * The driver records a terminal name from `terminalForStatus`; the table knows
+ * the event that name belongs to. `done` is the one rename: its event is
+ * `finish`. Returns null for a name the table does not know, so a caller can
+ * fall back instead of inventing a transition.
+ */
+export function terminalEventFor(name) {
+  for (const [event, terminal] of Object.entries(TERMINAL_EVENTS)) {
+    if (terminal.terminal === name) return event
   }
   return null
 }

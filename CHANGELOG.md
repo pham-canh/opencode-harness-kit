@@ -59,6 +59,17 @@ blind.
 
 ### Fixed
 
+- **The state machine is the driver's gate, not documentation.** `runLoop`
+  checkpoints phase changes through `src/driver/transitions.mjs` instead of
+  assigning `run.phase` directly, so `run.history` is a real audit trail and an
+  edge the table does not define throws. `task-done` is a run phase now, and
+  the schema accepts it.
+- **`.space/tasks.md` is written atomically and redacted**, like every other
+  state file. A crash no longer leaves a torn plan or a secret from a verify
+  log in the task file.
+- **A crash inside the loop ends as `needs-human`** with exit code 2 and
+  releases the lock, instead of escaping as an exception with the record still
+  marked `running`.
 - `readEvents` no longer lets a torn JSONL line consume one of the requested
   slots.
 - Worktree cleanup ignores the harness's own `.space/` when deciding whether a

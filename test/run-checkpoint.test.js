@@ -71,13 +71,13 @@ test("the loop checkpoints build, verify, task-done, final-verify and finish", (
 
   assert.equal(result.code, 0, result.reason)
   const phases = events.map((e) => e.phase)
-  assert.deepEqual(phases, ["intake", "build", "verify", "task-done", "final-verify", "finish"])
+  assert.deepEqual(phases, ["intake", "preflight", "build", "verify", "task-done", "final-verify", "finish"])
   assert.equal(writes.length, phases.length, "work's callback is the only writer, once per event")
-  assert.equal(events[1].task, "one")
-  assert.equal(events[1].attempt, 1)
-  assert.equal(events[2].ok, true)
-  assert.equal(events[2].command, VERIFY)
-  assert.equal(events[4].ok, true)
+  assert.equal(events[2].task, "one")
+  assert.equal(events[2].attempt, 1)
+  assert.equal(events[3].ok, true)
+  assert.equal(events[3].command, VERIFY)
+  assert.equal(events[5].ok, true)
 
   const record = readRun(dir)
   assert.equal(record.phase, "finish")
@@ -117,7 +117,7 @@ test("a verified failure checkpoints fix before the next build", () => {
   assert.equal(result.code, 0, result.reason)
   assert.deepEqual(
     events.map((e) => e.phase),
-    ["intake", "build", "verify", "fix", "build", "verify", "task-done", "finish"],
+    ["intake", "preflight", "build", "verify", "fix", "build", "verify", "task-done", "finish"],
   )
   const fix = events.find((e) => e.phase === "fix")
   assert.equal(fix.reason, "verify")

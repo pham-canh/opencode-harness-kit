@@ -1127,6 +1127,13 @@ checkpoint; `.space/summary.md` is written only when the run actually finished.
 without it, a valid plan is kept. Outside a git repository `work` runs only
 with `--allow-extra-files`, which turns off the scope check it cannot make.
 
+The run is durable, not just resumable. Every phase change goes through the
+table in `src/driver/transitions.mjs`, and `.space/run.json` keeps the last 200
+transitions in `history`. `.space/tasks.md` is redacted and replaced
+atomically, so a crash cannot leave a half-written plan. A crash inside the
+loop ends the record as `needs-human` with exit 2 and releases the lock, which
+is what `resume` expects to find.
+
 `--review` closes the review gap without pretending a sentence is a verdict:
 after verify passes, the `reviewer` lane is asked for one JSON object matching
 [`docs/REVIEW-VERDICT.md`](docs/REVIEW-VERDICT.md). A pass marks the task done.

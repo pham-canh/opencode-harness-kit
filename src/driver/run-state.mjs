@@ -29,6 +29,7 @@ export const PHASES = Object.freeze([
   "verify",
   "review",
   "fix",
+  "task-done",
   "final-verify",
   "final-review",
   "finish",

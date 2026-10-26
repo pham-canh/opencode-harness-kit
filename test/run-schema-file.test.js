@@ -42,6 +42,12 @@ test("an upgraded run@1 record satisfies the schema", () => {
   assert.equal(upgraded.terminal, "done")
 })
 
+test("the schema accepts the task-done phase", () => {
+  const run = createRun({ cwd: "/tmp/repo", id: "run-task-done" })
+  const ok = validate({ ...run, phase: "task-done" })
+  assert.ok(ok, JSON.stringify(validate.errors, null, 2))
+})
+
 test("the schema rejects an unknown phase and a v1 schema marker", () => {
   const run = createRun({ cwd: "/tmp/repo", id: "run-2" })
   assert.equal(validate({ ...run, phase: "nope" }), false)
