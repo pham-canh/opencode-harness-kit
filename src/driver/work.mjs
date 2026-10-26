@@ -50,6 +50,27 @@ export function isRouteFailure(result) {
 }
 
 /**
+ * Why a run id cannot be used, or null when it can.
+ *
+ * The id becomes a directory name under `.space/worktrees/` and part of the
+ * default branch name. `..`, a separator, or an empty string would put the
+ * worktree somewhere other than the project - and `--run-id` is user input.
+ *
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+export function runIdProblem(value) {
+  const id = String(value ?? "")
+  if (!id) return "a run id cannot be empty"
+  if (!/^[A-Za-z0-9._-]+$/.test(id)) {
+    return "a run id may contain only letters, digits, dot, underscore and hyphen"
+  }
+  if (id === "." || id === "..") return "a run id cannot be . or .."
+  if (id.includes("..")) return "a run id cannot contain .."
+  return null
+}
+
+/**
  * @param {{
  *   cwd: string,
  *   request?: string,
@@ -72,6 +93,10 @@ export function workRequest(options) {
   const cwd = options.cwd
   const log = options.log ?? ((line) => console.log(line))
   const runId = options.runId ?? newRunId()
+  const badId = runIdProblem(runId)
+  if (badId) {
+    return { ok: false, code: 2, reason: `invalid --run-id ${JSON.stringify(runId)}: ${badId}`, phase: "preflight" }
+  }
   const loop = /** @type {any} */ (options.loop ?? {})
   const plan = options.plan ?? planRequest
   const file = join(cwd, TASKS)

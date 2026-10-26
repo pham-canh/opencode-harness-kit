@@ -19,7 +19,7 @@ function gitEnv() {
 
 import { changedPaths, checkpoint, createBranch } from "../src/driver/git.mjs"
 import { createRun, readRun, writeRun } from "../src/driver/run-state.mjs"
-import { isRouteFailure, workRequest } from "../src/driver/work.mjs"
+import { isRouteFailure, runIdProblem, workRequest } from "../src/driver/work.mjs"
 import { parseTasks } from "../src/tasks.js"
 
 const planText = `# Ship it
@@ -171,6 +171,20 @@ test("--dry-run never calls the loop", () => {
   assert.equal(r.code, 0)
   assert.equal(r.dryRun, true)
   assert.equal(runs, 0)
+})
+
+test("a run id cannot walk out of .space/worktrees", () => {
+  const dir = repo()
+  const bad = ["", ".", "..", "../../escape", "a/b", "a\\b", "a..b"]
+  for (const runId of bad) {
+    const r = workRequest({ cwd: dir, runId, worktree: true, loop: {} })
+    assert.equal(r.code, 2, `${JSON.stringify(runId)} was accepted`)
+    assert.match(r.reason, /invalid --run-id/)
+  }
+  assert.equal(existsSync(join(dir, "escape")), false, "a rejected id must not create anything outside")
+  assert.equal(existsSync(join(dir, ".space", "worktrees")), false, "a rejected id must not create a worktree")
+  assert.equal(runIdProblem("2026-01-01T00-00-00-abcdef"), null)
+  assert.equal(runIdProblem("release_1.2"), null)
 })
 
 test("a branch is created and each finished task is committed alone", () => {
