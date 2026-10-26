@@ -12,6 +12,22 @@ is not happening.
 
 ---
 
+## [Unreleased]
+
+### Removed
+
+- **The shared token window.** The `OC_HARNESS_BUDGET_WINDOW_*` settings, the
+  ledger they were summed from, and the guard branch that refused tool calls
+  with `shared token window` are gone, including the sticky stop. There is no
+  flag to turn the mechanism back on: `OC_HARNESS_BUDGET_FILE` and the other
+  window variables are no longer read, and the ledger file is neither read nor
+  written.
+- **The session token budget.** The guard no longer counts session tokens,
+  refuses tool calls at `OC_HARNESS_BUDGET_STOP`, or blocks a session at
+  `OC_HARNESS_TURN_STOP`. The variables, the `step-finish` listener and the
+  toasts are gone; `src/budget.js` and its tests were removed. There is no
+  replacement flag.
+
 ## [0.7.3] — 2026-10-26
 
 Documentation only. No code, config or behaviour changed.

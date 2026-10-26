@@ -34,7 +34,25 @@ import { countFlag, numberFlag } from "./flags.mjs"
 import { gradeAnswer, gradeMutation, gradeMutationMany } from "./verify.mjs"
 import { checkPremises } from "./premises.mjs"
 import { parseJsonc, configDir } from "../src/profile.js"
-import { requestTokens } from "../src/budget.js"
+
+/**
+ * The context a step reported: uncached input plus both cache sides.
+ *
+ * `input` alone is only the part of the prompt that was not cached. A long
+ * conversation reports a few hundred there and tens of thousands in
+ * `cache.read`, so a cap built on `input` alone was 5.6 times too generous.
+ *
+ * @param {{ input?: number, cache?: { read?: number, write?: number } } | undefined} t
+ * @returns {number}
+ */
+function requestTokens(t) {
+  /** @param {unknown} raw @returns {number} */
+  const n = (raw) => {
+    const x = Number(raw)
+    return Number.isFinite(x) && x > 0 ? Math.floor(x) : 0
+  }
+  return n(t?.input) + n(t?.cache?.read) + n(t?.cache?.write)
+}
 
 /**
  * The message of a caught value, whatever it turned out to be.
@@ -91,7 +109,7 @@ const rescoreDir = flag("--rescore")
 // already there.
 const outFlag = flag("--out")
 // A ceiling on what the whole suite may spend, in context tokens - the same
-// number the guard counts. The free tier is one shared window and the suite is
+// number the provider charges. The free tier is one shared window and the suite is
 // the biggest single consumer of it; a cap is the difference between "the
 // suite stopped" and "the account is out until the window rolls". Counting
 // uncached input here made the cap 5.6 times too generous on the measured
@@ -674,19 +692,6 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
   return new Promise((resolve) => {
     const out = join(outDir, `${id}-${arm}-${idx}.json`)
     const env = { ...process.env }
-    // The kit's own guard must not decide the outcome of the suite. 120 runs
-    // spend more than the shared window's stop, so from the run that crosses it
-    // the guard would refuse tool calls - and every run after that point would
-    // be scored as a wrong answer for a reason the suite is not measuring. The
-    // suite has its own cap (`--budget`), and it is the one that counts here.
-    // The ledger is pointed at the run directory for the same reason: a
-    // benchmark should not charge the account's real window, or leave it
-    // looking spent to the session that started the benchmark.
-    env.OC_HARNESS_BUDGET_WARN = "0"
-    env.OC_HARNESS_BUDGET_STOP = "0"
-    env.OC_HARNESS_BUDGET_WINDOW_WARN = "0"
-    env.OC_HARNESS_BUDGET_WINDOW_STOP = "0"
-    env.OC_HARNESS_BUDGET_FILE = join(outDir, "budget.json")
     if (arm === "off" && home) {
       env.HOME = home
       // The kit-free home is only kit-free if the config is not found

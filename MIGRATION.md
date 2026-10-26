@@ -34,7 +34,7 @@ note by default. In this upgrade it is a failure you have to clear.
 | `run` | described as plan → build → review → finish | build + verify; it never planned, committed or pushed. `--review` asks the reviewer lane after verify, and a rejected review exits **5** |
 | `build` step cap | 40 steps | **120** steps, so a real build and test cycle fits. Every other lane keeps its cap |
 | `doc` / `verify` bash | both opened their bash map with `"*": "allow"` | `doc` defaults to **deny**, `verify` to **ask**, each with the commands its job needs |
-| denied tool calls | `experimental.continue_loop_on_deny: true` fed the refusal back as another turn | **false**; the request that crossed `OC_HARNESS_TURN_STOP` (default 300k) is stopped with "do not retry" |
+| denied tool calls | `experimental.continue_loop_on_deny: true` fed the refusal back as another turn | **false**; a denial ends the turn instead of being fed back |
 | reviewer model | `nemotron-3-ultra-free` | that route answered nothing on two probes and is recorded as unusable; the standalone profile and its reviewer rung are retired. The reviewer lane runs on GLM 5.3 Flash |
 | pruner | kept the last six tool outputs, stubbing everything older | keeps the newest copy of each **distinct** output; only repeats are stubbed. `prune.keepDistinctOutputs` restores the old window if you need it |
 | `doctor --check-models` | asked whether a model was present in the catalogue | asks lifecycle too: a withdrawn model is not healthy. `refresh` now removes a dead rung instead of leaving it in the chain |

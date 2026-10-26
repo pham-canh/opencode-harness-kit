@@ -1,10 +1,10 @@
 // src/index.ts
-import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join11 } from "node:path";
+import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join10 } from "node:path";
 
 // src/guard.ts
-import { homedir as homedir3, tmpdir as tmpdir2 } from "node:os";
-import { join as join5, resolve as resolve2 } from "node:path";
+import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
+import { join as join4, resolve as resolve2 } from "node:path";
 
 // src/rules.js
 import { homedir, tmpdir } from "node:os";
@@ -234,12 +234,12 @@ function pipeStages(command) {
   return split(command, "pipe");
 }
 function tokenize(segment) {
-  const tokens2 = [];
+  const tokens = [];
   let cur = "";
   let quote = null;
   let started = false;
   const flush = () => {
-    if (cur || started) tokens2.push(cur);
+    if (cur || started) tokens.push(cur);
     cur = "";
     started = false;
   };
@@ -274,7 +274,7 @@ function tokenize(segment) {
     cur += ch;
   }
   flush();
-  return tokens2;
+  return tokens;
 }
 var ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 var WRAPPERS = {
@@ -404,66 +404,66 @@ function baseName(word) {
   const slash = Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\"));
   return slash === -1 ? word : word.slice(slash + 1);
 }
-function skipWrapperArgs(tokens2, i, name) {
+function skipWrapperArgs(tokens, i, name) {
   const valueFlags = WRAPPER_TABLE[name] ?? WRAPPER_VALUE_FLAGS;
-  while (i < tokens2.length && tokens2[i].startsWith("-") && tokens2[i] !== "-") {
-    const flag = tokens2[i];
+  while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
+    const flag = tokens[i];
     i++;
-    if (valueFlags.has(flag) && !flag.includes("=") && i < tokens2.length) i++;
+    if (valueFlags.has(flag) && !flag.includes("=") && i < tokens.length) i++;
   }
-  if (name === "timeout" && i < tokens2.length && DURATION.test(tokens2[i])) i++;
-  if (name === "chroot" && i < tokens2.length && !tokens2[i].startsWith("-")) i++;
+  if (name === "timeout" && i < tokens.length && DURATION.test(tokens[i])) i++;
+  if (name === "chroot" && i < tokens.length && !tokens[i].startsWith("-")) i++;
   return i;
 }
-function skipPrefixes(tokens2) {
+function skipPrefixes(tokens) {
   let i = 0;
   for (; ; ) {
-    const word = tokens2[i];
-    if (word === void 0) return tokens2.length;
+    const word = tokens[i];
+    if (word === void 0) return tokens.length;
     if (ENV_ASSIGN.test(word)) {
       i++;
       continue;
     }
     const name = baseName(word);
     if (name in WRAPPER_TABLE) {
-      i = skipWrapperArgs(tokens2, i + 1, name);
+      i = skipWrapperArgs(tokens, i + 1, name);
       continue;
     }
     return i;
   }
 }
 function stripPrefixes(segment) {
-  const tokens2 = tokenize(segment);
-  const i = skipPrefixes(tokens2);
-  if (i >= tokens2.length) return "";
-  const rest = tokens2.slice(i);
+  const tokens = tokenize(segment);
+  const i = skipPrefixes(tokens);
+  if (i >= tokens.length) return "";
+  const rest = tokens.slice(i);
   rest[0] = baseName(rest[0]);
   return rest.join(" ");
 }
 function stripToolFlags(command) {
-  const tokens2 = tokenize(command);
-  if (!tokens2.length) return command;
-  const flags = TOOL_VALUE_FLAGS[baseName(tokens2[0]).toLowerCase()];
+  const tokens = tokenize(command);
+  if (!tokens.length) return command;
+  const flags = TOOL_VALUE_FLAGS[baseName(tokens[0]).toLowerCase()];
   if (!flags) return command;
   const out = [];
-  for (let i = 0; i < tokens2.length; i++) {
-    const token = tokens2[i];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
     if (!flags.has(token.split("=")[0])) {
       out.push(token);
       continue;
     }
-    if (!token.includes("=") && i + 1 < tokens2.length) i++;
+    if (!token.includes("=") && i + 1 < tokens.length) i++;
   }
   return out.join(" ");
 }
 function gitSubcommand(segment) {
-  const tokens2 = tokenize(segment);
-  let i = skipPrefixes(tokens2);
-  if (i >= tokens2.length) return null;
-  if (!/(^|[\\/])git(\.exe)?$/i.test(tokens2[i])) return null;
+  const tokens = tokenize(segment);
+  let i = skipPrefixes(tokens);
+  if (i >= tokens.length) return null;
+  if (!/(^|[\\/])git(\.exe)?$/i.test(tokens[i])) return null;
   i++;
-  while (i < tokens2.length) {
-    const flag = tokens2[i];
+  while (i < tokens.length) {
+    const flag = tokens[i];
     if (flag.length > 2 && !flag.startsWith("--") && (flag.startsWith("-C") || flag.startsWith("-c"))) {
       i++;
       continue;
@@ -478,32 +478,32 @@ function gitSubcommand(segment) {
     }
     break;
   }
-  return tokens2[i] ?? null;
+  return tokens[i] ?? null;
 }
 var MAX_SHELL_DEPTH = 2;
-function shellCommandString(tokens2, from) {
-  for (let n = from + 1; n < tokens2.length; n++) {
-    const token = tokens2[n];
+function shellCommandString(tokens, from) {
+  for (let n = from + 1; n < tokens.length; n++) {
+    const token = tokens[n];
     if (!token.startsWith("-") || token === "-") continue;
     const m = /^-([a-zA-Z]*)c/.exec(token);
     if (!m) continue;
     const after = token.slice(m[0].length);
     if (after && !/^[a-zA-Z]+$/.test(after)) return after.trim();
-    return tokens2.slice(n + 1).join(" ") || null;
+    return tokens.slice(n + 1).join(" ") || null;
   }
   return null;
 }
-function envSplitPayload(tokens2) {
-  for (let i = 0; i < tokens2.length; i++) {
-    const word = tokens2[i];
+function envSplitPayload(tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const word = tokens[i];
     if (word === void 0) return null;
     if (ENV_ASSIGN.test(word)) continue;
     const name = baseName(word);
     if (name === "env") {
-      for (let j = i + 1; j < tokens2.length; j++) {
-        const token = tokens2[j];
+      for (let j = i + 1; j < tokens.length; j++) {
+        const token = tokens[j];
         if (token === "-S" || token === "--split-string") {
-          return tokens2[j + 1] ?? null;
+          return tokens[j + 1] ?? null;
         }
         if (token.startsWith("--split-string=")) {
           return token.slice("--split-string=".length) || null;
@@ -517,20 +517,20 @@ function envSplitPayload(tokens2) {
       return null;
     }
     if (!(name in WRAPPER_TABLE)) return null;
-    i = skipWrapperArgs(tokens2, i + 1, name) - 1;
+    i = skipWrapperArgs(tokens, i + 1, name) - 1;
   }
   return null;
 }
 function shellPayload(segment) {
-  const tokens2 = tokenize(segment);
-  if (tokens2.length < 2) return null;
-  const split2 = envSplitPayload(tokens2);
+  const tokens = tokenize(segment);
+  if (tokens.length < 2) return null;
+  const split2 = envSplitPayload(tokens);
   if (split2) return split2;
-  const i = skipPrefixes(tokens2);
-  if (i >= tokens2.length) return null;
-  if (tokens2[i] === "eval") return tokens2.slice(i + 1).join(" ") || null;
-  if (!SHELL_NAMES.test(baseName(tokens2[i]))) return null;
-  return shellCommandString(tokens2, i);
+  const i = skipPrefixes(tokens);
+  if (i >= tokens.length) return null;
+  if (tokens[i] === "eval") return tokens.slice(i + 1).join(" ") || null;
+  if (!SHELL_NAMES.test(baseName(tokens[i]))) return null;
+  return shellCommandString(tokens, i);
 }
 var GROUP_OPEN = /^[({[]+/;
 var GROUP_END = /[;)&,}\]]+$/;
@@ -539,14 +539,14 @@ function commandName(word) {
 }
 function runsScript(stage) {
   for (const command of segments(stage)) {
-    const tokens2 = tokenize(command);
-    let i = skipPrefixes(tokens2);
-    if (i >= tokens2.length) continue;
-    let name = commandName(tokens2[i]);
+    const tokens = tokenize(command);
+    let i = skipPrefixes(tokens);
+    if (i >= tokens.length) continue;
+    let name = commandName(tokens[i]);
     if (!name) {
       i++;
-      if (i >= tokens2.length) continue;
-      name = commandName(tokens2[i]);
+      if (i >= tokens.length) continue;
+      name = commandName(tokens[i]);
     }
     if (SHELL_NAMES.test(name) || SCRIPT_RUNNERS.test(name)) return true;
   }
@@ -568,15 +568,15 @@ function isDestructiveRmFlag(token) {
   return /^-[a-zA-Z]*[rf]/i.test(token);
 }
 function isRecursiveDelete(text) {
-  const tokens2 = tokenize(text);
-  if (tokens2.length < 2) return false;
-  if (baseName(tokens2[0]).toLowerCase() !== "rm") return false;
+  const tokens = tokenize(text);
+  if (tokens.length < 2) return false;
+  if (baseName(tokens[0]).toLowerCase() !== "rm") return false;
   let destructive = false;
   let hasPath = false;
-  for (let i = 1; i < tokens2.length; i++) {
-    const token = tokens2[i];
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
     if (token === "--") {
-      hasPath = tokens2.length > i + 1;
+      hasPath = tokens.length > i + 1;
       break;
     }
     if (!token.startsWith("-")) {
@@ -589,11 +589,11 @@ function isRecursiveDelete(text) {
 }
 var CHMOD_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--reference"]);
 function chmodMode(text) {
-  const tokens2 = tokenize(text);
-  if (tokens2.length < 2) return null;
-  if (baseName(tokens2[0]).toLowerCase() !== "chmod") return null;
-  for (let i = 1; i < tokens2.length; i++) {
-    const token = tokens2[i];
+  const tokens = tokenize(text);
+  if (tokens.length < 2) return null;
+  if (baseName(tokens[0]).toLowerCase() !== "chmod") return null;
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
     if (token === "--") continue;
     if (token.startsWith("--")) {
       if (!token.includes("=") && CHMOD_VALUE_OPTIONS.has(token)) i++;
@@ -612,16 +612,16 @@ function opensPermissions(text) {
 }
 var ASK_GATED = [/^\s*git\s+push\b/];
 function downloadTarget(segment) {
-  const tokens2 = tokenize(segment);
-  const i = skipPrefixes(tokens2);
-  if (i >= tokens2.length) return null;
-  const name = baseName(tokens2[i]).toLowerCase();
+  const tokens = tokenize(segment);
+  const i = skipPrefixes(tokens);
+  if (i >= tokens.length) return null;
+  const name = baseName(tokens[i]).toLowerCase();
   if (name !== "curl" && name !== "wget") return null;
-  for (let j = i + 1; j < tokens2.length; j++) {
-    const token = tokens2[j];
+  for (let j = i + 1; j < tokens.length; j++) {
+    const token = tokens[j];
     if (token === "--") break;
     if (token === "-o" || token === "--output" || token === "-O" || token === "--output-document") {
-      const value = tokens2[j + 1];
+      const value = tokens[j + 1];
       return value && !value.startsWith("-") ? value : null;
     }
     if (token.startsWith("--output=") || token.startsWith("--output-document=")) {
@@ -639,15 +639,15 @@ function sameFile(a, b) {
   return false;
 }
 function runsFile(segment, file) {
-  const tokens2 = tokenize(segment);
-  const i = skipPrefixes(tokens2);
-  if (i >= tokens2.length) return false;
-  if (sameFile(tokens2[i], file)) return true;
-  const name = baseName(tokens2[i]);
+  const tokens = tokenize(segment);
+  const i = skipPrefixes(tokens);
+  if (i >= tokens.length) return false;
+  if (sameFile(tokens[i], file)) return true;
+  const name = baseName(tokens[i]);
   const runner = SHELL_NAMES.test(name) || SCRIPT_RUNNERS.test(name) || name === "source" || name === ".";
   if (!runner) return false;
-  for (let j = i + 1; j < tokens2.length; j++) {
-    if (sameFile(tokens2[j], file)) return true;
+  for (let j = i + 1; j < tokens.length; j++) {
+    if (sameFile(tokens[j], file)) return true;
   }
   return false;
 }
@@ -902,183 +902,27 @@ function checkWrite(target, rules = WRITE_RULES, root = "") {
   return null;
 }
 
-// src/budget.js
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname2, join as join2 } from "node:path";
-var DEFAULT_WARN_TOKENS = 2e6;
-var DEFAULT_STOP_TOKENS = 5e6;
-var DEFAULT_TURN_STOP_TOKENS = 3e5;
-var DEFAULT_WINDOW_MINUTES = 60;
-var DEFAULT_WINDOW_WARN_TOKENS = 4e6;
-var DEFAULT_WINDOW_STOP_TOKENS = 8e6;
-function count(raw, fallback) {
-  if (raw === void 0 || raw === null || raw === "") return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return fallback;
-  return Math.floor(n);
-}
-function requestTokens(tokens2) {
-  const n = (raw) => {
-    const x = Number(raw);
-    return Number.isFinite(x) && x > 0 ? Math.floor(x) : 0;
-  };
-  return n(tokens2?.input) + n(tokens2?.cache?.read) + n(tokens2?.cache?.write);
-}
-function budgetLimits(env = process.env) {
-  const warnAt = count(env?.OC_HARNESS_BUDGET_WARN, DEFAULT_WARN_TOKENS);
-  const stopAt = count(env?.OC_HARNESS_BUDGET_STOP, DEFAULT_STOP_TOKENS);
-  const turnStopAt = count(env?.OC_HARNESS_TURN_STOP, DEFAULT_TURN_STOP_TOKENS);
-  return {
-    warnAt: stopAt > 0 && warnAt > stopAt ? stopAt : warnAt,
-    stopAt,
-    turnStopAt
-  };
-}
-function createBudget({ warnAt = DEFAULT_WARN_TOKENS, stopAt = DEFAULT_STOP_TOKENS } = {}) {
-  let total = 0;
-  let warned = false;
-  let stopped = false;
-  return {
-    /**
-     * @param {any} input tokens this request cost
-     * @returns {{ warn: boolean, stop: boolean }}
-     */
-    add(input) {
-      const n = Number(input);
-      if (!Number.isFinite(n) || n <= 0) return { warn: false, stop: false };
-      total += Math.floor(n);
-      let warn = false;
-      let stop = false;
-      if (!warned && warnAt > 0 && total >= warnAt) {
-        warned = true;
-        warn = true;
-      }
-      if (!stopped && stopAt > 0 && total >= stopAt) {
-        stopped = true;
-        stop = true;
-      }
-      return { warn, stop };
-    },
-    get total() {
-      return total;
-    },
-    get warned() {
-      return warned;
-    },
-    get stopped() {
-      return stopped;
-    }
-  };
-}
-function tokens(n) {
-  return Math.floor(n).toLocaleString("en-US");
-}
-var KEEP_MS = 6 * 60 * 60 * 1e3;
-function ledgerPath(env = process.env) {
-  const override = env?.OC_HARNESS_BUDGET_FILE;
-  if (override) return override;
-  const state = env?.XDG_STATE_HOME || join2(env?.HOME || homedir2(), ".local", "state");
-  return join2(state, "opencode-harness-kit", "budget.json");
-}
-function readSpend(path) {
-  let raw;
-  try {
-    if (!existsSync(path)) return [];
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(parsed)) return null;
-  return parsed.filter(
-    (e) => e && Number.isFinite(e.t) && Number.isFinite(e.n) && (e.n > 0 || e.stop === true && e.n === 0)
-  );
-}
-function pruneSpend(entries, now) {
-  const floor = now - KEEP_MS;
-  return entries.filter((e) => e.t >= floor).sort((a, b) => a.t - b.t);
-}
-function repairSpend(path) {
-  try {
-    if (existsSync(path)) renameSync(path, `${path}.corrupt`);
-    writeSpend(path, []);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function writeSpend(path, entries) {
-  const tmp = `${path}.${process.pid}.tmp`;
-  mkdirSync(dirname2(path), { recursive: true });
-  writeFileSync(tmp, JSON.stringify(entries));
-  renameSync(tmp, path);
-}
-function recordSpend(path, n, now = Date.now()) {
-  const previous = readSpend(path);
-  if (previous === null) repairSpend(path);
-  const entries = pruneSpend(previous ?? [], now);
-  if (Number.isFinite(n) && n > 0) entries.push({ t: now, n: Math.floor(n) });
-  writeSpend(path, entries);
-  return entries;
-}
-function recordStop(path, now = Date.now()) {
-  const previous = readSpend(path);
-  if (previous === null) repairSpend(path);
-  const entries = pruneSpend(previous ?? [], now);
-  entries.push({ t: now, n: 0, stop: true });
-  writeSpend(path, entries);
-  return entries;
-}
-function stopRecorded(entries, now) {
-  const floor = now - KEEP_MS;
-  return entries.some((e) => e.stop === true && e.t >= floor);
-}
-function windowSpend(entries, now, windowMs) {
-  const floor = now - windowMs;
-  let total = 0;
-  for (const e of entries) if (e.t >= floor) total += e.n;
-  return total;
-}
-function windowLimits(env = process.env) {
-  const rawMinutes = Number(env?.OC_HARNESS_BUDGET_WINDOW_MINUTES);
-  const minutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? Math.floor(rawMinutes) : DEFAULT_WINDOW_MINUTES;
-  const warnAt = count(env?.OC_HARNESS_BUDGET_WINDOW_WARN, DEFAULT_WINDOW_WARN_TOKENS);
-  const stopAt = count(env?.OC_HARNESS_BUDGET_WINDOW_STOP, DEFAULT_WINDOW_STOP_TOKENS);
-  return {
-    windowMs: minutes * 6e4,
-    warnAt: stopAt > 0 && warnAt > stopAt ? stopAt : warnAt,
-    stopAt,
-    sticky: env?.OC_HARNESS_BUDGET_WINDOW_STICKY !== "0"
-  };
-}
-
 // src/telemetry-store.ts
-import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, rmSync, statSync, renameSync as renameSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, rmSync, statSync, renameSync } from "node:fs";
+import { join as join2 } from "node:path";
 var MAX_BYTES = 4 * 1024 * 1024;
 function logPath(dir) {
-  return join3(dir, "telemetry.jsonl");
+  return join2(dir, "telemetry.jsonl");
 }
 function rotate(file, maxBytes = MAX_BYTES) {
   try {
-    if (existsSync2(file) && statSync(file).size > maxBytes) {
+    if (existsSync(file) && statSync(file).size > maxBytes) {
       const oldest = `${file}.2`;
-      if (existsSync2(oldest)) rmSync(oldest, { force: true });
-      if (existsSync2(`${file}.1`)) renameSync2(`${file}.1`, oldest);
-      renameSync2(file, `${file}.1`);
+      if (existsSync(oldest)) rmSync(oldest, { force: true });
+      if (existsSync(`${file}.1`)) renameSync(`${file}.1`, oldest);
+      renameSync(file, `${file}.1`);
     }
   } catch {
   }
 }
 function write(dir, record) {
   try {
-    if (!existsSync2(dir)) mkdirSync2(dir, { recursive: true });
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const file = logPath(dir);
     rotate(file);
     appendFileSync(file, JSON.stringify({ t: (/* @__PURE__ */ new Date()).toISOString(), ...record }) + "\n");
@@ -1087,14 +931,14 @@ function write(dir, record) {
 }
 
 // src/project.js
-import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname3, join as join4, resolve } from "node:path";
+import { existsSync as existsSync2 } from "node:fs";
+import { dirname as dirname2, join as join3, resolve } from "node:path";
 function projectRoot(directory, worktree) {
   const start = resolve(directory || worktree || ".");
   let dir = start;
   for (let i = 0; i < 64; i++) {
-    if (existsSync3(join4(dir, ".git"))) return dir;
-    const parent = dirname3(dir);
+    if (existsSync2(join3(dir, ".git"))) return dir;
+    const parent = dirname2(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -1201,162 +1045,20 @@ function truncate(s, n = 200) {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > n ? `${one.slice(0, n)}...` : one;
 }
-var GuardPlugin = async ({ worktree, directory, client }) => {
+var GuardPlugin = async ({ worktree, directory }) => {
   const project = projectRoot(directory, worktree);
-  const telemetryDir = join5(project, ".space");
+  const telemetryDir = join4(project, ".space");
   const refuse = (tool, rule, why, detail) => {
     write(telemetryDir, { kind: "guard", tool, rule });
     deny(why, detail);
   };
-  const limits = budgetLimits();
-  const budgets = /* @__PURE__ */ new Map();
-  const counted = /* @__PURE__ */ new Set();
-  const turnStops = /* @__PURE__ */ new Map();
-  const window = windowLimits();
-  const ledger = ledgerPath();
-  let windowWarned = false;
-  let windowSpent = false;
-  let windowWhy = "";
-  const sumWhy = () => `all sessions have used ${tokens(window.stopAt)} context tokens in the last ${Math.round(window.windowMs / 6e4)} min. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`;
-  const budgetFor = (sessionID) => {
-    let b = budgets.get(sessionID);
-    if (!b) {
-      b = createBudget(limits);
-      budgets.set(sessionID, b);
-    }
-    return b;
-  };
-  const sharedWindowSpent = () => {
-    if (windowSpent) return windowWhy;
-    if (window.stopAt <= 0) return null;
-    const entries = readSpend(ledger);
-    if (entries === null) {
-      if (repairSpend(ledger)) {
-        write(telemetryDir, { kind: "budget repair", tool: "ledger", rule: "corrupt ledger moved to .corrupt" });
-        return null;
-      }
-      windowSpent = true;
-      windowWhy = `the ledger at ${ledger} exists but cannot be read or repaired, so the spend cannot be counted. It is treated as spent rather than as zero: delete that file to start the window over, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`;
-      return windowWhy;
-    }
-    const now = Date.now();
-    if (window.sticky && stopRecorded(entries, now)) {
-      windowSpent = true;
-      windowWhy = `a stop was recorded in this ledger and holds until its entries age out (six hours). The provider's window does not reopen on the ${Math.round(window.windowMs / 6e4)}-min timer, so this one does not either. Raise OC_HARNESS_BUDGET_WINDOW_STOP, or set OC_HARNESS_BUDGET_WINDOW_STICKY=0 to let the sum alone decide.`;
-      return windowWhy;
-    }
-    if (windowSpend(entries, now, window.windowMs) >= window.stopAt) {
-      windowSpent = true;
-      windowWhy = sumWhy();
-      try {
-        recordStop(ledger);
-      } catch {
-      }
-      return windowWhy;
-    }
-    return null;
-  };
-  const toast = async (message, variant) => {
-    try {
-      await client?.tui?.showToast({ body: { message, variant, duration: 12e3 } });
-    } catch {
-    }
-  };
   return {
-    // The tokens are reported on the `step-finish` part, once per request.
-    // `message.updated` was the other candidate, but its token count grows
-    // while the request streams and would have to be diffed per message; the
-    // step part is already the final cost of that request.
-    //
-    // The cost is the whole context, not `tokens.input`: with prompt caching
-    // the uncached part is a few hundred tokens against tens of thousands of
-    // `cache.read`, so counting `input` alone made every threshold here about
-    // five to forty times too high. See `requestTokens` in ./budget.js.
-    event: async ({ event }) => {
-      if (event?.type !== "message.part.updated") return;
-      const part = event.properties?.part;
-      if (!part || part.type !== "step-finish" || !part.sessionID) return;
-      if (part.id) {
-        if (counted.has(part.id)) return;
-        counted.add(part.id);
-      }
-      const b = budgetFor(part.sessionID);
-      const spent = requestTokens(part.tokens);
-      const crossed = b.add(spent);
-      let recent = 0;
-      if (spent > 0) {
-        try {
-          recent = windowSpend(recordSpend(ledger, spent), Date.now(), window.windowMs);
-        } catch {
-        }
-        if (!windowWarned && window.warnAt > 0 && recent >= window.warnAt) {
-          windowWarned = true;
-          await toast(
-            `All sessions have used ${tokens(recent)} context tokens in the last ${Math.round(window.windowMs / 6e4)} min (warn at ${tokens(window.warnAt)}). The provider's window is shared, so a new session does not reset it.`,
-            "warning"
-          );
-        }
-        if (!windowSpent && window.stopAt > 0 && recent >= window.stopAt) {
-          windowSpent = true;
-          windowWhy = sumWhy();
-          try {
-            recordStop(ledger);
-          } catch {
-          }
-          await toast(
-            `The shared window hit ${tokens(window.stopAt)} context tokens in ${Math.round(window.windowMs / 6e4)} min: tool calls are now blocked in every session. Wait for it to roll, or raise OC_HARNESS_BUDGET_WINDOW_STOP.`,
-            "error"
-          );
-        }
-      }
-      if (limits.turnStopAt > 0 && spent >= limits.turnStopAt && !turnStops.has(part.sessionID)) {
-        turnStops.set(part.sessionID, spent);
-        await toast(
-          `One request in this session re-sent ${tokens(spent)} context tokens (turn stop ${tokens(limits.turnStopAt)}). Tool calls in this session are now blocked: stop, do not retry the same step. Start a new session with a smaller task.`,
-          "error"
-        );
-      }
-      if (crossed.warn) {
-        await toast(
-          `This session has used ${tokens(b.total)} context tokens (warn at ${tokens(limits.warnAt)}). Start a new session before the provider's window runs out.`,
-          "warning"
-        );
-      }
-      if (crossed.stop) {
-        await toast(
-          `This session hit its ${tokens(limits.stopAt)}-token budget: tool calls are now blocked. Start a new session, or raise OC_HARNESS_BUDGET_STOP.`,
-          "error"
-        );
-      }
-    },
     "tool.execute.before": async (input, output) => {
       try {
-        const budget = input.sessionID ? budgets.get(input.sessionID) : void 0;
-        if (budget?.stopped) {
-          refuse(
-            input.tool,
-            "session token budget",
-            "the session hit its token budget",
-            `it has used ${tokens(budget.total)} context tokens, and the stop threshold is ${tokens(limits.stopAt)}. Start a new session, or raise OC_HARNESS_BUDGET_STOP.`
-          );
-        }
-        const spentReason = sharedWindowSpent();
-        if (spentReason) {
-          refuse(input.tool, "shared token window", "the shared token window is spent", spentReason);
-        }
-        const turnSpend = input.sessionID ? turnStops.get(input.sessionID) : void 0;
-        if (turnSpend !== void 0) {
-          refuse(
-            input.tool,
-            "single request budget",
-            "a single request in this session re-sent too much context",
-            `it re-sent ${tokens(turnSpend)} tokens against a turn stop of ${tokens(limits.turnStopAt)}. Stop: do not retry the same step, because every retry re-sends the same prompt. Start a new session with a smaller task, or raise OC_HARNESS_TURN_STOP.`
-          );
-        }
         if (input.tool === "bash") {
           const raw = output.args?.workdir;
           if (typeof raw === "string" && raw.trim()) {
-            const target = raw.startsWith("~") ? join5(homedir3(), raw.slice(1)) : resolve2(project, raw);
+            const target = raw.startsWith("~") ? join4(homedir2(), raw.slice(1)) : resolve2(project, raw);
             if (!insideRoot(target, project) && !insideRoot(target, tmpdir2())) {
               refuse(
                 input.tool,
@@ -1418,16 +1120,16 @@ var GuardPlugin = async ({ worktree, directory, client }) => {
 };
 
 // src/profile.js
-import { readFileSync as readFileSync2, existsSync as existsSync4, readdirSync } from "node:fs";
-import { dirname as dirname4, join as join6, resolve as resolve3 } from "node:path";
-import { homedir as homedir4 } from "node:os";
+import { readFileSync, existsSync as existsSync3, readdirSync } from "node:fs";
+import { dirname as dirname3, join as join5, resolve as resolve3 } from "node:path";
+import { homedir as homedir3 } from "node:os";
 import { fileURLToPath } from "node:url";
-var HERE = dirname4(fileURLToPath(import.meta.url));
+var HERE = dirname3(fileURLToPath(import.meta.url));
 function findRoot(start) {
   let dir = start;
   for (let i = 0; i < 12; i++) {
-    if (existsSync4(join6(dir, "profiles"))) return dir;
-    const parent = dirname4(dir);
+    if (existsSync3(join5(dir, "profiles"))) return dir;
+    const parent = dirname3(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -1456,12 +1158,12 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [process.env.OPENCODE_HARNESS_PROFILES ?? join6(ROOT, "profiles")];
+  return [process.env.OPENCODE_HARNESS_PROFILES ?? join5(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
-    const full = join6(dir, `${id}.json`);
-    if (existsSync4(full)) return full;
+    const full = join5(dir, `${id}.json`);
+    if (existsSync3(full)) return full;
   }
   return null;
 }
@@ -1472,7 +1174,7 @@ function loadProfile(id) {
   }
   let raw;
   try {
-    raw = JSON.parse(readFileSync2(path, "utf8"));
+    raw = JSON.parse(readFileSync(path, "utf8"));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new ProfileError(`cannot read ${path}: ${msg}`);
@@ -1511,11 +1213,11 @@ function normalize(p) {
 var laneCache = null;
 function loadLanes() {
   if (laneCache) return laneCache;
-  const file = join6(ROOT, "lanes.json");
-  if (!existsSync4(file)) {
+  const file = join5(ROOT, "lanes.json");
+  if (!existsSync3(file)) {
     throw new ProfileError(`lane table missing: ${file}`);
   }
-  const parsed = JSON.parse(readFileSync2(file, "utf8"));
+  const parsed = JSON.parse(readFileSync(file, "utf8"));
   const lanes = parsed.lanes ?? {};
   for (const [name, lane] of Object.entries(lanes)) {
     if (!lane.description) {
@@ -1534,8 +1236,8 @@ function laneMeta(name) {
 var retentionCache = null;
 function loadRetention() {
   if (retentionCache) return retentionCache;
-  const file = join6(ROOT, "retention.yml");
-  if (!existsSync4(file)) {
+  const file = join5(ROOT, "retention.yml");
+  if (!existsSync3(file)) {
     retentionCache = { models: {}, defaults: {} };
     return retentionCache;
   }
@@ -1547,7 +1249,7 @@ function loadRetention() {
     /** @type {Record<string, string>} */
     {}
   );
-  const lines = readFileSync2(file, "utf8").split("\n");
+  const lines = readFileSync(file, "utf8").split("\n");
   let current = null;
   let inDefaults = false;
   let i = 0;
@@ -1954,10 +1656,10 @@ function worstRetention(ids) {
   return { retention, worst };
 }
 function configDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join6(homedir4(), ".config", "opencode");
+  return process.env.OPENCODE_CONFIG_DIR ?? join5(homedir3(), ".config", "opencode");
 }
 function configFilePath() {
-  return join6(configDir(), "opencode.jsonc");
+  return join5(configDir(), "opencode.jsonc");
 }
 function parseJsonc(text) {
   let out = "";
@@ -2032,9 +1734,9 @@ function profileIdFromConfig() {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv) return fromEnv.trim() || null;
   const file = configFilePath();
-  if (!existsSync4(file)) return null;
+  if (!existsSync3(file)) return null;
   try {
-    const parsed = parseJsonc(readFileSync2(file, "utf8"));
+    const parsed = parseJsonc(readFileSync(file, "utf8"));
     const harness = parsed?.harness;
     const id = harness && typeof harness === "object" ? (
       /** @type {{profile?: unknown}} */
@@ -2047,17 +1749,17 @@ function profileIdFromConfig() {
 }
 
 // src/prune.ts
-import { readFileSync as readFileSync3, existsSync as existsSync5 } from "node:fs";
-import { join as join7 } from "node:path";
+import { readFileSync as readFileSync2, existsSync as existsSync4 } from "node:fs";
+import { join as join6 } from "node:path";
 function activeProfileId(worktree) {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  const candidates = [join7(worktree, ".space", "active")];
+  const candidates = [join6(worktree, ".space", "active")];
   for (const f of candidates) {
     if (!f) continue;
     try {
-      if (existsSync5(f)) {
-        const v = readFileSync3(f, "utf8").trim();
+      if (existsSync4(f)) {
+        const v = readFileSync2(f, "utf8").trim();
         if (v) return v;
       }
     } catch {
@@ -2289,13 +1991,13 @@ var PrunePlugin = async ({ worktree, directory }) => {
   };
 };
 async function logPrune(worktree, profileId, stats, maxBytes = MAX_BYTES) {
-  const dir = join7(worktree, ".space");
+  const dir = join6(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
-    rotate(join7(dir, "prune.jsonl"), maxBytes);
+    rotate(join6(dir, "prune.jsonl"), maxBytes);
     await appendFile(
-      join7(dir, "prune.jsonl"),
+      join6(dir, "prune.jsonl"),
       JSON.stringify({
         t: (/* @__PURE__ */ new Date()).toISOString(),
         profile: profileId,
@@ -2323,9 +2025,9 @@ function safeStringify(value) {
 }
 
 // src/config.js
-import { join as join8, resolve as resolve4 } from "node:path";
-import { homedir as homedir5 } from "node:os";
-var DEFAULT_CONFIG_DIR = join8(homedir5(), ".config/opencode");
+import { join as join7, resolve as resolve4 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+var DEFAULT_CONFIG_DIR = join7(homedir4(), ".config/opencode");
 function utilityModel(p) {
   const u = p?.utility;
   if (!u || typeof u.model !== "string" || !u.model) return null;
@@ -2333,8 +2035,8 @@ function utilityModel(p) {
 }
 
 // src/health.js
-import { existsSync as existsSync6, mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync3, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join9 } from "node:path";
+import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
+import { join as join8 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
@@ -2376,12 +2078,12 @@ function liveUnhealthy(health, now = Date.now()) {
   return out;
 }
 function healthPath(dir) {
-  return join9(dir, ".space", "health.json");
+  return join8(dir, ".space", "health.json");
 }
 function readHealth(dir) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync4(healthPath(dir), "utf8"));
+    parsed = JSON.parse(readFileSync3(healthPath(dir), "utf8"));
   } catch {
     return { unhealthy: {} };
   }
@@ -2396,14 +2098,14 @@ function readHealth(dir) {
 }
 function writeHealth(dir, health) {
   try {
-    const spaceDir = join9(dir, ".space");
-    if (!existsSync6(spaceDir)) mkdirSync3(spaceDir, { recursive: true });
+    const spaceDir = join8(dir, ".space");
+    if (!existsSync5(spaceDir)) mkdirSync2(spaceDir, { recursive: true });
     const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
     const file = healthPath(dir);
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {
-      writeFileSync2(tmp, JSON.stringify(pruned, null, 2));
-      renameSync3(tmp, file);
+      writeFileSync(tmp, JSON.stringify(pruned, null, 2));
+      renameSync2(tmp, file);
     } catch (err) {
       try {
         unlinkSync(tmp);
@@ -2664,9 +2366,9 @@ function applySessionModel(cfg, profile, opts = {}) {
 }
 
 // src/telemetry.ts
-import { join as join10 } from "node:path";
+import { join as join9 } from "node:path";
 var TelemetryPlugin = async ({ worktree, directory }) => {
-  const dir = join10(projectRoot(directory, worktree), ".space");
+  const dir = join9(projectRoot(directory, worktree), ".space");
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
@@ -2737,9 +2439,9 @@ function laneOf(event, requests) {
   const completed = typeof time.completed === "number" ? time.completed : void 0;
   const ms = created !== void 0 && completed !== void 0 ? completed - created : void 0;
   if (!id || !agent) return null;
-  const tokens2 = info.tokens ?? {};
-  const ctx = typeof tokens2.input === "number" ? tokens2.input + (typeof tokens2.cache?.read === "number" ? tokens2.cache.read : 0) : void 0;
-  const reasoning = typeof tokens2.reasoning === "number" ? tokens2.reasoning : void 0;
+  const tokens = info.tokens ?? {};
+  const ctx = typeof tokens.input === "number" ? tokens.input + (typeof tokens.cache?.read === "number" ? tokens.cache.read : 0) : void 0;
+  const reasoning = typeof tokens.reasoning === "number" ? tokens.reasoning : void 0;
   return {
     id,
     agent,
@@ -2852,9 +2554,9 @@ var HarnessPlugin = async (ctx, options) => {
     } catch {
     }
     try {
-      const dir = join11(project, ".space");
-      mkdirSync4(dir, { recursive: true });
-      writeFileSync3(join11(dir, "active"), `${id}
+      const dir = join10(project, ".space");
+      mkdirSync3(dir, { recursive: true });
+      writeFileSync2(join10(dir, "active"), `${id}
 `);
     } catch {
     }

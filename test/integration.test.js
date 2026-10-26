@@ -667,10 +667,6 @@ test("plugins can be selected individually", async () => {
   const dir = workspace()
   const guardOnly = await harness(dir, { only: ["guard"] })
   assert.equal(typeof guardOnly["tool.execute.before"], "function")
-  // The guard owns `event` too: that is where the session token budget is
-  // counted, and a guard without it would enforce every rule except the one
-  // that stops the provider's window from being spent silently.
-  assert.equal(typeof guardOnly.event, "function", "the budget counter is part of the guard")
   // What the other plugins own stays out.
   assert.equal(guardOnly["tool.execute.after"], undefined, "telemetry was not requested")
   assert.equal(guardOnly["chat.message"], undefined, "the router was not requested")

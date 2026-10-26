@@ -25,8 +25,8 @@ request costs: a cached step reports a few hundred tokens there against tens of
 thousands in `cache.read`. The column is now called **uncached input**, and a
 **context tokens** row was added where the streams still exist to re-read it.
 Both are medians over the same runs; the context row is the one to compare
-against the guard's budget, and the uncached row is the one to compare against
-any table written before this note.
+against the provider's window, and the uncached row is the one to compare
+against any table written before this note.
 
 ## Two measurements, and the difference between them
 

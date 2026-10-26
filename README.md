@@ -1159,83 +1159,6 @@ Whether it is worth it depends on whether the work is long. A repository of
 one-file lookups should not install this. The full table is in
 [eval/RESULTS.md](eval/RESULTS.md).
 
-## The token budget
-
-A free tier is one shared window: every request in every session draws on it,
-and when it runs out the provider answers with a limit error instead of
-tokens. opencode never shows a number for it. One real chat session made 599
-requests and 12,025,980 uncached input tokens; the first sign of trouble was
-the next request being refused, which reads as a broken model rather than a
-spent budget.
-
-The guard counts it. Each `step-finish` part reports what that request cost:
-
-| field | what it is | counted |
-|---|---|---|
-| `input` | the part of the prompt that was not in the provider's cache | yes |
-| `cache.read` | the cached prefix the model still had to read | yes |
-| `cache.write` | the prefix stored for the next request | yes |
-| `output`, `reasoning` | what the model wrote | no |
-
-The count is the whole context, not `input`. Counting `input` alone looks
-right and is not: with prompt caching, one measured stream reported 844, 1,289
-and 391 uncached tokens against 36,480, 7,808 and 9,088 cached ones. A budget
-built on the first column needed five to forty times the real spend to fire, and
-the window ran out first - which is exactly what happened. The guard sums the
-context per session, and at two thresholds it acts:
-
-| | default | what happens |
-|---|---|---|
-| `OC_HARNESS_BUDGET_WARN` | 2,000,000 | one toast: this session has used N context tokens |
-| `OC_HARNESS_BUDGET_STOP` | 5,000,000 | tool calls are refused, with the number and the fix |
-| `OC_HARNESS_TURN_STOP` | 300,000 | tool calls are refused after one request re-sends this much: the loop stop |
-
-```bash
-OC_HARNESS_BUDGET_STOP=2000000 OC_HARNESS_TURN_STOP=150000 opencode   # a smaller window for a long task
-OC_HARNESS_BUDGET_WARN=0 OC_HARNESS_BUDGET_STOP=0 OC_HARNESS_TURN_STOP=0 opencode   # off
-```
-
-The stop is a refusal with an explanation, not a crash: the model gets the
-message that the session hit its budget and that a new session is the fix. A
-subagent gets its own session and its own count, so its tokens are not
-charged to the conversation that started it.
-
-### The window is shared, so a new session does not reset it
-
-The per-session count is the wrong shape for the thing that actually runs out.
-The free tier is one window per account: session A spends it, and session B -
-opened a minute later to get a clean count - is refused on its first request.
-Two sessions were measured spending one window 47 and 33 minutes apart, so
-"open a new session" is not a fix once the window is gone.
-
-The guard therefore keeps a ledger, not just a counter. Every session's spend
-is written to one file and the window is the sum of the entries inside it:
-
-| | default | what happens |
-|---|---|---|
-| `OC_HARNESS_BUDGET_WINDOW_MINUTES` | 60 | how far back the sum reaches |
-| `OC_HARNESS_BUDGET_WINDOW_WARN` | 4,000,000 | one toast: the account has used N in the window |
-| `OC_HARNESS_BUDGET_WINDOW_STOP` | 8,000,000 | tool calls are refused in *every* session, old or new |
-| `OC_HARNESS_BUDGET_WINDOW_STICKY` | 1 | a crossed stop is recorded and holds until its entries age out (six hours) |
-
-The ledger is `OC_HARNESS_BUDGET_FILE`, default
-`$XDG_STATE_HOME/opencode-harness-kit/budget.json` (`~/.local/state/...` when
-`XDG_STATE_HOME` is unset).
-
-The file is written atomically (write, then rename); an unreadable file is
-moved to `budget.json.corrupt` and the window starts empty instead of failing
-the session or locking it for six hours. If the repair itself cannot be
-written - a read-only state directory, for example - the call fails closed
-rather than pretending the window is empty. Entries older than six hours are
-dropped on the next write. A crossed stop is written into the ledger as a
-marker, so a session opened after the one-hour sum rolls out is still refused.
-`OC_HARNESS_BUDGET_WINDOW_STICKY=0` turns that marker off. `0` disables either
-threshold. The stop is checked when the tool is called, not when the session
-starts, so a session opened after the window ran out is still refused - with
-the window's number, not the session's.
-
-A denial ends the turn: the generated config sets `experimental.continue_loop_on_deny: false`. With it on, opencode fed the guard's refusal back to the model as another turn. The measured session retried six times and made 138 requests / 7,559,016 context tokens in 29 minutes, each retry re-sending the whole prompt. `OC_HARNESS_TURN_STOP` is the second half: it blocks a single request that re-sends more than 300k, while the total still looks small.
-
 The other half is the fixed cost. opencode writes every discovered skill's
 name and description into the system message, so a machine with a large skill
 collection pays tens of thousands of tokens on every request, before the
@@ -1362,7 +1285,7 @@ fails before it starts, the error event is now fatal on the spot:
   `run-manifest.json`; resuming it against a different target, suite or model
   is refused rather than mixed into one result.
 - `--budget <tokens>` caps the suite's context tokens - the same number the
-  guard counts, cached prefix included. It is checked before each run, so the
+  provider charges, cached prefix included. It is checked before each run, so the
   run that crosses the cap is still measured and counted; the next one stops
   the suite with exit 2.
 - A preflight run (on by default, `--no-preflight` to skip) asks the model one
@@ -1383,16 +1306,6 @@ fails before it starts, the error event is now fatal on the spot:
   are real, the other 73 were never started, and resuming with the same
   `--out` skips the 47. The window is also account-wide, not per model - a second free
   model on the same provider answered "Free usage limit reached" too.
-
-The suite also turns the kit's own budget off for its runs and points the
-ledger at the run directory. A hundred and twenty runs spend more than the
-shared window's stop, and from that run on the guard would refuse tool calls -
-so the runs after it would be scored as wrong answers for a reason the suite
-is not measuring. The suite has its own cap, and the account's real window is
-not charged by a benchmark. The cap counts context, not uncached input: 47
-runs of one 10-rep attempt reported 1,284,594 uncached input tokens while the
-same streams carried 7,130,164 context tokens, so a cap set against the first
-number let the suite walk into the provider's wall.
 
 `eval/ab.mjs` knows how to read opencode's event stream, so it can only compare
 the kit with opencode. `eval/compare.mjs` grades any CLI the same way: it runs
