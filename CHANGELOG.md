@@ -12,6 +12,16 @@ is not happening.
 
 ---
 
+## [0.7.3] — 2026-10-26
+
+Documentation only. No code, config or behaviour changed.
+
+The `0.7.2` tarball was built from `8bf0283`, before the README sentence that
+describes `npm run selfcheck` was corrected on `main`. It said the release
+check ran last; it runs right after the build, against the tarball that build
+produced. `0.7.2` users have the old sentence in `node_modules`; this release
+republishes the corrected README.
+
 ## [0.7.2] — 2026-10-26
 
 A patch about the release process itself: the checks that decide whether a
@@ -2265,7 +2275,8 @@ silent in the worst way:
 [0.7.0]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.6.4...v0.7.0
 [0.7.1]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.0...v0.7.1
 [0.7.2]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.1...v0.7.2
-[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.2...HEAD
+[0.7.3]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.2...v0.7.3
+[Unreleased]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.7.3...HEAD
 [0.5.7]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/pham-canh/opencode-harness-kit/compare/v0.5.4...v0.5.5
