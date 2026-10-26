@@ -12,45 +12,15 @@ import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
+import { PHASES, TASK_PHASES, TERMINAL } from "./phases.mjs"
+import { applyTransition } from "./transitions.mjs"
+
 export const RUN_SCHEMA = "oc-harness/run@2"
 
-/**
- * The phases a run moves through.
- *
- * This is vocabulary only: the transition table lives in `transitions.mjs`.
- * Keeping the two apart means a reader can validate a record without pulling in
- * the driver, and a writer can name a phase before a transition exists yet.
- */
-export const PHASES = Object.freeze([
-  "intake",
-  "plan",
-  "preflight",
-  "build",
-  "verify",
-  "review",
-  "fix",
-  "task-done",
-  "final-verify",
-  "final-review",
-  "finish",
-  "needs-human",
-  "interrupted",
-])
-
-/** The phases one task can be in. `done` and `blocked` are terminal task states. */
-export const TASK_PHASES = Object.freeze(["pending", "build", "verify", "review", "fix", "done", "blocked"])
-
-/** The states a run can stop in. `null` means the run is still moving. */
-export const TERMINAL = Object.freeze([
-  "done",
-  "needs-human",
-  "route-exhausted",
-  "verify-failed",
-  "review-failed",
-  "budget",
-  "preflight-failed",
-  "interrupted",
-])
+// Re-exported so every caller that imported the vocabulary from here keeps
+// working; the definitions themselves live in `phases.mjs` to break the cycle
+// with the transition table.
+export { PHASES, TASK_PHASES, TERMINAL }
 
 /**
  * The v1 `status` values, mapped to a terminal state. A v1 record has no
@@ -170,21 +140,30 @@ export function reconcileRunLock(cwd, { force = false, at = new Date().toISOStri
   }
 
   const run = readRun(cwd)
-  if (!run || run.status !== "running" || run.terminal !== null) {
+  // `status` alone decides whether this record was still live. The old test
+  // also required `terminal === null`, so a record that a route retry had left
+  // `running` with a stale terminal was never corrected.
+  if (!run || run.status !== "running") {
     return { changed: true, busy: null, run, reason: lock.alive ? "lock force-released" : "stale lock removed" }
   }
   const pid = lock.holder?.pid ?? "unknown"
-  const updated = {
-    ...run,
-    status: "interrupted",
-    phase: "interrupted",
-    terminal: "interrupted",
-    exitCode: 2,
-    reason: lock.alive
-      ? `run was force-unlocked while pid ${pid} was still alive`
-      : `the previous process (pid ${pid}) died before the run finished`,
-    interruptedAt: at,
-    updatedAt: at,
+  const reason = lock.alive
+    ? `run was force-unlocked while pid ${pid} was still alive`
+    : `the previous process (pid ${pid}) died before the run finished`
+  let updated
+  try {
+    updated = applyTransition({ ...run }, "interrupted", { at, exitCode: 2, reason })
+    updated.interruptedAt = at
+    updated.updatedAt = at
+  } catch (err) {
+    // A record in a phase the table cannot interrupt is damaged. Removing the
+    // lock is still correct; rewriting the record with an invented edge is not.
+    return {
+      changed: true,
+      busy: null,
+      run,
+      reason: `lock cleared, but the record was left untouched: ${err instanceof Error ? err.message : String(err)}`,
+    }
   }
   const wrote = writeRun(cwd, updated)
   return {
@@ -403,7 +382,10 @@ function taskPhaseFor(task) {
  */
 export function upgradeRun(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value
-  const status = typeof value.status === "string" ? value.status : "running"
+  const rawStatus = typeof value.status === "string" ? value.status : "running"
+  // `failed` was a v1 catch-all that named neither a phase nor a next action.
+  // Keep reading it as what it always meant, but never write it again.
+  const status = rawStatus === "failed" ? "blocked" : rawStatus
   const budget = value.budget && typeof value.budget === "object" ? value.budget : {}
   const routes = value.routes && typeof value.routes === "object" ? value.routes : {}
   const checkpoint = value.checkpoint && typeof value.checkpoint === "object" ? value.checkpoint : {}
@@ -411,11 +393,21 @@ export function upgradeRun(value) {
   const phase = explicitPhase
     ? value.phase
     : PHASE_FOR_STATUS[status] ?? (status === "running" && Array.isArray(value.tasks) && value.tasks.length ? "build" : "intake")
-  const terminal = TERMINAL.includes(value.terminal) ? value.terminal : TERMINAL_FOR_STATUS[status] ?? null
+  // `terminal: null` is an answer for a provisional route failure - the run is
+  // waiting to see whether another route exists. Inferring `route-exhausted`
+  // from the status here turned every read of that record into a stop the loop
+  // had not made. Every other status with no terminal is incoherent, and the
+  // reader repairs it the same way the writer does.
+  const terminal = TERMINAL.includes(value.terminal)
+    ? value.terminal
+    : value.terminal === null && status === "route-failed"
+      ? null
+      : TERMINAL_FOR_STATUS[status] ?? null
 
   return {
     ...value,
     schema: RUN_SCHEMA,
+    status,
     phase,
     terminal,
     next: typeof value.next === "string" && value.next ? value.next : nextActionFor({ terminal }),
@@ -463,22 +455,12 @@ export function resumeRun(prior, { planHash = null, at = new Date().toISOString(
     throw new Error("resumeRun needs the record of the run being resumed")
   }
   const base = upgradeRun(prior)
-  return {
+  // The id, the goal and the start time are facts about this work, not about
+  // the process that happened to execute it; everything here but those is
+  // cleared because it described the attempt that stopped.
+  const cleared = {
     ...base,
     schema: RUN_SCHEMA,
-    // The id, the goal and the start time are facts about this work, not about
-    // the process that happened to execute it.
-    id: base.id,
-    startedAt: base.startedAt,
-    goal: base.goal,
-    phase: "preflight",
-    status: "running",
-    terminal: null,
-    next: "",
-    exitCode: null,
-    reason: "",
-    endedAt: null,
-    updatedAt: at,
     resumedAt: at,
     resumeCount: (Number.isInteger(base.resumeCount) ? base.resumeCount : 0) + 1,
     planHash: planHash ?? base.planHash ?? null,
@@ -488,6 +470,9 @@ export function resumeRun(prior, { planHash = null, at = new Date().toISOString(
     finalReview: null,
     checkpoint: { ...base.checkpoint, at },
   }
+  // `resume` is the one edge back to a live phase, so it goes through the same
+  // table as every other phase change and leaves an entry in the history.
+  return applyTransition(cleared, "resume", { at })
 }
 
 /**
@@ -503,12 +488,17 @@ export function resumeRun(prior, { planHash = null, at = new Date().toISOString(
  * @returns {{ ok: true } | { ok: false, error: string }}
  */
 export function writeRun(cwd, run) {
+  // Whether this object predates `run@2` has to be read before `schema` is set:
+  // a legacy record is missing `terminal` on purpose. Filling a v2 null would
+  // finish a run that is waiting for its next route.
+  const legacy = run.schema !== RUN_SCHEMA
   run.updatedAt = new Date().toISOString()
   run.schema = RUN_SCHEMA
   // Keep a record finished by the v1 driver coherent: its writer never set
   // these, and a v2 reader should not have to guess whether `done` means done.
-  if (!run.terminal) run.terminal = TERMINAL_FOR_STATUS[run.status] ?? null
-  if (run.phase === "intake" && run.status !== "running") run.phase = PHASE_FOR_STATUS[run.status] ?? run.phase
+  // `route-failed` is the one status a live record can carry with no terminal.
+  if (!run.terminal && run.status !== "route-failed") run.terminal = TERMINAL_FOR_STATUS[run.status] ?? null
+  if (legacy && run.phase === "intake" && run.status !== "running") run.phase = PHASE_FOR_STATUS[run.status] ?? run.phase
   const path = runPath(cwd)
   const tmp = `${path}.tmp`
   try {

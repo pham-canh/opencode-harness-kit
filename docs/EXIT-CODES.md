@@ -18,10 +18,11 @@ passes.
 |---|---|
 | 0 | Every task is done, and any final verify or final review that was asked for passed. |
 | 1 | There is no task file. The loop needs a plan to walk. |
-| 2 | Stopped early and a person is needed: a task is already blocked, a task has no verify command or one that cannot fail (`true`, `echo ok`), a task file with no tasks in it, the agent changed files the task did not name, the round cap was reached, the time budget ran out, the agent timed out after it had already changed files, or the loop itself crashed (recorded as `needs-human`). |
-| 3 | This run got no edit to believe in. A spent or unreachable model route - a timeout that left the tree untouched, a non-zero exit before the agent took a step, or exit 0 with an empty transcript - leaves the task **pending** so `work` can try the next route. A timeout after edits is not a route failure: the task is blocked (code 2), because another route would start on top of a partial change. A build agent that ran and then failed marks the task blocked; there is no second route that would change that answer. Another run holding the project lock exits here too: wait for it. |
+| 2 | Stopped early and a person is needed: a task is already blocked, a task has no verify command or one that cannot fail (`true`, `echo ok`), a task file with no tasks in it, the agent changed files the task did not name, the round cap was reached, the time budget ran out, the agent timed out after it had already changed files, a checkpoint could not be written (`checkpoint-failed`), the commit for a finished task was refused, or the loop itself crashed (recorded as `needs-human`). |
+| 3 | This run got no edit to believe in. A spent or unreachable model route - a timeout that left the tree untouched, a non-zero exit before the agent took a step, or exit 0 with an empty transcript - leaves the task **pending** so `work` can try the next route. A timeout after edits is not a route failure: the task is blocked (code 2), because another route would start on top of a partial change. When the lane's route chain is spent, the record stops as `route-exhausted` with `next: oc-harness resume`. A build agent that ran and then failed marks the task blocked; there is no second route that would change that answer. Another run holding the project lock exits here too: wait for it. |
 | 4 | Verify failed after its fix rounds, or the final verify failed. The task is marked blocked and the real output is in `.space/tasks.md` - not in the exit code, which is no place for a stack trace. |
 | 5 | Review failed after its fix rounds, the final review failed, or the reviewer returned prose instead of a schema'd verdict. The task is marked blocked with the blockers and the verdict file is in `.space/review/`. |
+| 130 | The run was interrupted by `SIGINT` or `SIGTERM`. The record says `interrupted`, the lock is released, and `oc-harness resume` continues it. |
 
 Code 2 is the "asked for something impossible" code: nothing about it is a
 bug, and the reason is printed. Codes 3, 4 and 5 mean this run did not land the
@@ -42,7 +43,19 @@ needs a diff or a commit that git would have to provide.
 
 A live lock is not cleared automatically. `--force-unlock` breaks one
 explicitly, for the case where the recorded pid now belongs to an unrelated
-process. Do not use it to start a second run alongside a real one.
+process. Do not use it to start a second run alongside a real one. `work` takes
+one lock for the whole request - plan, every route attempt and every task - so
+two work requests on the same project cannot interleave.
+
+`SIGINT` and `SIGTERM` stop the run with code 130 instead of killing it. A
+terminal sends Ctrl-C to the foreground process group, so the agent or verify
+child dies with the signal and the loop records `interrupted` at its next safe
+point. The record is resumable; the task stays in flight and is re-run by
+`resume`, and the lock is released.
+
+`--commit` commits a task before the task file is marked `done`. A refused
+commit is exit 2 with `checkpoint-failed`, and the task stays pending so the
+plan never claims work that git does not have.
 
 ## `oc-harness resume`
 
@@ -56,6 +69,7 @@ plans, so `resume` needs an existing record.
 | 0 | The resumed run finished: every task done and any final gate that was asked for passed. |
 | 2 | Nothing to resume, the run already finished, the plan changed since the run started (`--replan` resumes against the new plan), another process holds the lock, or the loop stopped and needs a person. |
 | 3, 4, 5 | Same meanings as `run`: route exhausted, verify failed, review failed. |
+| 130 | Interrupted by `SIGINT` or `SIGTERM`; the record is stopped and can be resumed. |
 
 A stale lock - one whose pid is gone - is cleared by `resume` (and by `work`)
 before the run starts, and the record it guarded is marked `interrupted` with

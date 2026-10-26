@@ -1129,10 +1129,22 @@ with `--allow-extra-files`, which turns off the scope check it cannot make.
 
 The run is durable, not just resumable. Every phase change goes through the
 table in `src/driver/transitions.mjs`, and `.space/run.json` keeps the last 200
-transitions in `history`. `.space/tasks.md` is redacted and replaced
-atomically, so a crash cannot leave a half-written plan. A crash inside the
-loop ends the record as `needs-human` with exit 2 and releases the lock, which
-is what `resume` expects to find.
+transitions in `history`. Opening a stopped record is a transition too: `start`
+begins a fresh one, `resume` clears the old verdict and returns it to
+`preflight`, and a spent route writes the provisional `route-failed` (no
+terminal) until `work` knows the chain is exhausted. `.space/tasks.md` is
+redacted and replaced atomically, so a crash cannot leave a half-written plan.
+A crash inside the loop ends the record as `needs-human` with exit 2 and
+releases the lock, which is what `resume` expects to find.
+
+Three more guarantees hold the record together. A checkpoint that cannot be
+written stops the run with exit 2 (`checkpoint-failed`) instead of returning a
+success code for a record that never changed. `--commit` commits a task before
+the plan marks it done, so a refused commit leaves the task pending. And `work`
+holds one lock for the whole request, route retries included, so a second run
+cannot enter between two attempts of the same task. `Ctrl-C` is a stop, not a
+killed process: it ends as `interrupted` with exit 130 and `resume` continues
+from the pending task.
 
 `--review` closes the review gap without pretending a sentence is a verdict:
 after verify passes, the `reviewer` lane is asked for one JSON object matching

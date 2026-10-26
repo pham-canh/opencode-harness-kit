@@ -1,6 +1,6 @@
-// A fresh run records `preflight` before it reads the plan, and a verified
-// task records `task-done` as a run phase. Both are transitions in
-// `run.history`, not just names in the event log.
+// A fresh run records `start` and then `preflight` before it reads the plan,
+// and a verified task records `task-done` as a run phase. All three are
+// transitions in `run.history`, not just names in the event log.
 
 import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -55,8 +55,10 @@ test("a fresh run checkpoints preflight before the first build", () => {
   assert.equal(JSON.parse(seen.at(-2).file).phase, "task-done")
 
   const record = JSON.parse(readFileSync(runPath(dir), "utf8"))
-  assert.equal(record.history.at(0).event, "preflight")
-  assert.equal(record.history.at(0).from, "intake")
+  assert.equal(record.history.at(0).event, "start")
+  assert.equal(record.history.at(0).to, "intake")
+  assert.equal(record.history.at(1).event, "preflight")
+  assert.equal(record.history.at(1).from, "intake")
   const done = record.history.find((h) => h.event === "task-done")
   assert.equal(done.from, "verify")
   assert.equal(done.to, "task-done")

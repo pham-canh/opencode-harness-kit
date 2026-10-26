@@ -32,6 +32,31 @@ import { parseTasks, summarize } from "../tasks.js"
 export function createLoopCommands(ui) {
   const { args, flag, opt, fail, optionalNumber, positiveNumber, bold, stamp, red, laneNames, configFile, parseJsonc } = ui
 
+  /**
+   * Remember the first stop signal instead of letting the default handler kill
+   * the process. The loop is synchronous around `spawnSync`, so this handler only
+   * runs once the child has returned; the loop checks the flag at its next safe
+   * point and writes `interrupted` itself. The handler is removed in `finally`
+   * so a signal during the report or in a library caller keeps its normal meaning.
+   */
+  function installStopHandler() {
+    let received = null
+    const remember = (name) => {
+      received ??= name
+    }
+    const onInt = () => remember("SIGINT")
+    const onTerm = () => remember("SIGTERM")
+    process.on("SIGINT", onInt)
+    process.on("SIGTERM", onTerm)
+    return {
+      signal: () => received,
+      dispose() {
+        process.removeListener("SIGINT", onInt)
+        process.removeListener("SIGTERM", onTerm)
+      },
+    }
+  }
+
 function planVerifyCommands(tasksFile, finalVerify) {
   const commands = []
   if (existsSync(tasksFile)) {
@@ -138,6 +163,7 @@ function loopFlags() {
     sandboxImage: opt("--sandbox-image") ?? process.env.OC_HARNESS_SANDBOX_IMAGE ?? null,
     adapter: opt("--adapter") ?? process.env.OC_HARNESS_ADAPTER ?? "opencode",
     agentCommand: opt("--agent-command") ?? process.env.OC_HARNESS_AGENT_CMD ?? null,
+    shouldStop: /** @type {(() => string | null) | null} */ (null),
   }
 }
 
@@ -235,42 +261,48 @@ async function cmdWork() {
 
   // Planning and the loop are two calls so trust can sit between them: the
   // commands a plan will run do not exist until the plan has been written.
+  const stop = installStopHandler()
+  common.loop.shouldStop = stop.signal
   let result
-  if (!planOnly && !dryRun) {
-    const prepared = workRequest({ ...common, prepareOnly: true })
-    if (prepared.code !== 0) {
-      result = prepared
-    } else {
-      const commands = planVerifyCommands(join(process.cwd(), ".space", "tasks.md"), finalVerify)
-      if (flag("--print-verify")) {
-        // `--json` promises a JSON body on stdout. Printing the bare command
-        // list there made the flag a trap for scripts that parse every
-        // --json command the same way.
-        if (wantJson) {
-          process.stdout.write(`${JSON.stringify({
-            ok: true,
-            code: 0,
-            phase: "print-verify",
-            reason: "",
-            commands,
-            branch: null,
-            worktree: null,
-            loop: null,
-          }, null, 2)}\n`)
-        } else {
-          process.stdout.write(`${commands.join("\n")}${commands.length ? "\n" : ""}`)
+  try {
+    if (!planOnly && !dryRun) {
+      const prepared = workRequest({ ...common, prepareOnly: true })
+      if (prepared.code !== 0) {
+        result = prepared
+      } else {
+        const commands = planVerifyCommands(join(process.cwd(), ".space", "tasks.md"), finalVerify)
+        if (flag("--print-verify")) {
+          // `--json` promises a JSON body on stdout. Printing the bare command
+          // list there made the flag a trap for scripts that parse every
+          // --json command the same way.
+          if (wantJson) {
+            process.stdout.write(`${JSON.stringify({
+              ok: true,
+              code: 0,
+              phase: "print-verify",
+              reason: "",
+              commands,
+              branch: null,
+              worktree: null,
+              loop: null,
+            }, null, 2)}\n`)
+          } else {
+            process.stdout.write(`${commands.join("\n")}${commands.length ? "\n" : ""}`)
+          }
+          return
         }
-        return
+        await ensureVerifyTrust(commands, wantJson)
+        // The prepare call above already planned, and with --force it already
+        // replaced the valid plan. Passing --force again would ask the planner
+        // for a second plan and could run different tasks than the ones whose
+        // verify commands were just trusted.
+        result = workRequest({ ...common, force: false })
       }
-      await ensureVerifyTrust(commands, wantJson)
-      // The prepare call above already planned, and with --force it already
-      // replaced the valid plan. Passing --force again would ask the planner
-      // for a second plan and could run different tasks than the ones whose
-      // verify commands were just trusted.
-      result = workRequest({ ...common, force: false })
+    } else {
+      result = workRequest(common)
     }
-  } else {
-    result = workRequest(common)
+  } finally {
+    stop.dispose()
   }
 
   if (wantJson) {
@@ -344,16 +376,23 @@ async function cmdResume() {
   await ensureVerifyTrust(commands, wantJson)
 
   const { workRequest } = await import("../driver/work.mjs")
-  const result = workRequest({
-    cwd,
-    resume: true,
-    replan: flag("--replan"),
-    log: wantJson ? (line) => console.error(line) : undefined,
-    loop: {
-      role: opt("--role") ?? "build",
-      ...loopFlags(),
-    },
-  })
+  const stop = installStopHandler()
+  let result
+  try {
+    result = workRequest({
+      cwd,
+      resume: true,
+      replan: flag("--replan"),
+      log: wantJson ? (line) => console.error(line) : undefined,
+      loop: {
+        role: opt("--role") ?? "build",
+        ...loopFlags(),
+        shouldStop: stop.signal,
+      },
+    })
+  } finally {
+    stop.dispose()
+  }
 
   if (wantJson) {
     process.stdout.write(`${JSON.stringify({
@@ -553,28 +592,35 @@ async function cmdRun() {
     // label on a stop is not worth turning into a second reason to fail.
   }
 
-  const result = runLoop({
-    cwd: process.cwd(),
-    role,
-    maxRounds,
-    budgetMinutes,
-    allowExtraFiles,
-    forceUnlock: flag("--force-unlock"),
-    review: flag("--review"),
-    stepCap,
-    maxFixRounds,
-    reviewFixRounds,
-    maxTokens,
-    maxTaskTokens,
-    finalVerify: opt("--final-verify") ?? null,
-    finalReview: flag("--final-review"),
-    finalBaseRef: opt("--base-ref") ?? null,
-    sandbox: /** @type {any} */ (sandbox).kind,
-    sandboxImage: opt("--sandbox-image") ?? null,
-    adapter: /** @type {any} */ (adapter).adapter,
-    agentCommand: opt("--agent-command") ?? process.env.OC_HARNESS_AGENT_CMD ?? null,
-    log: wantJson ? (line) => console.error(line) : undefined,
-  })
+  const stop = installStopHandler()
+  let result
+  try {
+    result = runLoop({
+      cwd: process.cwd(),
+      role,
+      maxRounds,
+      budgetMinutes,
+      allowExtraFiles,
+      forceUnlock: flag("--force-unlock"),
+      review: flag("--review"),
+      stepCap,
+      maxFixRounds,
+      reviewFixRounds,
+      maxTokens,
+      maxTaskTokens,
+      finalVerify: opt("--final-verify") ?? null,
+      finalReview: flag("--final-review"),
+      finalBaseRef: opt("--base-ref") ?? null,
+      sandbox: /** @type {any} */ (sandbox).kind,
+      sandboxImage: opt("--sandbox-image") ?? null,
+      adapter: /** @type {any} */ (adapter).adapter,
+      agentCommand: opt("--agent-command") ?? process.env.OC_HARNESS_AGENT_CMD ?? null,
+      shouldStop: stop.signal,
+      log: wantJson ? (line) => console.error(line) : undefined,
+    })
+  } finally {
+    stop.dispose()
+  }
 
   const report = /** @type {any} */ (result)
   if (wantJson) {

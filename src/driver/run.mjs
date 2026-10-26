@@ -52,7 +52,7 @@ import { exportSpan } from "./otel.mjs"
 import { assertPromptFits } from "./lane-budget.mjs"
 import { inspectVerify } from "./policy.mjs"
 import { failureFingerprint, recordFailure } from "./retry.mjs"
-import { createRun, nextActionFor, redact, runPath, runTask, terminalForStatus, writeRun } from "./run-state.mjs"
+import { createRun, nextActionFor, readRun, redact, runPath, runTask, terminalForStatus, writeRun } from "./run-state.mjs"
 import { applyTransition, terminalEventFor } from "./transitions.mjs"
 
 const TASKS_PATH = join(".space", "tasks.md")
@@ -85,6 +85,35 @@ function pidAlive(pid) {
   } catch (err) {
     return errorCode(err) === "EPERM"
   }
+}
+
+/**
+ * Record a signal as a stop and hand the lock back.
+ *
+ * The loop itself checks for a signal between steps, because `spawnSync` does
+ * not yield and a handler cannot run in the middle of an agent or a verify
+ * command. This is the write that check performs, kept exported so a CLI or a
+ * test can stop a record without going through a whole loop.
+ */
+export function interruptRun(cwd, { signal = "SIGINT", run = null, lock = null } = {}) {
+  const current = run ?? readRun(cwd)
+  const reason = `interrupted by ${signal}`
+  if (current) {
+    try {
+      applyTransition(current, "interrupted", { reason, exitCode: 130 })
+    } catch {
+      current.phase = "interrupted"
+      current.terminal = "interrupted"
+    }
+    current.status = "interrupted"
+    current.exitCode = 130
+    current.reason = reason
+    current.endedAt = new Date().toISOString()
+    current.next = nextActionFor(current)
+    writeRun(cwd, current)
+  }
+  lock?.release?.()
+  return { ok: false, code: 130, reason, run: current }
 }
 
 /**
@@ -184,6 +213,7 @@ export function sh(
   return {
     ok: res.status === 0,
     status: res.status,
+    signal: res.signal ?? null,
     // A spawn that never started has no stderr; say so instead of implying the
     // command ran and said nothing.
     output: stdout || (res.error ? String(res.error.message) : ""),
@@ -597,6 +627,10 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs, adapter = "opencode"
   return {
     ok: res.status === 0,
     status: res.status,
+    // A terminal Ctrl-C reaches the whole foreground process group, including
+    // this child. That is the only signal the synchronous loop can observe
+    // without yielding: it arrives as the child's terminating signal.
+    signal: res.signal ?? null,
     // stdout is kept apart from stderr because `--format json` is a protocol.
     // A progress line on stderr is not a verdict, and merging the two streams
     // would make it look like one.
@@ -746,6 +780,21 @@ function writeTasks(file, text) {
 }
 
 /**
+ * A checkpoint that could not be persisted.
+ *
+ * A run whose progress is not on disk is not a run that can be resumed, so
+ * this is a stop, not a warning. `runLoop` turns it into exit 2 with the real
+ * error text; swallowing it would leave the caller with a success code for a
+ * record that never changed.
+ */
+export class CheckpointError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = "CheckpointError"
+  }
+}
+
+/**
  * Run the loop.
  *
  * One task at a time: build, verify, review. A verify or review failure is a
@@ -788,12 +837,16 @@ function writeTasks(file, text) {
  *   goal?: string,
  *   runId?: string,
  *   runState?: any,
+ *   lock?: any,
+ *   routes?: (string | null)[] | null,
+ *   shouldStop?: (() => string | null) | null,
  *   branch?: string | null,
  *   stepCap?: number,
  *   log?: (line: string) => void,
  *   runAgent?: (role: string, prompt: string, opts: object) => any,
  *   runVerify?: (command: string, opts: object) => any,
  *   runReviewer?: (role: string, prompt: string, opts: object) => any,
+ *   beforeTaskDone?: (info: object) => { ok?: boolean, code?: number, reason?: string } | void,
  *   onTaskDone?: (info: object) => void,
  *   onPhase?: (event: { at: string, phase: string, run: any, task: string | null, attempt: number | null, round: number, [key: string]: any }) => any,
  * }} [options]
@@ -894,7 +947,10 @@ export function runLoop(options) {
       ...data,
     }
     const wrote = onPhase ? onPhase(event) : writeRun(cwd, run)
-    if (wrote && wrote.ok === false) log(`checkpoint: ${wrote.error}`)
+    // The record on disk is the only thing a resume can trust. A failed write
+    // used to be a log line, so the loop could finish "successfully" while the
+    // last checkpoint it reported was never stored.
+    if (wrote && wrote.ok === false) throw new CheckpointError(wrote.error ?? "the record could not be written")
     if (o.events !== false) {
       const extra = /** @type {any} */ (data)
       const logged = {
@@ -930,40 +986,78 @@ export function runLoop(options) {
       // `status` keeps saying where the run got to.
       const terminal = result.code === 0 ? "done" : stopArgs.terminal ?? terminalForStatus(status) ?? "needs-human"
       // A route failure is provisional: `work` will retry on the next route and
-      // reuse this record, so the phase must stay where the task stopped. Only
-      // `work` knows whether the last route was tried, and it writes
-      // `needs-human` then. Every other stop moves through the table.
-      const event = status === "route-failed" ? null : terminalEventFor(terminal)
-      // The table owns the phase and the edge. A stop the current phase cannot
-      // reach is a caller bug, not a reason to lose the record: log it and keep
-      // the writer-local fields, so a run still ends exactly once.
+      // reuse this record, so the phase must stay where the task stopped. The
+      // `route-failed` event says exactly that: status `route-failed`, no
+      // terminal. Only `work` knows whether the last route was tried, and it
+      // writes `route-exhausted` then. Every other stop is a terminal event.
+      const event = status === "route-failed" ? "route-failed" : terminalEventFor(terminal)
+      // The table owns the phase, the status and the edge. A stop the current
+      // phase cannot reach is a caller bug, not a reason to lose the record:
+      // keep the writer-local fields as a fallback, so a run still ends once.
+      let applied = false
       try {
-        if (!event) {
-          if (status !== "route-failed") throw new Error(`no terminal event for ${JSON.stringify(terminal)}`)
-        } else applyTransition(run, event, {
+        if (!event) throw new Error(`no terminal event for ${JSON.stringify(terminal)}`)
+        applyTransition(run, event, {
           reason: result.reason,
           exitCode: result.code,
           detail: { code: result.code, terminal },
         })
+        applied = true
       } catch (err) {
         log(`run: ${errorText(err)}; keeping ${run.phase ?? "unknown"} as the last phase`)
       }
-      run.status = status
-      run.terminal = terminal
-      run.reason = result.reason
-      run.exitCode = result.code
+      if (!applied) {
+        run.status = status
+        run.terminal = terminal
+        run.reason = result.reason
+        run.exitCode = result.code
+      } else {
+        // `status` is the writer-local detail (`blocked`, `final-verify-failed`,
+        // `checkpoint-failed`) that `terminal` deliberately collapses into one
+        // reader-facing verdict. The phase, terminal and exit code are still
+        // the table's answer; only this label stays with the caller.
+        run.status = status
+      }
       run.endedAt = new Date().toISOString()
       run.next = nextActionFor(run)
-      checkpoint(run.phase ?? null, {
-        data: { code: result.code, reason: result.reason, terminal: run.terminal },
-      })
+      try {
+        checkpoint(run.phase ?? null, {
+          data: { code: result.code, reason: result.reason, terminal: run.terminal },
+        })
+      } catch (err) {
+        // The last checkpoint is the one that records the stop. If it cannot be
+        // written, the run cannot claim the exit code it wanted - and this is
+        // the one place that must not recurse into `finish` to say so. Write
+        // the stop best-effort and report exit 2; a second failure is logged
+        // and nothing else can be done.
+        const message = err instanceof Error ? err.message : String(err)
+        const reason = `checkpoint failed: ${message}`
+        log(reason)
+        try {
+          applyTransition(run, "needs-human", { reason, exitCode: 2 })
+        } catch {
+          run.phase = "needs-human"
+          run.terminal = "needs-human"
+        }
+        run.status = "checkpoint-failed"
+        run.reason = reason
+        run.exitCode = 2
+        run.endedAt = new Date().toISOString()
+        run.next = nextActionFor(run)
+        const wrote = writeRun(cwd, run)
+        if (wrote && wrote.ok === false) log(`run: could not write the failed checkpoint: ${wrote.error}`)
+        return { ...result, code: 2, reason }
+      }
     }
     return result
   }
 
   mkdirSync(join(cwd, ".space"), { recursive: true })
-  lock = acquireLock(cwd, { force: o.forceUnlock === true })
-  if (lock.error || lock.busy) {
+  // `work` takes one lock for the whole request, including every route retry.
+  // Releasing it here would open the gap the outer lock exists to close.
+  const ownsLock = !o.lock
+  lock = o.lock ?? acquireLock(cwd, { force: o.forceUnlock === true })
+  if (ownsLock && (lock.error || lock.busy)) {
     const holder = lock.busy
     const reason = holder
       ? `a run is already in progress in this project (${LOCK_PATH}, pid ${holder.pid} since ${holder.at}); wait for it, or pass --force-unlock if that process is gone`
@@ -989,12 +1083,13 @@ export function runLoop(options) {
         role,
         branch: o.branch ?? null,
       })
-      run.status = "running"
-      run.reason = ""
-      run.exitCode = null
-      run.endedAt = null
       run.goal = run.goal || o.goal || parsed.goal || ""
       for (const t of parsed.tasks) runTask(run, t)
+      // Opening a record is a transition like any other. `start` only exists
+      // from `intake`; anything left in a live phase with a verdict attached is
+      // a record being resumed, and `resume` moves it back to `preflight`.
+      if (run.phase === "intake") applyTransition(run, "start")
+      else if (run.status !== "running" || run.terminal !== null) applyTransition(run, "resume")
       checkpoint(run.phase ?? "intake", { data: { event: "run-start" } })
       // A fresh record starts in `intake`; the plan is next. A resumed one
       // already left intake, so its history keeps the preflight it ran before.
@@ -1034,7 +1129,22 @@ export function runLoop(options) {
       return null
     }
 
+    // A signal is delivered while `spawnSync` is waiting, so the handler only
+    // sets a flag. These are the points where the loop can look at it without
+    // leaving a task half-recorded: between rounds, and between the agent, the
+    // verify and the review that make up one attempt.
+    const interruption = (signal = null) => {
+      // A signal sent to the process group shows up as the child's terminating
+      // signal and is the only one visible while this function is not yielding.
+      // `shouldStop` covers a caller that runs the loop asynchronously.
+      const observed = signal || (typeof o.shouldStop === "function" ? o.shouldStop() : null)
+      if (!observed) return null
+      return finish({ reason: `run interrupted by ${observed}`, code: 130, status: "interrupted", terminal: "interrupted" })
+    }
+
     for (;;) {
+      const interrupted = interruption()
+      if (interrupted) return interrupted
       const first = budgetStop()
       if (first) return finish({ reason: first, code: 2, status: "budget" })
 
@@ -1095,6 +1205,11 @@ export function runLoop(options) {
           }
         }
         const agent = runAgent(role, prompt, { cwd, timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
+        // The agent may have finished the edit just as the signal arrived. The
+        // tree is left exactly as it is: resuming re-runs the task, and the
+        // pending task is the only claim the record makes.
+        const stoppedAfterAgent = interruption(agent?.signal)
+        if (stoppedAfterAgent) return stoppedAfterAgent
         const spent = Number(agent?.tokens ?? 0) || 0
         tokens += spent
         taskTokens += spent
@@ -1201,6 +1316,10 @@ export function runLoop(options) {
             })
           : { ok: false, status: null, output: "no verify command", seconds: 0 }
         lastVerify = verify
+        // The verify command already ran; its output is in the record. What the
+        // loop refuses to do is start a fix round after someone asked it to stop.
+        const stoppedAfterVerify = interruption(verify?.signal)
+        if (stoppedAfterVerify) return stoppedAfterVerify
         const evidence = verifyEntry({
           runId: run?.id ?? null,
           planHash: run?.planHash ?? null,
@@ -1371,6 +1490,23 @@ export function runLoop(options) {
         return finish({ reason: `${task.title}: an agent marked the task blocked`, code: 4, status: "blocked" })
       }
       if (!isDone(current)) {
+        // The commit is part of finishing the task, not a follow-up to it. A
+        // failure here must leave the plan saying `pending`: marking the task
+        // done first and committing afterwards loses the task when git says no.
+        if (o.beforeTaskDone) {
+          const hook = o.beforeTaskDone({ cwd, task, verify: lastVerify })
+          if (hook && hook.ok === false) {
+            // The task file was not touched, so the record must not say the task
+            // got further than it did. `finish` keeps the phase where the stop
+            // happened; the task itself goes back to pending with the reason.
+            if (stateTask) {
+              stateTask.status = "pending"
+              stateTask.note = `commit not made: ${hook.reason}`
+              record()
+            }
+            return finish({ reason: `checkpoint failed: ${hook.reason}`, code: hook.code ?? 2, status: "checkpoint-failed" })
+          }
+        }
         const output = review ? "review: pass" : lastVerify?.output || ""
         writeTasks(file, markTask(text, current, { status: "done", verifyOutput: output }))
       }
@@ -1402,6 +1538,9 @@ export function runLoop(options) {
         }
       }
     }
+
+    const stoppedBeforeFinal = interruption()
+    if (stoppedBeforeFinal) return stoppedBeforeFinal
 
     if (o.finalVerify) {
       const finalPolicy = inspectVerify(o.finalVerify, { allowCompound: o.allowCompoundVerify === true })
@@ -1445,6 +1584,9 @@ export function runLoop(options) {
       entries.push({ round: rounds, task: "final verify", verify: o.finalVerify, seconds: final.seconds ?? 0 })
       log(`final verify passed: ${o.finalVerify}`)
     }
+
+    const stoppedBeforeReview = interruption()
+    if (stoppedBeforeReview) return stoppedBeforeReview
 
     if (o.finalReview) {
       if (run) applyTransition(run, "final-review", { task: "final review" })
@@ -1497,6 +1639,9 @@ export function runLoop(options) {
     if (run) writeSummary(cwd, run, finalParsed)
     return result
   } catch (err) {
+    if (err instanceof CheckpointError) {
+      return finish({ reason: `checkpoint failed: ${err.message}`, code: 2, status: "checkpoint-failed" })
+    }
     // A crash is a stop, not an abandoned record. Without this the process
     // exits on the exception and `run.json` still says `running`, so the next
     // resume believes a dead run is live. `needs-human` is the honest answer:
@@ -1520,7 +1665,7 @@ export function runLoop(options) {
       return { reason, code: 2, rounds, log: entries, run }
     }
   } finally {
-    lock?.release?.()
+    if (ownsLock) lock?.release?.()
   }
 }
 

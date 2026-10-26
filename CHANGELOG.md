@@ -44,9 +44,15 @@ blind.
 - **OTLP export.** With `OTEL_EXPORTER_OTLP_ENDPOINT` set, each run event is
   also sent as an OTLP/HTTP span. A collector that is down never fails the run.
 - **`run.schema.json`.** The written `run@2` record, so a script can validate
-  what it reads.
-- **`npm run gate:loop`.** Four offline loop scenarios: a pass, a repeated
-  verify failure, a destructive verify command, and a spent task budget.
+  what it reads. Its `status`, `phase` and `terminal` enums are checked against
+  the state machine's vocabulary, and `history`, `endedAt` and `interruptedAt`
+  are part of the schema.
+- **`oc-harness resume` and `run` stop on `SIGINT`/`SIGTERM`.** The record ends
+  as `interrupted` with exit 130 and releases the lock, instead of the process
+  dying while `run.json` still says `running`.
+- **`npm run gate:loop`.** Five offline loop scenarios: a pass, a repeated
+  verify failure, a destructive verify command, a spent task budget, and a
+  route failure that stops provisionally and is resumed.
 
 ### Changed
 
@@ -56,6 +62,17 @@ blind.
 - **Per-lane prompt budget.** A prompt larger than the lane's narrowest model
   can hold is refused before it is sent, instead of being truncated by the
   provider.
+- **Opening a record is a transition.** `start`, `resume` and the provisional
+  `route-failed` are rows in the table, so `runLoop` cannot reset a record with
+  assignments that disagree with the state it writes. `resume` clears the old
+  terminal and `endedAt`; `route-failed` keeps the phase and leaves `terminal`
+  null until `work` writes `route-exhausted`.
+- **`work` holds one lock for the whole request**, across route retries, and
+  releases it on every return path. `runLoop` takes a lock only when it is
+  called directly.
+- **A task is committed before it is marked done.** A refused commit stops the
+  run as `checkpoint-failed` with the task still pending, so the plan never
+  claims work git does not have.
 
 ### Fixed
 
@@ -70,6 +87,18 @@ blind.
 - **A crash inside the loop ends as `needs-human`** with exit code 2 and
   releases the lock, instead of escaping as an exception with the record still
   marked `running`.
+- **A checkpoint that cannot be written stops the run.** `checkpoint` throws
+  `CheckpointError`, `runLoop` reports exit 2 with `checkpoint-failed` and the
+  real error, and the final checkpoint in `finish` writes the stop
+  best-effort rather than recursing or returning 0.
+- **A route retry writes the live record.** `work` no longer stores copies made
+  with `{ ...run }` that the next checkpoint overwrote, so `routes.tried`,
+  `routes.attempts` and a task's commit SHA survive the retry.
+- **A v1 `failed` record reads as `blocked`**, and a v2 `terminal: null` on a
+  live `route-failed` record is no longer mistaken for a finished run.
+- **The schema and the state machine share one vocabulary.** `phase`,
+  `terminal` and `status` come from `phases.mjs`, so a record the driver writes
+  validates against the schema it ships.
 - `readEvents` no longer lets a torn JSONL line consume one of the requested
   slots.
 - Worktree cleanup ignores the harness's own `.space/` when deciding whether a

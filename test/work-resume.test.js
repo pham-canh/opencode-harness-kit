@@ -81,6 +81,9 @@ test("resume keeps the id, start time, budget, routes and attempt history", () =
   assert.equal(record.startedAt, prior.startedAt)
   assert.equal(record.goal, "finish the task")
   assert.equal(record.resumeCount, 1)
+  // One resume edge when the record is reopened, and no second one when
+  // `runLoop` sees an already-live record.
+  assert.equal(record.history.filter((entry) => entry.event === "resume").length, 1)
   assert.equal(record.terminal, "done")
   assert.equal(record.status, "done")
   assert.equal(record.rounds, prior.rounds + 1, "resume continues the round count instead of resetting it")

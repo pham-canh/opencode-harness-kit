@@ -6,7 +6,7 @@
 // it returns a new record and never touches the filesystem, so a test can move
 // a run through every path without a repo, an agent, or a lock.
 
-import { PHASES, TERMINAL } from "./run-state.mjs"
+import { PHASES, TERMINAL } from "./phases.mjs"
 
 /** A transition the table does not allow. Callers turn this into code 2. */
 export class TransitionError extends Error {
@@ -35,6 +35,29 @@ export const FORWARD = Object.freeze({
   interrupted: Object.freeze([]),
 })
 
+const LIVE = new Set(["intake", "plan", "preflight", "build", "verify", "review", "fix", "task-done", "final-verify", "final-review"])
+const HISTORY_LIMIT = 200
+
+/**
+ * Control events: they open or re-open a record rather than advance the work.
+ *
+ * `start` is the first entry in a fresh record's history, `resume` is how a
+ * stopped record becomes live again, and `route-failed` is the provisional stop
+ * `work` records before it knows whether another route is available. Putting
+ * them in the table means `runLoop` cannot reset a record with four assignments
+ * that disagree with the state it records.
+ */
+const CONTROL_EVENTS = Object.freeze({
+  start: Object.freeze({ phase: "intake", status: "running", reset: true, scope: Object.freeze(["intake"]) }),
+  resume: Object.freeze({
+    phase: "preflight",
+    status: "running",
+    reset: true,
+    scope: Object.freeze(PHASES.filter((phase) => phase !== "finish")),
+  }),
+  "route-failed": Object.freeze({ phase: null, status: "route-failed", reset: false, scope: Object.freeze([...LIVE]) }),
+})
+
 /**
  * Terminal events: the reason a run stops.
  *
@@ -61,14 +84,14 @@ const TERMINAL_SCOPE = Object.freeze({
   "review-failed": Object.freeze(["review", "final-review"]),
 })
 
-const LIVE = new Set(["intake", "plan", "preflight", "build", "verify", "review", "fix", "task-done", "final-verify", "final-review"])
-const HISTORY_LIMIT = 200
-
-export const EVENTS = Object.freeze([...new Set([...Object.values(FORWARD).flat(), ...Object.keys(TERMINAL_EVENTS)])])
+export const EVENTS = Object.freeze([
+  ...new Set([...Object.values(FORWARD).flat(), ...Object.keys(TERMINAL_EVENTS), ...Object.keys(CONTROL_EVENTS)]),
+])
 
 /** True when `event` is a legal next event from `phase`. */
 export function canAdvance(phase, event) {
   if (!PHASES.includes(phase)) return false
+  if (event in CONTROL_EVENTS) return CONTROL_EVENTS[event].scope.includes(phase)
   if (event in TERMINAL_EVENTS) {
     const scope = TERMINAL_SCOPE[event]
     return LIVE.has(phase) && (!scope || scope.includes(phase))
@@ -103,9 +126,12 @@ export function advance(run, event, detail = {}) {
   }
 
   const at = detail.at ?? new Date().toISOString()
+  const controlEvent = event in CONTROL_EVENTS ? CONTROL_EVENTS[event] : null
   const terminalEvent = event in TERMINAL_EVENTS ? TERMINAL_EVENTS[event] : null
-  const to = terminalEvent ? terminalEvent.phase ?? from : event
-  const terminal = terminalEvent ? terminalEvent.terminal : null
+  const to = controlEvent ? controlEvent.phase ?? from : terminalEvent ? terminalEvent.phase ?? from : event
+  const terminal = controlEvent ? null : terminalEvent ? terminalEvent.terminal : null
+  const status = controlEvent ? controlEvent.status : terminalEvent ? terminalEvent.status : "running"
+  const reset = controlEvent?.reset === true
   const history = Array.isArray(run.history) ? run.history : []
   const entry = {
     at,
@@ -121,9 +147,15 @@ export function advance(run, event, detail = {}) {
     ...run,
     phase: to,
     terminal,
-    status: terminalEvent ? terminalEvent.status : "running",
-    exitCode: terminalEvent ? detail.exitCode ?? terminalEvent.exitCode : null,
-    reason: detail.reason ?? run.reason ?? "",
+    status,
+    exitCode: controlEvent ? detail.exitCode ?? null : terminalEvent ? detail.exitCode ?? terminalEvent.exitCode : null,
+    // A fresh start and a resume describe the run that is beginning, so the old
+    // verdict is cleared. A provisional route failure keeps the reason the
+    // route failed: `work` reads it to decide whether another route helps.
+    reason: reset ? "" : detail.reason ?? run.reason ?? "",
+    // `endedAt` belongs to the attempt that stopped. Carrying it into a live
+    // record made `status` print a finish time for a run that is still going.
+    ...(reset ? { endedAt: null, next: "" } : {}),
     updatedAt: at,
     history: [...history, entry].slice(-HISTORY_LIMIT),
   }
@@ -175,6 +207,9 @@ export function terminalEventFor(name) {
 
 /** The terminal codes this table can produce, for a caller that wants to assert them. */
 export const TERMINAL_EVENT_NAMES = Object.freeze(Object.keys(TERMINAL_EVENTS))
+
+/** The events that open or re-open a record. */
+export const CONTROL_EVENT_NAMES = Object.freeze(Object.keys(CONTROL_EVENTS))
 
 /** Exported for the docs test: the table must cover every phase in `PHASES`. */
 export function tableCoversEveryPhase() {

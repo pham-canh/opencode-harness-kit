@@ -131,6 +131,45 @@ scenario("a task that exceeds its token budget stops as budget", (dir) => {
   assert.match(result.reason, /token/)
 })
 
+scenario("a spent route stops provisionally and the retry resumes the same record", (dir) => {
+  plan(dir)
+  const spent = { ok: false, status: null, stdout: "", stderr: "", error: "spawnSync opencode ETIMEDOUT" }
+  const first = runLoop({
+    cwd: dir,
+    state: true,
+    runState: state(dir, "gate-route"),
+    allowExtraFiles: true,
+    routes: ["model-a", "model-b"],
+    runAgent: () => spent,
+    runVerify: verifyOk,
+    onTaskDone: () => ({ ok: true }),
+  })
+  assert.equal(first.code, 3, first.reason)
+  const stopped = readRun(dir)
+  assert.equal(stopped.status, "route-failed")
+  assert.equal(stopped.terminal, null, "a spent route is not a final verdict")
+  assert.equal(stopped.phase, "build")
+  assert.equal(stopped.history.at(-1).event, "route-failed")
+
+  const second = runLoop({
+    cwd: dir,
+    state: true,
+    runState: stopped,
+    allowExtraFiles: true,
+    routes: ["model-a", "model-b"],
+    runAgent: agentOk,
+    runVerify: verifyOk,
+    finalVerify: planVerify(dir),
+    onTaskDone: () => ({ ok: true }),
+  })
+  assert.equal(second.code, 0, second.reason)
+  const after = readRun(dir)
+  assert.equal(after.status, "done")
+  assert.equal(after.terminal, "done")
+  assert.ok(after.history.some((entry) => entry.event === "route-failed"))
+  assert.ok(after.history.some((entry) => entry.event === "resume"))
+})
+
 const failed = results.filter((r) => !r.ok)
 process.stdout.write(`\n${results.length - failed.length}/${results.length} loop scenarios passed\n`)
 if (failed.length) process.exitCode = 1

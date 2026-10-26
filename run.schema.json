@@ -49,10 +49,17 @@
       "enum": [
         "running",
         "done",
-        "blocked",
+        "preflight-failed",
         "budget",
+        "blocked",
+        "round-cap",
+        "route-failed",
+        "lost-task",
+        "checkpoint-failed",
+        "final-verify-failed",
+        "final-review-failed",
         "interrupted",
-        "failed"
+        "stopped"
       ]
     },
     "phase": {
@@ -68,7 +75,8 @@
         "final-verify",
         "final-review",
         "finish",
-        "cleanup"
+        "needs-human",
+        "interrupted"
       ]
     },
     "terminal": {
@@ -76,9 +84,12 @@
         null,
         "done",
         "needs-human",
+        "route-exhausted",
+        "verify-failed",
+        "review-failed",
         "budget",
-        "interrupted",
-        "failed"
+        "preflight-failed",
+        "interrupted"
       ]
     },
     "next": {
@@ -102,10 +113,73 @@
       "format": "date-time"
     },
     "finishedAt": {
+      "description": "Legacy alias for endedAt, kept because report@1 records may still carry it.",
       "type": [
         "string",
         "null"
       ]
+    },
+    "endedAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "interruptedAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "history": {
+      "description": "The last 200 accepted transitions, oldest first. A stop that is later retried on another route leaves the provisional history in place.",
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": [
+          "at",
+          "event",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "route": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail": {}
+        },
+        "additionalProperties": true
+      }
     },
     "resumeCount": {
       "type": "integer",

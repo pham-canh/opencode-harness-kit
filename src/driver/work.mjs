@@ -18,11 +18,12 @@ import { parseTasks, summarize, validatePlan } from "../tasks.js"
 import { createBranch, changedPaths, checkpoint, createWorktree, isGitRepo, removeWorktree } from "./git.mjs"
 import { planRequest } from "./plan.mjs"
 import { POLICY_EXIT, inspectPlan } from "./policy.mjs"
-import { readRun, createRun, newRunId, resumeRun, runTask, writeRun } from "./run-state.mjs"
+import { readRun, createRun, newRunId, nextActionFor, resumeRun, runTask, writeRun } from "./run-state.mjs"
 import { laneBudget } from "./lane-budget.mjs"
 import { dockerAvailable } from "./sandbox.mjs"
 import { availableRoutes, canRetryOnRoute, recordRouteAttempt, recordSkippedRoutes } from "./routes.mjs"
-import { runLoop } from "./run.mjs"
+import { applyTransition } from "./transitions.mjs"
+import { acquireLock, runLoop } from "./run.mjs"
 
 const TASKS = join(".space", "tasks.md")
 
@@ -389,189 +390,236 @@ export function workRequest(options) {
     }
   }
 
-  const branchName = typeof options.branch === "string" ? options.branch : `oc-harness/${runId}`
-  // A worktree is the strongest isolation the loop can offer without a
-  // container: the run happens somewhere else, and the project is untouched
-  // while it does. The path is reported either way, so a failed run can be
-  // inspected rather than cleaned up on the assumption nothing was learned.
-  let runDir = runRoot
-  let worktreePath = resuming ? priorRun?.worktree ?? (runRoot !== cwd ? runRoot : null) : null
-  // A resume already lives in its worktree; asking for another one would make
-  // a worktree inside a worktree and leave the original run record behind.
-  if (options.worktree && !resuming) {
-    const made = /** @type {any} */ (createWorktree(cwd, branchName, runId))
-    if (!made.ok) return { ok: false, code: 2, reason: made.reason, phase: "worktree" }
-    runDir = made.path
-    worktreePath = made.path
-    mkdirSync(join(runDir, ".space"), { recursive: true })
-    copyFileSync(join(cwd, TASKS), join(runDir, TASKS))
-    log(`worktree: ${runDir} on ${branchName}`)
-  } else if (options.branch && !resuming) {
-    const made = /** @type {any} */ (createBranch(cwd, branchName, { allowDirty: options.allowDirty === true }))
-    if (!made.ok) return { ok: false, code: 2, reason: made.reason, phase: "branch" }
-    log(`branch: ${branchName}`)
+  // One lock for the whole request. `runLoop` takes its own lock when called
+  // directly, but a work request runs several loops (one per route) and a
+  // second process could otherwise enter between them, while the first was
+  // deciding which route to try next. Acquired after every refusal that does
+  // not need a record and before the branch or worktree is made.
+  const heldLock = acquireLock(cwd, { force: options.forceUnlock === true || loop.forceUnlock === true })
+  if (heldLock.error || heldLock.busy) {
+    const holder = heldLock.busy
+    const reason = holder
+      ? `a run is already in progress in this project (.space/run.lock, pid ${holder.pid} since ${holder.at}); wait for it, or pass --force-unlock if that process is gone`
+      : heldLock.error
+    return { ok: false, code: 3, reason, phase: "preflight" }
   }
+  try {
+    const branchName = typeof options.branch === "string" ? options.branch : `oc-harness/${runId}`
+    // A worktree is the strongest isolation the loop can offer without a
+    // container: the run happens somewhere else, and the project is untouched
+    // while it does. The path is reported either way, so a failed run can be
+    // inspected rather than cleaned up on the assumption nothing was learned.
+    let runDir = runRoot
+    let worktreePath = resuming ? priorRun?.worktree ?? (runRoot !== cwd ? runRoot : null) : null
+    // A resume already lives in its worktree; asking for another one would make
+    // a worktree inside a worktree and leave the original run record behind.
+    if (options.worktree && !resuming) {
+      const made = /** @type {any} */ (createWorktree(cwd, branchName, runId))
+      if (!made.ok) return { ok: false, code: 2, reason: made.reason, phase: "worktree" }
+      runDir = made.path
+      worktreePath = made.path
+      mkdirSync(join(runDir, ".space"), { recursive: true })
+      copyFileSync(join(cwd, TASKS), join(runDir, TASKS))
+      log(`worktree: ${runDir} on ${branchName}`)
+    } else if (options.branch && !resuming) {
+      const made = /** @type {any} */ (createBranch(cwd, branchName, { allowDirty: options.allowDirty === true }))
+      if (!made.ok) return { ok: false, code: 2, reason: made.reason, phase: "branch" }
+      log(`branch: ${branchName}`)
+    }
 
-  // The baseline is what was already dirty when the run started. A checkpoint
-  // never commits any of it: those edits belong to whoever made them - and
-  // --allow-dirty is the flag that says those edits are allowed to stay, not
-  // that they may be swept into the agent's commit.
-  const baseline = changedPaths(runDir)
+    // The baseline is what was already dirty when the run started. A checkpoint
+    // never commits any of it: those edits belong to whoever made them - and
+    // --allow-dirty is the flag that says those edits are allowed to stay, not
+    // that they may be swept into the agent's commit.
+    const baseline = changedPaths(runDir)
 
-  const prior = readRun(runDir)
-  // A resumed run keeps its id, start time, budget, routes and per-task
-  // history: those describe the work, not the process that stopped. A plain
-  // `work` over an old record still starts fresh and only borrows the task
-  // history, because keeping yesterday's `finalVerify` or branch made `status`
-  // report a check this run never ran.
-  const run = resuming
-    ? resumeRun(prior ?? priorRun, { planHash: currentPlanHash })
-    : prior
-      ? {
-          ...createRun({
+    const prior = readRun(runDir)
+    // A resumed run keeps its id, start time, budget, routes and per-task
+    // history: those describe the work, not the process that stopped. A plain
+    // `work` over an old record still starts fresh and only borrows the task
+    // history, because keeping yesterday's `finalVerify` or branch made `status`
+    // report a check this run never ran.
+    const run = resuming
+      ? resumeRun(prior ?? priorRun, { planHash: currentPlanHash })
+      : prior
+        ? {
+            ...createRun({
+              cwd: runDir,
+              id: runId,
+              goal: options.request ?? prior.goal ?? "",
+              role: loop.role ?? "build",
+              branch: options.branch || options.worktree ? branchName : null,
+              worktree: worktreePath,
+              planHash: currentPlanHash,
+            }),
+            // Attempts are cumulative across a resume; every other field belongs
+            // to the run that is starting now and is reset by createRun above.
+            tasks: Array.isArray(prior.tasks) ? prior.tasks : [],
+          }
+        : createRun({
             cwd: runDir,
             id: runId,
-            goal: options.request ?? prior.goal ?? "",
+            goal: options.request ?? "",
             role: loop.role ?? "build",
             branch: options.branch || options.worktree ? branchName : null,
             worktree: worktreePath,
             planHash: currentPlanHash,
-          }),
-          // Attempts are cumulative across a resume; every other field belongs
-          // to the run that is starting now and is reset by createRun above.
-          tasks: Array.isArray(prior.tasks) ? prior.tasks : [],
+          })
+    // A fresh record needs its task list; a reused one already has it.
+    const runTasksFile = join(runDir, TASKS)
+    if (!resuming && !prior) for (const t of parseTasks(readFileSync(runTasksFile, "utf8")).tasks) runTask(run, t)
+    // NOT written here. This request already holds the lock, and the record is
+    // written by the loop's first checkpoint once the plan is known to be
+    // usable. Writing it before that made a failed preflight leave a record
+    // that looked like a run which had started.
+
+    /** A loop options value bound to ONE run record. */
+    const loopOptionsFor = (state) => {
+      // The git commit happens here, while the task file still says `pending`.
+      // If it fails, `runLoop` stops before marking the task done, so the plan
+      // and the record agree that the task is still owed.
+      const beforeTaskDone = ({ task }) => {
+        const record = runTask(state, task)
+        record.verify = task.verify
+        if (options.commit) {
+          const made = checkpoint(runDir, { title: task.title, verify: task.verify, round: state.rounds }, { baseline })
+          if (!made.ok) return { ok: false, code: 2, reason: /** @type {any} */ (made).reason }
+          record.commit = made.commit
+          log(`checkpoint: ${made.commit ? made.commit.slice(0, 7) : "(nothing to commit)"} ${task.title}`)
         }
-      : createRun({
-          cwd: runDir,
-          id: runId,
-          goal: options.request ?? "",
-          role: loop.role ?? "build",
-          branch: options.branch || options.worktree ? branchName : null,
-          worktree: worktreePath,
-          planHash: currentPlanHash,
-        })
-  // A fresh record needs its task list; a reused one already has it.
-  const runTasksFile = join(runDir, TASKS)
-  if (!resuming && !prior) for (const t of parseTasks(readFileSync(runTasksFile, "utf8")).tasks) runTask(run, t)
-  // NOT written here. `runLoop` takes the lock before it writes, so a second
-  // work run in the same project refuses without overwriting the record of
-  // the run that is still going. A record written here made the loser of the
-  // lock race look like the winner.
-
-  /** A loop options value bound to ONE run record. */
-  const loopOptionsFor = (state) => {
-    const onTaskDone = ({ task }) => {
-      // Mutate the SAME record `runLoop` holds. Reading it back, updating the
-      // copy, and writing it out loses the update when the loop writes its own
-      // object at the end of the run - which is how a checkpoint SHA disappears
-      // from a record that clearly has the commit in git.
-      const record = runTask(state, task)
-      record.status = "done"
-      record.verify = task.verify
-      record.endedAt = new Date().toISOString()
-      if (options.commit) {
-        const made = checkpoint(runDir, { title: task.title, verify: task.verify, round: state.rounds }, { baseline })
-        if (!made.ok) return { ok: false, code: 2, reason: /** @type {any} */ (made).reason }
-        record.commit = made.commit
-        log(`checkpoint: ${made.commit ? made.commit.slice(0, 7) : "(nothing to commit)"} ${task.title}`)
+        writeRun(runDir, state)
+        return { ok: true }
       }
-      writeRun(runDir, state)
-      return { ok: true }
-    }
-    return {
-      ...loop,
-      laneBudget: loop.laneBudget ?? configuredLaneBudget(loop.role ?? "build"),
-      cwd: runDir,
-      goal: options.request ?? "",
-      allowExtraFiles,
-      runState: state,
-      finalBaseRef: loop.finalBaseRef ?? null,
-      // One writer. The loop calls this after every phase and does not write
-      // the record itself while a callback is present, so a checkpoint cannot
-      // be overwritten by a second copy of the same object.
-      onPhase: (event) => {
-        const wrote = writeRun(runDir, event.run)
-        if (wrote.ok === false) return wrote
-        return typeof loop.onPhase === "function" ? loop.onPhase(event) : { ok: true }
-      },
-      onTaskDone: (info) => {
-        const checkpointResult = onTaskDone(info)
-        if (!checkpointResult.ok) return checkpointResult
-        return loop.onTaskDone ? loop.onTaskDone(info) : { ok: true }
-      },
-    }
-  }
-
-  let result = /** @type {any} */ (runLoop(loopOptionsFor(run)))
-
-  // A spent route is not a failed edit. Move to the next rung once per rung,
-  // and never retry the route that just failed.
-  if (isRouteFailure(result)) {
-    const routes = (options.routes ?? configuredRoutes(runDir, loop.role ?? "build")).filter(Boolean)
-    const currentRoute = run.routes?.current ?? process.env.OC_HARNESS_MODEL ?? routes[0] ?? null
-    const attempted = recordRouteAttempt(run, currentRoute, { ok: false, reason: result.reason })
-    const tried = new Set([...attempted.routes.tried, currentRoute].filter(Boolean))
-
-    // A route the session already found spent is not a candidate, and neither
-    // is one this run has already failed on. The health file is shared with the
-    // plugin's router, so this is the same evidence the interactive path uses.
-    const health = readHealth(runDir)
-    const candidates = availableRoutes(routes, health, { tried: [...tried] })
-    const skipped = routes.filter((route) => !candidates.includes(route))
-    const routesWithHistory = candidates.length
-      ? attempted
-      : recordSkippedRoutes(attempted, skipped, "already tried or unhealthy")
-    routesWithHistory.routes.current = currentRoute
-    writeRun(runDir, routesWithHistory)
-
-    const dirty = changedPaths(runDir).size > 0
-    const retry = canRetryOnRoute({ dirty, reason: result.reason, retryDirty: options.retryDirty === true })
-    if (!retry.ok) {
-      result = { ...result, code: 2, terminal: "needs-human", reason: `${result.reason}\n\n${retry.reason}` }
-      writeRun(runDir, { ...routesWithHistory, status: "blocked", terminal: "needs-human", exitCode: 2, reason: result.reason })
+      const onTaskDone = ({ task }) => {
+        // Mutate the SAME record `runLoop` holds. Reading it back, updating the
+        // copy, and writing it out loses the update when the loop writes its own
+        // object at the end of the run - which is how a checkpoint SHA disappears
+        // from a record that clearly has the commit in git.
+        const record = runTask(state, task)
+        record.status = "done"
+        record.verify = task.verify
+        record.endedAt = new Date().toISOString()
+        writeRun(runDir, state)
+        return { ok: true }
+      }
+      return {
+        ...loop,
+        laneBudget: loop.laneBudget ?? configuredLaneBudget(loop.role ?? "build"),
+        cwd: runDir,
+        goal: options.request ?? "",
+        allowExtraFiles,
+        runState: state,
+        // The outer request owns this lock, including across route retries.
+        lock: heldLock,
+        finalBaseRef: loop.finalBaseRef ?? null,
+        // One writer. The loop calls this after every phase and does not write
+        // the record itself while a callback is present, so a checkpoint cannot
+        // be overwritten by a second copy of the same object.
+        onPhase: (event) => {
+          const wrote = writeRun(runDir, event.run)
+          if (wrote.ok === false) return wrote
+          return typeof loop.onPhase === "function" ? loop.onPhase(event) : { ok: true }
+        },
+        beforeTaskDone: (info) => {
+          const local = beforeTaskDone(info)
+          if (!local.ok) return local
+          return typeof loop.beforeTaskDone === "function" ? loop.beforeTaskDone(info) : { ok: true }
+        },
+        onTaskDone: (info) => {
+          onTaskDone(info)
+          return loop.onTaskDone ? loop.onTaskDone(info) : { ok: true }
+        },
+      }
     }
 
-    const previous = process.env.OC_HARNESS_MODEL
-    try {
-      for (const route of retry.ok ? candidates : []) {
-        tried.add(route)
-        process.env.OC_HARNESS_MODEL = route
-        log(`route: ${result.reason.split("\n")[0]}`)
-        log(`route: retrying on ${route}`)
-        writeRun(runDir, recordRouteAttempt(readRun(runDir) ?? run, route, { ok: false, reason: result.reason }))
-        // The checkpoint closure has to see the record the retry is writing:
-        // passing a copy to runLoop while a closure still updates the first
-        // record dropped the commit SHA from the run the user reads.
-        result = /** @type {any} */ (runLoop(loopOptionsFor(readRun(runDir) ?? run)))
-        if (!isRouteFailure(result)) {
-          const latest = readRun(runDir)
-          writeRun(runDir, recordRouteAttempt(latest ?? run, route, { ok: true }))
+    let result = /** @type {any} */ (runLoop(loopOptionsFor(run)))
+
+    // A spent route is not a failed edit. Move to the next rung once per rung,
+    // and never retry the route that just failed.
+    //
+    // Every update below mutates the record `runLoop` holds and then writes that
+    // same object. Building a copy with `{ ...run }` and writing it produced a
+    // record that was correct on disk for one checkpoint and then overwritten by
+    // the next one, which still pointed at the older object.
+    if (isRouteFailure(result)) {
+      const routes = (options.routes ?? configuredRoutes(runDir, loop.role ?? "build")).filter(Boolean)
+      const currentRoute = run.routes?.current ?? process.env.OC_HARNESS_MODEL ?? routes[0] ?? null
+      Object.assign(run, recordRouteAttempt(run, currentRoute, { ok: false, reason: result.reason }))
+      const tried = new Set([...run.routes.tried, currentRoute].filter(Boolean))
+
+      // A route the session already found spent is not a candidate, and neither
+      // is one this run has already failed on. The health file is shared with the
+      // plugin's router, so this is the same evidence the interactive path uses.
+      const health = readHealth(runDir)
+      const candidates = availableRoutes(routes, health, { tried: [...tried] })
+      const skipped = routes.filter((route) => !candidates.includes(route))
+      if (!candidates.length) Object.assign(run, recordSkippedRoutes(run, skipped, "already tried or unhealthy"))
+      run.routes.current = currentRoute
+      writeRun(runDir, run)
+
+      const dirty = changedPaths(runDir).size > 0
+      const retry = canRetryOnRoute({ dirty, reason: result.reason, retryDirty: options.retryDirty === true })
+      if (!retry.ok) {
+        result = { ...result, code: 2, terminal: "needs-human", reason: `${result.reason}\n\n${retry.reason}` }
+        applyTransition(run, "needs-human", { reason: result.reason, exitCode: 2 })
+        run.next = nextActionFor(run)
+        writeRun(runDir, run)
+      }
+
+      const previous = process.env.OC_HARNESS_MODEL
+      try {
+        for (const route of retry.ok ? candidates : []) {
+          tried.add(route)
+          process.env.OC_HARNESS_MODEL = route
+          log(`route: ${result.reason.split("\n")[0]}`)
+          log(`route: retrying on ${route}`)
+          // The route that just failed was recorded above, before the decision to
+          // retry. Recording it again here under the *next* route's name is how
+          // the attempt list ended up blaming a route that never ran.
+          run.routes.current = route
+          writeRun(runDir, run)
+          // The same live record goes back in. `runLoop` opens it with `resume`,
+          // so the retry starts from `preflight` and the history shows why.
+          result = /** @type {any} */ (runLoop(loopOptionsFor(run)))
+          if (isRouteFailure(result)) {
+            Object.assign(run, recordRouteAttempt(run, route, { ok: false, reason: result.reason }))
+            writeRun(runDir, run)
+            continue
+          }
+          Object.assign(run, recordRouteAttempt(run, route, { ok: true }))
+          writeRun(runDir, run)
           break
         }
+      } finally {
+        if (previous === undefined) delete process.env.OC_HARNESS_MODEL
+        else process.env.OC_HARNESS_MODEL = previous
       }
-    } finally {
-      if (previous === undefined) delete process.env.OC_HARNESS_MODEL
-      else process.env.OC_HARNESS_MODEL = previous
-    }
-    if (isRouteFailure(result)) {
-      const verdict = routes.length
-        ? `tried every route in the ${loop.role ?? "build"} lane chain (${[...tried].join(", ")}).`
-        : `the ${loop.role ?? "build"} lane has no configured route chain, so there was nowhere to move.`
-      result = {
-        ...result,
-        terminal: result.terminal ?? "route-exhausted",
-        reason: `${result.reason}\n\n${verdict} The failure is the model provider, not the task.`,
+      if (isRouteFailure(result)) {
+        const verdict = routes.length
+          ? `tried every route in the ${loop.role ?? "build"} lane chain (${[...tried].join(", ")}).`
+          : `the ${loop.role ?? "build"} lane has no configured route chain, so there was nowhere to move.`
+        const reason = `${result.reason}\n\n${verdict} The failure is the model provider, not the task.`
+        result = { ...result, terminal: "route-exhausted", reason }
+        // The loop may have left the record `route-failed` with no terminal. Only
+        // `work` knows the route chain is spent, so only `work` writes this stop.
+        applyTransition(run, "route-exhausted", { reason, exitCode: 3 })
+        run.next = nextActionFor(run)
+        writeRun(runDir, run)
       }
     }
-  }
 
-  return {
-    ok: result.code === 0,
-    code: result.code,
-    phase: "loop",
-    reason: result.reason,
-    loop: result,
-    branch: resuming ? priorRun?.branch ?? null : options.branch || options.worktree ? branchName : null,
-    worktree: worktreePath,
+    return {
+      ok: result.code === 0,
+      code: result.code,
+      phase: "loop",
+      reason: result.reason,
+      loop: result,
+      branch: resuming ? priorRun?.branch ?? null : options.branch || options.worktree ? branchName : null,
+      worktree: worktreePath,
+    }
+  } finally {
+    // Every return above, including a failed worktree, leaves the project
+    // unlocked. The record on disk stays as the evidence of where it stopped.
+    heldLock.release?.()
   }
 }
