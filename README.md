@@ -868,7 +868,8 @@ and nested calls inside Code Mode - is listed in
 
 The config dialect follows the loader: `oc-harness use <id> --target v2` moves
 `subagent_depth` under `experimental`, drops `batch_tool`,
-`continue_loop_on_deny` and `lsp`, and sets `external_directory` to `ask`.
+`continue_loop_on_deny`, keeps `lsp`, and sets `external_directory` to `ask`.
+`small_model` is not a V2 key, so the utility route follows `model`.
 `--target auto` reads `opencode --version`; the default stays `v1` so an
 existing install regenerates unchanged. `npm run gate:v2` reads the resolved
 config back through `opencode debug config`, then runs a live V2 server with a

@@ -188,7 +188,7 @@ function errorOf(e: any): any {
  * @param {string} model
  * @returns {string} `provider/model`
  */
-function routeKey(provider: string | undefined, model: string): string {
+export function routeKey(provider: string | undefined, model: string): string {
   const p = typeof provider === "string" && provider ? provider : "opencode"
   return `${p}/${model}`
 }

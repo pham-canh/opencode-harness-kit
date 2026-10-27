@@ -33,11 +33,16 @@ test("the default is the V1 dialect", () => {
 test("V2 moves the depth, drops the removed keys and gates outside paths", () => {
   const config = build({ target: "v2" })
   assert.equal(config.subagent_depth, undefined, "V2 has no top-level depth")
-  assert.equal(config.lsp, undefined, "V2 has no lsp key")
+  assert.equal(config.lsp, true, "V2 keeps lsp on")
   assert.equal(config.experimental.subagent_depth, 2)
   assert.equal(config.experimental.batch_tool, undefined)
   assert.equal(config.experimental.continue_loop_on_deny, undefined)
   assert.equal(config.permission.external_directory, "ask")
+  assert.ok(Array.isArray(config.skills), "V2 skills is an array")
+  assert.equal(config.small_model, undefined, "V2 has no small_model key")
+  assert.equal(typeof config.agent.plan.system, "string")
+  assert.ok(config.agent.plan.system.length > 0)
+  assert.equal(config.agent.plan.prompt, undefined)
 })
 
 test("an inherited V1 key does not survive into a V2 file", () => {
@@ -50,7 +55,7 @@ test("an inherited V1 key does not survive into a V2 file", () => {
     },
   })
   assert.equal(config.subagent_depth, undefined)
-  assert.equal(config.lsp, undefined)
+  assert.equal(config.lsp, false)
   assert.equal(config.experimental.batch_tool, undefined)
   assert.equal(config.experimental.continue_loop_on_deny, undefined)
   assert.equal(config.experimental.subagent_depth, 3, "the inherited V1 depth moves with its key")

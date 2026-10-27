@@ -1,3 +1,7 @@
+// src/v2-runtime.ts
+import { mkdirSync as mkdirSync4, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join11 } from "node:path";
+
 // src/harness-hooks.ts
 import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join10 } from "node:path";
@@ -2568,44 +2572,73 @@ async function createHarnessHooks(ctx, options) {
 }
 
 // src/v2-runtime.ts
-async function setupV2(context, options) {
-  const ctx = context ?? {};
-  if (!ctx.tool?.hook && !ctx.session?.hook && !ctx.event?.subscribe) return void 0;
-  const opts = options ?? ctx.options ?? {};
-  const directory = ctx.location?.project?.canonical ?? ctx.location?.directory ?? process.cwd();
-  const hooks = await createHarnessHooks(
-    { directory, worktree: ctx.location?.directory ?? directory },
-    opts
-  );
+function projectOf(ctx) {
+  const directory = ctx?.location?.project?.canonical ?? ctx?.location?.directory ?? ctx?.directory ?? process.cwd();
+  const worktree = ctx?.location?.directory ?? ctx?.worktree ?? directory;
+  return projectRoot(directory, worktree);
+}
+function writeActiveMarker(project, id) {
+  try {
+    const dir = join11(project, ".space");
+    mkdirSync4(dir, { recursive: true });
+    const tmp = join11(dir, `.active.${process.pid}`);
+    writeFileSync3(tmp, `${id}
+`);
+    renameSync3(tmp, join11(dir, "active"));
+  } catch {
+  }
+}
+async function setupV2(ctx, options) {
+  const context = ctx ?? {};
+  if (!context.tool?.hook && !context.session?.hook && !context.event?.subscribe && !context.agent?.transform) {
+    return void 0;
+  }
+  const opts = options ?? context.options ?? {};
+  const project = projectOf(context);
+  const directory = context?.location?.project?.canonical ?? context?.location?.directory ?? context?.directory ?? process.cwd();
+  const worktree = context?.location?.directory ?? context?.worktree ?? directory;
+  const hooks = await createHarnessHooks({ directory, worktree }, opts);
   const registrations = [];
   const controller = new AbortController();
-  if (ctx.tool?.hook) {
+  const seenMessages = /* @__PURE__ */ new Set();
+  if (context.tool?.hook) {
     if (hooks["tool.execute.before"]) {
       registrations.push(
-        await ctx.tool.hook("execute.before", async (event) => {
-          const output = { args: event.input };
-          await hooks["tool.execute.before"]({ tool: event.tool, args: event.input }, output);
-          if (output.args !== event.input) event.input = output.args;
+        await context.tool.hook("execute.before", async (event) => {
+          const output = { args: event?.input };
+          await hooks["tool.execute.before"]({ tool: event?.tool, args: event?.input }, output);
+          if (output.args !== event?.input) event.input = output.args;
+          try {
+            const messageID = event?.messageID;
+            if (messageID && !seenMessages.has(messageID)) {
+              seenMessages.add(messageID);
+              const agent = event?.agent;
+              if (agent) {
+                write(join11(project, ".space"), { kind: "lane", agent, sessionID: event?.sessionID, messageID });
+              }
+            }
+          } catch {
+          }
         })
       );
     }
     if (hooks["tool.execute.after"]) {
       registrations.push(
-        await ctx.tool.hook("execute.after", async (event) => {
+        await context.tool.hook("execute.after", async (event) => {
           const output = {
             title: "",
-            output: typeof event.result === "string" ? event.result : "",
-            metadata: { status: event.status }
+            output: typeof event?.result === "string" ? event.result : "",
+            metadata: { status: event?.status }
           };
-          await hooks["tool.execute.after"]({ tool: event.tool, args: event.input ?? {} }, output);
+          await hooks["tool.execute.after"]({ tool: event?.tool, args: event?.input ?? {} }, output);
         })
       );
     }
   }
-  if (ctx.session?.hook) {
+  if (context.session?.hook) {
     if (hooks["chat.message"]) {
       registrations.push(
-        await ctx.session.hook("prompt", async (event) => {
+        await context.session.hook("prompt", async (event) => {
           const before = String(event?.prompt?.text ?? "");
           const parts = [{ type: "text", text: before }];
           await hooks["chat.message"]({}, { parts });
@@ -2614,18 +2647,25 @@ async function setupV2(context, options) {
         })
       );
     }
+    if (hooks["experimental.chat.system.transform"]) {
+      registrations.push(
+        await context.session.hook("context", async (event) => {
+          await hooks["experimental.chat.system.transform"]({}, { messages: event?.messages });
+        })
+      );
+    }
     if (hooks["experimental.chat.messages.transform"]) {
       registrations.push(
-        await ctx.session.hook("context", async (event) => {
-          await hooks["experimental.chat.messages.transform"]({}, { messages: event.messages });
+        await context.session.hook("context", async (event) => {
+          await hooks["experimental.chat.messages.transform"]({}, { messages: event?.messages });
         })
       );
     }
   }
-  if (ctx.event?.subscribe && hooks.event) {
+  if (context.event?.subscribe && hooks.event) {
     void (async () => {
       try {
-        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+        for await (const event of context.event.subscribe({ signal: controller.signal })) {
           try {
             await hooks.event({ event });
           } catch {
@@ -2635,10 +2675,65 @@ async function setupV2(context, options) {
       }
     })();
   }
+  const profileId = opts?.profile ?? profileIdFromConfig();
+  if (profileId) writeActiveMarker(project, profileId);
+  if (context.agent?.transform && profileId) {
+    try {
+      const result = planEffort(profileId, { dir: project });
+      registrations.push(
+        await context.agent.transform((editor) => {
+          const list = typeof editor?.list === "function" ? editor.list() : [];
+          for (const agent of list ?? []) {
+            const id = agent?.id ?? agent?.name;
+            if (!id || !(id in (result.roles ?? {}))) continue;
+            editor.update(id, (draft) => {
+              if (!draft.model) {
+                const laneModel = result.laneModels?.[id];
+                if (laneModel) draft.model = `${String(result.model).split("/")[0]}/${laneModel}`;
+                else draft.model = result.model;
+              }
+              const level = result.roles[id];
+              if (level === null) delete draft.variant;
+              else if (level !== void 0) draft.variant = level;
+            });
+          }
+        })
+      );
+    } catch {
+    }
+  }
+  if (context.agent?.transform && profileId) {
+    try {
+      const profile = loadProfile(profileId);
+      const routes = unhealthyRoutes(project);
+      const unhealthy = unhealthyModels(project);
+      if (Object.keys(routes).length > 0) {
+        const roles = resolveRoles(profile, { unhealthy });
+        registrations.push(
+          await context.agent.transform((editor) => {
+            for (const lane of Object.keys(roles)) {
+              const agent = typeof editor?.get === "function" ? editor.get(lane) : null;
+              if (!agent) continue;
+              const resolved = resolveLaneModel(profile, lane, { unhealthy });
+              const wantModel = routeKey(profile.provider, resolved.model);
+              if (agent.model === wantModel) continue;
+              editor.update(lane, (draft) => {
+                draft.model = wantModel;
+                const requested = profile.roles?.[lane] ?? null;
+                const next = resolveEffort(resolved.levels, requested);
+                if (next === null) delete draft.variant;
+                else if (next !== void 0) draft.variant = next;
+              });
+            }
+          })
+        );
+      }
+    } catch {
+    }
+  }
   return () => {
     controller.abort();
     for (const r of registrations) void r?.dispose?.();
-    if (hooks.dispose) void hooks.dispose();
   };
 }
 

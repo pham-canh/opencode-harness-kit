@@ -52,15 +52,20 @@ blind.
   Mode calls) is listed in `docs/KNOWN-LIMITS.md`.
 - **`oc-harness use --target v1|v2|auto`.** Picks the config dialect. V2 moved
   `subagent_depth` under `experimental`, removed `batch_tool`,
-  `continue_loop_on_deny` and `lsp`, and stopped asking before an outside path.
+  `continue_loop_on_deny`, kept `lsp`, and stopped asking before an outside path.
   The default stays `v1`, so an existing install regenerates unchanged; `auto`
   reads `opencode --version`.
 - **`npm run gate:v2`.** Compiles a V2 config and reads it back through
-  `opencode debug config`, asserting the four moved or removed keys. It then
-  starts a real V2 server against a fake model and checks that a `shell` call
-  to `npm publish` is refused and that Code Mode exposes no `shell` builtin.
-  It skips with exit 0 when no 2.x binary is installed, so it stays out of
-  `npm test`.
+  `opencode debug config`, asserting the moved or removed keys, embedded lane
+  prompts, skills array, LSP and permissions. It then starts a real V2 server
+  against a fake model and checks that a `shell` call to `npm publish` is
+  refused and that Code Mode exposes no `shell` builtin. It skips with exit 0
+  when no 2.x binary is installed, so it stays out of `npm test`.
+- **V2 parity.** `setupV2` now writes `.space/active`, applies per-lane effort
+  and lane failover through `ctx.agent.transform`, and records the running lane
+  in telemetry from the V2 tool event. Lane prompts are embedded in `system`,
+  skills become an array, LSP is kept, and permissions are emitted in the V2
+  native form.
 - **`accept:` in `.space/tasks.md`.** An optional acceptance line, shown to the
   builder before the verify command. It is prose, so it never replaces the
   command that defines done.

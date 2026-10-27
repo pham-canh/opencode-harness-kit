@@ -420,6 +420,38 @@ export function configTarget(opts = {}) {
  *          target?: "v1" | "v2" | "auto", opencodeMajor?: number | null }} [opts]
  * @returns {string}
  */
+/**
+ * Resolve a `{file:...}` prompt reference to its contents.
+ *
+ * @param {string} ref
+ * @param {string} configDir
+ * @returns {string | null}
+ */
+/** @param {string} ref @param {string} configDir @returns {string | null} */
+function resolvePromptFile(ref, configDir) {
+  const match = String(ref ?? "").trim().match(/^\{file:(.+)\}$/)
+  if (!match) return null
+  let path = match[1].trim()
+  if (path.startsWith("~")) {
+    path = join(homedir(), path.slice(1).replace(/^\/+/, ""))
+  }
+  const candidates = path.startsWith("/") ? [path] : [resolve(configDir, path)]
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue
+    try {
+      return readFileSync(candidate, "utf8")
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/**
+ * @param {any} p
+ * @param {any} [opts]
+ * @returns {string}
+ */
 export function generateConfig(p, opts = {}) {
   const base = opts.base ?? {}
   const unhealthy = opts.unhealthy
@@ -427,6 +459,7 @@ export function generateConfig(p, opts = {}) {
   const roles = resolveRoles(p, { unhealthy })
   const instructionsPath = globalInstructionsPath()
   const lanes = loadLanes()
+  const target = configTarget(opts)
 
   const agent = { ...(base.agent ?? {}) }
   /** Lanes the primary agents are allowed to delegate to. */
@@ -581,10 +614,8 @@ export function generateConfig(p, opts = {}) {
   // V2 moved one key, removed two and changed a default. Splitting the file
   // rather than emitting both dialects is deliberate: a V2 loader ignores the
   // V1 spellings, so a merged file would look configured and enforce nothing.
-  const target = configTarget(opts)
   let v2Depth = 2
   if (target === "v2") {
-    delete base_.lsp
     // V2 reads `plugins`; `plugin` is its V1 name and is ignored. A list built
     // by an earlier `--memory` run would otherwise stop loading the moment the
     // file moved to the V2 dialect.
@@ -615,6 +646,20 @@ export function generateConfig(p, opts = {}) {
   const configDir = opts.configDir ?? DEFAULT_CONFIG_DIR
   const skillPaths = cleanSkillPaths(base.skills ?? {}, configDir, opts.kitRoot ?? kitRoot())
 
+  // V2 does not resolve `{file:...}` references in `system`, so the lane
+  // prompts have to be embedded at compile time. V1 keeps the references.
+  if (target === "v2") {
+    for (const entry of Object.values(agent)) {
+      if (!entry || typeof entry !== "object") continue
+      const prompt = entry.prompt
+      if (typeof prompt !== "string") continue
+      const content = resolvePromptFile(prompt, configDir)
+      if (content !== null) entry.system = content
+      else entry.system = prompt
+      delete entry.prompt
+    }
+  }
+
   const out = {
     $schema: "https://opencode.ai/config.json",
     ...base_,
@@ -634,7 +679,7 @@ export function generateConfig(p, opts = {}) {
     // A single-model profile SHOULD keep it: "one route, and it is the one
     // you asked for" is a promise the five-lane profiles make, and a cheaper
     // route on the side would break it.
-    small_model: utilityModel(p) ?? model,
+    ...(target === "v1" ? { small_model: utilityModel(p) ?? model } : {}),
     // No top-level `variant`. The 1.18.35 Config schema sets
     // `additionalProperties: false` and has no `variant` key, so OpenCode
     // strips it from the resolved config - verified with `opencode debug
@@ -648,8 +693,8 @@ export function generateConfig(p, opts = {}) {
     // the top-level key added below is V1-only.
     ...(target === "v1" ? { subagent_depth: base.subagent_depth ?? 2 } : {}),
     // Omitting `lsp` disables it entirely, so this must be set explicitly.
-    // V2 has no config key for it and strips the entry.
-    ...(target === "v1" ? { lsp: base.lsp ?? true } : {}),
+    // V2 supports the same key; keeping it avoids turning LSP off on upgrade.
+    lsp: base.lsp ?? true,
     // The kit's own instruction file is always in the list.
     //
     // It used to be `base.instructions ?? [instructionsPath]`, so a config
@@ -677,7 +722,14 @@ export function generateConfig(p, opts = {}) {
     // The skills paths: only the entries that resolve where they would be
     // read from. A dead one is dropped from the file and named in the
     // header - a path to nothing is noise every reader pays for.
-    skills: skillPaths.skills ?? {},
+    skills:
+      target === "v2"
+        ? Array.isArray(skillPaths.skills)
+          ? skillPaths.skills
+          : Array.isArray(skillPaths.skills?.paths)
+            ? skillPaths.skills.paths
+            : []
+        : skillPaths.skills ?? {},
 
     experimental:
       target === "v2"

@@ -176,19 +176,8 @@ export declare function configTarget(opts?: {
     opencodeMajor?: number | null;
 }): "v1" | "v2";
 /**
- * @param {Profile} p
- * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string>,
- *          configDir?: string, kitRoot?: string, skills?: boolean,
- *          target?: "v1" | "v2" | "auto", opencodeMajor?: number | null }} [opts]
+ * @param {any} p
+ * @param {any} [opts]
  * @returns {string}
  */
-export declare function generateConfig(p: Profile, opts?: {
-    base?: Record<string, any>;
-    comments?: boolean;
-    unhealthy?: Set<string>;
-    configDir?: string;
-    kitRoot?: string;
-    skills?: boolean;
-    target?: "v1" | "v2" | "auto";
-    opencodeMajor?: number | null;
-}): string;
+export declare function generateConfig(p: any, opts?: any): string;

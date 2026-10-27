@@ -50,11 +50,12 @@ a directory`, and a local `node_modules` symlink is ignored with
 
 What the bridge cannot carry:
 
-- **`config`.** V2 has no config hook, so `effort.js` (which assigns the
-  per-lane tier at startup) and the `.space/active` marker it writes are
-  V1-only. A V2 session gets the lanes from the config file, not from the
-  runtime effort plan. The pruner therefore falls back to its defaults unless
-  `.space/active` already exists.
+- **`config`.** V2 has no config hook, but `setupV2` rebuilds the parts
+  that hook used to own: it writes `.space/active` from the profile named in
+  the config, applies per-lane effort through `ctx.agent.transform`, and runs
+  lane failover for spent routes. What is still V1-only is the
+  `chat.params`-driven telemetry join (see below) and any startup mutation of
+  the session model, which V2 does not expose to plugins.
 - **`chat.params`.** The V2 `context` event names the agent and the model but
   not the message id the telemetry join uses. Telemetry falls back to the
   assistant message's own fields.
@@ -79,8 +80,9 @@ regenerating an existing install writes the keys it wrote before. `auto` reads
 `opencode --version` and picks V2 for a 2.x binary.
 
 V2 moved `subagent_depth` under `experimental`, removed `batch_tool` and
-`continue_loop_on_deny`, removed `lsp`, and made `external_directory` default
-to **allow**. A V1 file under V2 is accepted and those keys are ignored, so
+`continue_loop_on_deny`, kept `lsp`, and made `external_directory` default
+to **allow**. `small_model` is not a key in the V2 schema, so the compiler
+omits it on `--target v2`; the utility route is therefore the main model. A V1 file under V2 is accepted and those keys are ignored, so
 the file looks tuned and enforces none of them. `npm run gate:v2` compiles a V2
 config, reads the resolved result back through `opencode debug config`, then
 starts a real `opencode serve` against a fake model and checks that the guard

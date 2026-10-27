@@ -95,6 +95,17 @@ function main() {
         `got ${JSON.stringify(config?.experimental?.subagent_depth)}`,
       ),
       check(
+        "skills is an array",
+        Array.isArray(config?.skills),
+        `got ${JSON.stringify(config?.skills)}`,
+      ),
+      check(
+        "permissions deny shell",
+        Array.isArray(config?.permissions) &&
+          config.permissions.some((p) => p?.action === "shell" && p?.effect === "deny"),
+        `got ${JSON.stringify(config?.permissions?.filter((p) => p?.action === "shell"))}`,
+      ),
+      check(
         "external_directory resolves to ask",
         // V2 migrates the V1 permission block into `permissions[]`.
         config?.permission?.external_directory === "ask" ||
@@ -112,7 +123,7 @@ function main() {
         config?.subagent_depth === undefined,
         `got ${JSON.stringify(config?.subagent_depth)}`,
       ),
-      check("no lsp", config?.lsp === undefined, `got ${JSON.stringify(config?.lsp)}`),
+      check("lsp is kept", config?.lsp !== undefined, `got ${JSON.stringify(config?.lsp)}`),
     ]
 
     const passed = checks.every(Boolean)

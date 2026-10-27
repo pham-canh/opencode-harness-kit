@@ -1,9 +1,3 @@
-import { type HarnessOptions } from "./harness-hooks.js";
-/** The dispose handle a V2 registration returns. */
-interface Registration {
-    dispose?(): void | Promise<void>;
-}
-/** The part of the V2 plugin context this adapter uses. */
 export interface V2Context {
     location?: {
         directory?: string;
@@ -11,25 +5,28 @@ export interface V2Context {
             canonical?: string;
         };
     };
-    options?: HarnessOptions;
+    directory?: string;
+    worktree?: string;
+    options?: Record<string, any>;
     tool?: {
-        hook(name: "execute.before" | "execute.after", fn: (event: any) => unknown): Promise<Registration>;
+        hook: (name: string, fn: (event: any) => unknown) => Promise<{
+            dispose?: () => void | Promise<void>;
+        }>;
     };
     session?: {
-        hook(name: "context" | "prompt", fn: (event: any) => unknown): Promise<Registration>;
+        hook: (name: string, fn: (event: any) => unknown) => Promise<{
+            dispose?: () => void | Promise<void>;
+        }>;
     };
     event?: {
-        subscribe(options?: {
+        subscribe: (options?: {
             signal?: AbortSignal;
-        }): AsyncIterable<unknown>;
+        }) => AsyncIterable<unknown>;
+    };
+    agent?: {
+        transform: (fn: (editor: any) => void) => Promise<{
+            dispose?: () => void | Promise<void>;
+        }>;
     };
 }
-/**
- * Register the kit's hooks on an OpenCode 2 plugin context.
- *
- * @param context the V2 plugin context
- * @param options overrides; `context.options` wins when this is omitted
- * @returns a cleanup function, or undefined when the context has no hook domains
- */
-export declare function setupV2(context: V2Context | undefined, options?: HarnessOptions): Promise<(() => void) | undefined>;
-export {};
+export declare function setupV2(ctx?: V2Context, options?: Record<string, any>): Promise<(() => void) | undefined>;
