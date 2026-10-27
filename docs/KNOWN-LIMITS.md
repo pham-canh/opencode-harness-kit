@@ -9,23 +9,52 @@ wrong pair fails without an error on the run itself.
 
 | | OpenCode 1 | OpenCode 2 |
 |---|---|---|
-| config key | `plugin` | `plugins` |
+| config key | `plugin` | `plugins` (the compiler renames your list for `--target v2`) |
 | module shape | a default-exported function | `Plugin.define({ id, setup })` |
 | registration | the function returns a hooks object | `setup(ctx)` uses the context domains |
-| kit status | guard, prune, router and telemetry are registered | the entrypoint loads, but the V1 hooks are **not** registered |
+| kit status | guard, prune, router and telemetry are registered | the same hooks, bridged by `src/v2-runtime.ts` |
 
 The failure is silent in the way that matters: a V1 plugin under V2 is simply
 not started, so the session looks normal and is unguarded. Confirmed against
 `@opencode-ai/plugin@1.19.2`: its `v2/promise` export declares `Plugin` as
 `{ id, setup(context) }`, and its V1 export still types a plugin as a function.
 
-`src/index.ts` therefore exports one default that can be called as the V1
-function and also carries `id` and `setup()`, so a V2 loader accepts the module
-instead of skipping it. `setup()` is deliberately a no-op for now: it proves
-the entrypoint loads, not that the guard, pruning, routing or telemetry run.
-Porting those hooks to the V2 context is separate work, and until it lands a
-V2 session gets the config and the lanes but not the protections. Run
-`oc-harness verify` and keep the V1 path when those protections matter.
+`src/index.ts` exports one default that is callable as the V1 function and also
+carries `id` and `setup()`. `setup()` builds the same hook map through
+`src/harness-hooks.ts` and registers it on `ctx.tool`, `ctx.session` and
+`ctx.event`, so a fix to the guard is a fix on both APIs.
+
+What the bridge cannot carry:
+
+- **`config`.** V2 has no config hook, so `effort.js` (which assigns the
+  per-lane tier at startup) and the `.space/active` marker it writes are
+  V1-only. A V2 session gets the lanes from the config file, not from the
+  runtime effort plan. The pruner therefore falls back to its defaults unless
+  `.space/active` already exists.
+- **`chat.params`.** The V2 `context` event names the agent and the model but
+  not the message id the telemetry join uses. Telemetry falls back to the
+  assistant message's own fields.
+- **Tool names.** V2 calls the command tool `shell` (not `bash`) and the patch
+  tool `patch` (not `apply_patch`). Both names are in `src/tool-names.ts`; a
+  third name would have to be added there or the guard, pruner and telemetry
+  each miss it again.
+- **Code Mode.** V2 enables Code Mode by default. Whether a plugin's
+  `execute.before` runs for a tool invoked *inside* Code Mode has not been
+  verified on a real V2 session. Until it is, the config's `permissions` array
+  is the backstop, not the plugin guard.
+
+## The config has two dialects
+
+`oc-harness use --target v1|v2|auto` selects one; the default is `v1`, so
+regenerating an existing install writes the keys it wrote before. `auto` reads
+`opencode --version` and picks V2 for a 2.x binary.
+
+V2 moved `subagent_depth` under `experimental`, removed `batch_tool` and
+`continue_loop_on_deny`, removed `lsp`, and made `external_directory` default
+to **allow**. A V1 file under V2 is accepted and those keys are ignored, so
+the file looks tuned and enforces none of them. `npm run gate:v2` compiles a V2
+config and reads the resolved result back through `opencode debug config`; it
+skips cleanly when no 2.x binary is installed.
 
 ## A global `permission.edit: "ask"` silently un-locks every read-only agent
 

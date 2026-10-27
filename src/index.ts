@@ -6,130 +6,45 @@
 // load time. Only plugin functions belong in this file; consumers import the
 // library modules (profile, config, rules) directly, per the package exports map.
 //
-// Each concern lives in its own module so a project can install only the ones
-// it wants. Nothing here names a model: which model is in use, what effort each
-// role gets, and how much context to reserve all come from a profile.
+// Two loaders read this module:
+//   - OpenCode 1 calls the default export as a function and takes the hooks it
+//     returns.
+//   - OpenCode 2 reads `{ id, setup }` and calls `setup(ctx)`, registering the
+//     plugin on `ctx.tool`, `ctx.session` and `ctx.event`.
+//
+// The hook bodies live in `harness-hooks.ts` so both paths run the same guard,
+// pruner, router and telemetry instead of two copies drifting apart.
 
-import { mkdirSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
 import type { Plugin } from "./plugin.js"
-import { GuardPlugin } from "./guard.js"
-import { PrunePlugin } from "./prune.js"
-import { RouterPlugin } from "./router.js"
-import { TelemetryPlugin } from "./telemetry.js"
-import { applyEffort, planEffort } from "./effort.js"
-import { profileIdFromConfig } from "./profile.js"
-import { projectRoot } from "./project.js"
+import { createHarnessHooks, type HarnessOptions } from "./harness-hooks.js"
+import { setupV2, type V2Context } from "./v2-runtime.js"
 
-export interface HarnessOptions {
-  /** Profile id. Defaults to the one recorded in the config by `oc-harness use`. */
-  profile?: string
-  /** Load a subset. Defaults to all four. */
-  only?: Array<"guard" | "prune" | "router" | "telemetry">
-}
+export type { HarnessOptions } from "./harness-hooks.js"
 
 const harness: Plugin = async (ctx, options?: HarnessOptions) => {
-  const opts = (options ?? {}) as HarnessOptions
-  const want = new Set(opts.only ?? ["guard", "prune", "router", "telemetry"])
-
-  const plugins: Plugin[] = []
-  if (want.has("guard")) plugins.push(GuardPlugin)
-  if (want.has("telemetry")) plugins.push(TelemetryPlugin)
-  if (want.has("router")) plugins.push(RouterPlugin)
-  if (want.has("prune")) plugins.push(PrunePlugin)
-
-  const merged: Record<string, any> = {}
-  for (const p of plugins) {
-    const hooks = await p(ctx, {})
-    for (const [name, fn] of Object.entries(hooks)) {
-      const existing = merged[name]
-      merged[name] =
-        typeof existing === "function" && typeof fn === "function"
-          ? async (...a: unknown[]) => {
-              await existing(...a)
-              await (fn as (...b: unknown[]) => unknown)(...a)
-            }
-          : fn
-    }
-  }
-
-  // Effort assignment belongs to the config hook, which runs once at startup.
-  // Chained after the router so a failover profile wins.
-  const routerConfig = merged["config"]
-  merged["config"] = async (config: any) => {
-    if (routerConfig) await routerConfig(config)
-    // config.harness is unreliable here: OpenCode validates the config against a
-    // schema with additionalProperties false, so our custom key never reaches
-    // the hook. The config file does, so read the id from there.
-    const id = opts.profile ?? config?.harness?.profile ?? profileIdFromConfig()
-    if (!id) return
-    // The PROJECT root, not the worktree: the worktree is the filesystem
-    // root in a project that is not a git repository, so the spent-route
-    // file the router writes is somewhere else entirely.
-    const project = projectRoot(ctx.directory, ctx.worktree)
-    try {
-      // The same set of spent routes the router used, read HERE under the
-      // profile's own provider: a health file keyed `openrouter/<x>` must not
-      // read as a spent `opencode/<x>` for a profile served by opencode.
-      //
-      // The session model is read before the effort plan is applied, because
-      // the router may have moved it onto a fallback while the base route was
-      // spent. Pinning the base back here would undo that failover.
-      const sessionModel =
-        typeof config?.harness?.sessionModel === "string"
-          ? config.harness.sessionModel
-          : undefined
-      applyEffort(config, planEffort(id, { dir: project }), {
-        sessionModel,
-      })
-    } catch {
-      // Never block startup on a bad profile.
-    }
-    // Record it where the prune hook looks, so pruning picks up this
-    // profile's thresholds without access to the resolved config.
-    //
-    // Under the PROJECT root, not the worktree: the worktree is the
-    // filesystem root in a project that is not a git repository, and the
-    // write fails there with a permission error that this catch swallows.
-    // The pruner then finds no active profile and does nothing at all.
-    //
-    // This used to sit inside the same try as applyEffort, and an applyEffort
-    // throw skipped it: a config that could not accept the effort plan (an
-    // agent dictionary OpenCode froze, a model line it rejects) left the
-    // marker stale, and the pruner ran on the PREVIOUS profile's thresholds
-    // until the next clean startup. The marker is therefore written
-    // independently - it is a statement about which profile the config names,
-    // not a consequence of whether the effort plan applied.
-    try {
-      const dir = join(project, ".space")
-      mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, "active"), `${id}\n`)
-    } catch {
-      // Never block startup on a bad profile.
-    }
-  }
-
-  return merged as any
+  return createHarnessHooks(ctx, options)
 }
 
 /**
  * The shape OpenCode 2 accepts. Its loader does not call a V1 function, so the
  * same default export carries a stable id and a setup hook.
- *
- * `setup` is intentionally empty. The kit's hooks are still V1 hooks; this
- * makes the module load under V2 without pretending the guard, pruning, router
- * or telemetry were registered. See docs/KNOWN-LIMITS.md.
  */
 export interface V2PluginShape {
   readonly id: string
-  setup(context?: unknown): Promise<void> | void
+  setup(context?: unknown, options?: HarnessOptions): Promise<void> | void
 }
 
 export type HarnessPluginExport = Plugin & V2PluginShape
 
 export const HarnessPlugin: HarnessPluginExport = Object.assign(harness, {
   id: "opencode-harness-kit",
-  async setup(_context?: unknown): Promise<void> {},
+  setup: (context?: unknown, options?: HarnessOptions) => {
+    // V2 documents a cleanup function as the return value; the plugin type this
+    // repository checks against (1.18.31) still says `void`. Return the cleanup
+    // at runtime and keep the declaration narrow, so both loaders accept it.
+    const cleanup = setupV2(context as V2Context | undefined, options)
+    return cleanup as unknown as void
+  },
 })
 
 export default HarnessPlugin

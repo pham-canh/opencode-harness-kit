@@ -1,4 +1,4 @@
-// src/index.ts
+// src/harness-hooks.ts
 import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join10 } from "node:path";
 
@@ -945,9 +945,12 @@ function projectRoot(directory, worktree) {
   return start;
 }
 
+// src/tool-names.ts
+var SHELL_TOOLS = /* @__PURE__ */ new Set(["bash", "shell"]);
+var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
+
 // src/guard.ts
 var MARKER = "[opencode-harness-kit] blocked";
-var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
 function hunkFollows(lines, from) {
   for (let i = from; i < lines.length; i++) {
     if (/^@@/.test(lines[i])) return true;
@@ -1019,7 +1022,7 @@ function pathsInPatch(text) {
 }
 function writeTargets(tool, args) {
   if (!args || typeof args !== "object") return [];
-  if (tool === "apply_patch") {
+  if (tool === "apply_patch" || tool === "patch") {
     return pathsInPatch(String(args.patchText ?? args.patch ?? ""));
   }
   const out = [];
@@ -1055,7 +1058,7 @@ var GuardPlugin = async ({ worktree, directory }) => {
   return {
     "tool.execute.before": async (input, output) => {
       try {
-        if (input.tool === "bash") {
+        if (SHELL_TOOLS.has(input.tool)) {
           const raw = output.args?.workdir;
           if (typeof raw === "string" && raw.trim()) {
             const target = raw.startsWith("~") ? join4(homedir2(), raw.slice(1)) : resolve2(project, raw);
@@ -1791,7 +1794,7 @@ function stub(part) {
   const tool = part?.tool ?? "tool";
   const state = part?.state ?? {};
   const input = state.input ?? {};
-  if (tool === "bash") {
+  if (SHELL_TOOLS.has(tool)) {
     const cmd = String(input.command ?? "").replace(/\s+/g, " ").slice(0, 80);
     const status = state.status ?? "done";
     let tail = "";
@@ -2415,7 +2418,7 @@ var TelemetryPlugin = async ({ worktree, directory }) => {
     },
     "tool.execute.after": async (input, output) => {
       const command = String(input.args?.command ?? "");
-      if (input.tool === "bash" && ASK_GATED.some((p) => p.test(command))) {
+      if (SHELL_TOOLS.has(input.tool) && ASK_GATED.some((p) => p.test(command))) {
         write(dir, { kind: "guard-allowed", tool: input.tool, command: truncate2(command) });
       }
     },
@@ -2520,8 +2523,8 @@ function applyEffort(config, result, opts = {}) {
   return config;
 }
 
-// src/index.ts
-var harness = async (ctx, options) => {
+// src/harness-hooks.ts
+async function createHarnessHooks(ctx, options) {
   const opts = options ?? {};
   const want = new Set(opts.only ?? ["guard", "prune", "router", "telemetry"]);
   const plugins = [];
@@ -2562,10 +2565,92 @@ var harness = async (ctx, options) => {
     }
   };
   return merged;
+}
+
+// src/v2-runtime.ts
+async function setupV2(context, options) {
+  const ctx = context ?? {};
+  if (!ctx.tool?.hook && !ctx.session?.hook && !ctx.event?.subscribe) return void 0;
+  const opts = options ?? ctx.options ?? {};
+  const directory = ctx.location?.project?.canonical ?? ctx.location?.directory ?? process.cwd();
+  const hooks = await createHarnessHooks(
+    { directory, worktree: ctx.location?.directory ?? directory },
+    opts
+  );
+  const registrations = [];
+  const controller = new AbortController();
+  if (ctx.tool?.hook) {
+    if (hooks["tool.execute.before"]) {
+      registrations.push(
+        await ctx.tool.hook("execute.before", async (event) => {
+          const output = { args: event.input };
+          await hooks["tool.execute.before"]({ tool: event.tool, args: event.input }, output);
+          if (output.args !== event.input) event.input = output.args;
+        })
+      );
+    }
+    if (hooks["tool.execute.after"]) {
+      registrations.push(
+        await ctx.tool.hook("execute.after", async (event) => {
+          const output = {
+            title: "",
+            output: typeof event.result === "string" ? event.result : "",
+            metadata: { status: event.status }
+          };
+          await hooks["tool.execute.after"]({ tool: event.tool, args: event.input ?? {} }, output);
+        })
+      );
+    }
+  }
+  if (ctx.session?.hook) {
+    if (hooks["chat.message"]) {
+      registrations.push(
+        await ctx.session.hook("prompt", async (event) => {
+          const before = String(event?.prompt?.text ?? "");
+          const parts = [{ type: "text", text: before }];
+          await hooks["chat.message"]({}, { parts });
+          const after = parts.filter((p) => p.type === "text").map((p) => p.text).join("");
+          if (after !== before) event.prompt.text = after;
+        })
+      );
+    }
+    if (hooks["experimental.chat.messages.transform"]) {
+      registrations.push(
+        await ctx.session.hook("context", async (event) => {
+          await hooks["experimental.chat.messages.transform"]({}, { messages: event.messages });
+        })
+      );
+    }
+  }
+  if (ctx.event?.subscribe && hooks.event) {
+    void (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          try {
+            await hooks.event({ event });
+          } catch {
+          }
+        }
+      } catch {
+      }
+    })();
+  }
+  return () => {
+    controller.abort();
+    for (const r of registrations) void r?.dispose?.();
+    if (hooks.dispose) void hooks.dispose();
+  };
+}
+
+// src/index.ts
+var harness = async (ctx, options) => {
+  return createHarnessHooks(ctx, options);
 };
 var HarnessPlugin = Object.assign(harness, {
   id: "opencode-harness-kit",
-  async setup(_context) {
+  setup: (context, options) => {
+    const cleanup = setupV2(context, options);
+    return cleanup;
   }
 });
 var index_default = HarnessPlugin;

@@ -22,6 +22,7 @@ import { projectRoot } from "./project.js"
 import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
 import { rotate as rotateFile, MAX_BYTES } from "./telemetry-store.js"
+import { SHELL_TOOLS } from "./tool-names.js"
 
 /**
  * Which profile is active. In order: an explicit environment variable, then the
@@ -131,7 +132,7 @@ function stub(part: any): string {
   const state = part?.state ?? {}
   const input = state.input ?? {}
 
-  if (tool === "bash") {
+  if (SHELL_TOOLS.has(tool)) {
     const cmd = String(input.command ?? "").replace(/\s+/g, " ").slice(0, 80)
     const status = state.status ?? "done"
     let tail = ""

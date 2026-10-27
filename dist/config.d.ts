@@ -150,9 +150,36 @@ export declare const BASH_ALLOWLIST: string[];
  */
 export { BASH_DENYLIST } from "./denylist.js";
 /**
+ * The major version of the installed opencode, or null when it cannot be read.
+ *
+ * `auto` needs this; a test or a `--print` on a machine without opencode must
+ * not fail because the probe did. A null answer is `v1`, which is the version
+ * every key in this file was written against.
+ *
+ * @returns {number | null}
+ */
+export declare function detectOpencodeMajor(): number | null;
+/**
+ * Which config dialect to emit.
+ *
+ * V2 ignores or rejects four keys that V1 accepts, so the same file cannot be
+ * correct for both: `subagent_depth` moved under `experimental`, `batch_tool`
+ * and `continue_loop_on_deny` are gone, `lsp` is gone, and
+ * `external_directory` no longer defaults to `ask`. `v1` is the default so an
+ * existing install regenerates byte-for-byte.
+ *
+ * @param {{ target?: "v1" | "v2" | "auto", opencodeMajor?: number | null }} opts
+ * @returns {"v1" | "v2"}
+ */
+export declare function configTarget(opts?: {
+    target?: "v1" | "v2" | "auto";
+    opencodeMajor?: number | null;
+}): "v1" | "v2";
+/**
  * @param {Profile} p
  * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string>,
- *          configDir?: string, kitRoot?: string, skills?: boolean }} [opts]
+ *          configDir?: string, kitRoot?: string, skills?: boolean,
+ *          target?: "v1" | "v2" | "auto", opencodeMajor?: number | null }} [opts]
  * @returns {string}
  */
 export declare function generateConfig(p: Profile, opts?: {
@@ -162,4 +189,6 @@ export declare function generateConfig(p: Profile, opts?: {
     configDir?: string;
     kitRoot?: string;
     skills?: boolean;
+    target?: "v1" | "v2" | "auto";
+    opencodeMajor?: number | null;
 }): string;

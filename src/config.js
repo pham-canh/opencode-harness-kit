@@ -32,6 +32,7 @@ import {
 import { join, resolve } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
+import { spawnSync } from "node:child_process"
 import { BASH_DENYLIST } from "./denylist.js"
 
 /** @typedef {import("./profile.js").Profile} Profile */
@@ -370,9 +371,53 @@ function userBashRules(base) {
 }
 
 /**
+ * The major version of the installed opencode, or null when it cannot be read.
+ *
+ * `auto` needs this; a test or a `--print` on a machine without opencode must
+ * not fail because the probe did. A null answer is `v1`, which is the version
+ * every key in this file was written against.
+ *
+ * @returns {number | null}
+ */
+export function detectOpencodeMajor() {
+  try {
+    const r = spawnSync("opencode", ["--version"], { encoding: "utf8", timeout: 5000 })
+    if (r.status !== 0) return null
+    const m = String(r.stdout ?? "").trim().match(/^(\d+)\./)
+    return m ? Number(m[1]) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Which config dialect to emit.
+ *
+ * V2 ignores or rejects four keys that V1 accepts, so the same file cannot be
+ * correct for both: `subagent_depth` moved under `experimental`, `batch_tool`
+ * and `continue_loop_on_deny` are gone, `lsp` is gone, and
+ * `external_directory` no longer defaults to `ask`. `v1` is the default so an
+ * existing install regenerates byte-for-byte.
+ *
+ * @param {{ target?: "v1" | "v2" | "auto", opencodeMajor?: number | null }} opts
+ * @returns {"v1" | "v2"}
+ */
+export function configTarget(opts = {}) {
+  const target = opts.target ?? "v1"
+  if (target === "v1" || target === "v2") return target
+  if (target !== "auto") {
+    throw new Error(`unknown config target "${target}"; expected v1, v2 or auto`)
+  }
+  const major =
+    opts.opencodeMajor === undefined ? detectOpencodeMajor() : opts.opencodeMajor
+  return major !== null && major >= 2 ? "v2" : "v1"
+}
+
+/**
  * @param {Profile} p
  * @param {{ base?: Record<string, any>, comments?: boolean, unhealthy?: Set<string>,
- *          configDir?: string, kitRoot?: string, skills?: boolean }} [opts]
+ *          configDir?: string, kitRoot?: string, skills?: boolean,
+ *          target?: "v1" | "v2" | "auto", opencodeMajor?: number | null }} [opts]
  * @returns {string}
  */
 export function generateConfig(p, opts = {}) {
@@ -533,6 +578,34 @@ export function generateConfig(p, opts = {}) {
   delete base_.variant
   delete base_.tool_output
 
+  // V2 moved one key, removed two and changed a default. Splitting the file
+  // rather than emitting both dialects is deliberate: a V2 loader ignores the
+  // V1 spellings, so a merged file would look configured and enforce nothing.
+  const target = configTarget(opts)
+  let v2Depth = 2
+  if (target === "v2") {
+    delete base_.lsp
+    // V2 reads `plugins`; `plugin` is its V1 name and is ignored. A list built
+    // by an earlier `--memory` run would otherwise stop loading the moment the
+    // file moved to the V2 dialect.
+    if (Array.isArray(base_.plugin)) {
+      const merged = [...(Array.isArray(base_.plugins) ? base_.plugins : [])]
+      for (const spec of base_.plugin) if (!merged.includes(spec)) merged.push(spec)
+      base_.plugins = merged
+      delete base_.plugin
+    }
+    const inherited = { ...(base_.experimental ?? {}) }
+    // A file already in the V2 dialect keeps the depth it has under
+    // `experimental`; a V1 file has it at the top level. Reading only the V1
+    // location would silently reset a V2 config to the default on every `use`.
+    v2Depth = inherited.subagent_depth ?? base_.subagent_depth ?? 2
+    delete inherited.batch_tool
+    delete inherited.continue_loop_on_deny
+    delete inherited.subagent_depth
+    base_.experimental = inherited
+    delete base_.subagent_depth
+  }
+
   // The skills paths are cleaned before the config is built, so the header
   // can name what was dropped: a dead entry is dropped from the file and
   // announced, the same way dropped bash rules and removed lanes are. The
@@ -571,10 +644,12 @@ export function generateConfig(p, opts = {}) {
     default_agent: base.default_agent ?? "build",
 
     // The default is 1, which blocks subagents from spawning subagents and so
-    // removes every nested review loop.
-    subagent_depth: base.subagent_depth ?? 2,
+    // removes every nested review loop. V2 reads this under `experimental`;
+    // the top-level key added below is V1-only.
+    ...(target === "v1" ? { subagent_depth: base.subagent_depth ?? 2 } : {}),
     // Omitting `lsp` disables it entirely, so this must be set explicitly.
-    lsp: base.lsp ?? true,
+    // V2 has no config key for it and strips the entry.
+    ...(target === "v1" ? { lsp: base.lsp ?? true } : {}),
     // The kit's own instruction file is always in the list.
     //
     // It used to be `base.instructions ?? [instructionsPath]`, so a config
@@ -604,16 +679,24 @@ export function generateConfig(p, opts = {}) {
     // header - a path to nothing is noise every reader pays for.
     skills: skillPaths.skills ?? {},
 
-    experimental: {
-      batch_tool: true,
-      // A denial is a stop, not a prompt. With this on, opencode hands the
-      // guard's refusal back to the model and continues the same loop; the
-      // measured session made 138 requests and 7,559,016 context tokens in 29
-      // minutes on six guard denials, each retry carrying the whole prompt.
-      // Off, the denial ends the turn and the error is what the user sees.
-      continue_loop_on_deny: false,
-      ...(base.experimental ?? {}),
-    },
+    experimental:
+      target === "v2"
+        ? {
+            // V2's home for the depth V1 keeps at the top level. The same
+            // default, for the same reason: 1 removes every nested review.
+            subagent_depth: v2Depth,
+            ...(base_.experimental ?? {}),
+          }
+        : {
+            batch_tool: true,
+            // A denial is a stop, not a prompt. With this on, opencode hands the
+            // guard's refusal back to the model and continues the same loop; the
+            // measured session made 138 requests and 7,559,016 context tokens in 29
+            // minutes on six guard denials, each retry carrying the whole prompt.
+            // Off, the denial ends the turn and the error is what the user sees.
+            continue_loop_on_deny: false,
+            ...(base_.experimental ?? {}),
+          },
 
     permission: {
       ...(base.permission ?? {}),
@@ -636,6 +719,19 @@ export function generateConfig(p, opts = {}) {
       question: "allow",
       doom_loop: base.permission?.doom_loop ?? "ask",
       bash: bashRules,
+      // V1 asks before a path outside the project; V2 allows it unless told
+      // otherwise. The guard still refuses on the plugin path, but a V2 run
+      // where the plugin failed to load must not become an open filesystem.
+      //
+      // An inherited `allow` is NOT kept: it is what an older V2 config and V2's
+      // own default both contain, so preserving it would leave the hole open
+      // and call the file gated. `deny` is stronger than `ask` and survives.
+      ...(target === "v2"
+        ? {
+            external_directory:
+              base.permission?.external_directory === "deny" ? "deny" : "ask",
+          }
+        : {}),
     },
 
     agent,

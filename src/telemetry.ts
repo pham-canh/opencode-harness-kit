@@ -64,6 +64,7 @@ import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
 import { safeStringify } from "./safe.js"
 import { ASK_GATED } from "./rules.js"
+import { SHELL_TOOLS } from "./tool-names.js"
 
 export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
   // The project root, not the worktree: the worktree is the filesystem root
@@ -176,7 +177,7 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
       // called "guard-attempt" that only ever contained ALLOWED commands was
       // describing the wrong thing entirely.
       const command = String((input.args as { command?: unknown })?.command ?? "")
-      if (input.tool === "bash" && ASK_GATED.some((p) => p.test(command))) {
+      if (SHELL_TOOLS.has(input.tool) && ASK_GATED.some((p) => p.test(command))) {
         write(dir, { kind: "guard-allowed", tool: input.tool, command: truncate(command) })
       }
     },

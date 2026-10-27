@@ -12,6 +12,7 @@ import { join, resolve } from "node:path"
 import { checkBash, checkDenied, checkWrite, insideRoot } from "./rules.js"
 import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
+import { SHELL_TOOLS, WRITE_TOOLS } from "./tool-names.js"
 
 export const MARKER = "[opencode-harness-kit] blocked"
 
@@ -26,9 +27,9 @@ export const MARKER = "[opencode-harness-kit] blocked"
  *
  * `patch` and `changes[].filePath` are not OpenCode 1.19 shapes. They are
  * kept because a third-party plugin may register such a tool, and a tool the
- * guard cannot read is a tool the guard cannot protect.
+ * guard cannot read is a tool the guard cannot protect. `patch` is also the
+ * V2 name for `apply_patch`, so both names are in the shared set.
  */
-const WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "patch"])
 
 /**
  * Whether a hunk header follows, before another file's headers do.
@@ -194,7 +195,11 @@ export function pathsInPatch(text: string): string[] {
  */
 export function writeTargets(tool: string, args: any): string[] {
   if (!args || typeof args !== "object") return []
-  if (tool === "apply_patch") {
+  // Both names take a whole patch as `patchText`: OpenCode 1 calls the tool
+  // `apply_patch` and OpenCode 2 calls it `patch`. Reading the patch only for
+  // the V1 name meant the V2 tool produced no targets, and the guard's
+  // fail-closed branch then refused every patch with "unknown write target".
+  if (tool === "apply_patch" || tool === "patch") {
     return pathsInPatch(String(args.patchText ?? args.patch ?? ""))
   }
   const out: string[] = []
@@ -247,7 +252,7 @@ export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
   return {
     "tool.execute.before": async (input: any, output: any) => {
       try {
-        if (input.tool === "bash") {
+        if (SHELL_TOOLS.has(input.tool)) {
           // The bash tool takes a `workdir`, and it becomes the command's
           // working directory. A command run from outside the project is
           // writing outside the project, which is the one thing the scope

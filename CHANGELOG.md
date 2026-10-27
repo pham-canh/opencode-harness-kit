@@ -42,10 +42,20 @@ blind.
 - **`oc-harness mcp`.** A read-only MCP server over stdio: status, report,
   evidence, events, health and the plan (`harness_tasks`, including each task's
   `accept:` line). There is no tool that starts or changes a run.
-- **An OpenCode 2 loadable entrypoint.** The default export is still the V1
-  plugin function and now also carries `id` and `setup()`, so a V2 loader
-  accepts the module. The four V1 hooks are not ported; `docs/KNOWN-LIMITS.md`
-  spells out what a V2 session does and does not get.
+- **The kit's hooks run on OpenCode 2.** The default export is still the V1
+  plugin function and also carries `id` and `setup()`. `setup(ctx)` builds the
+  same hook map through `src/harness-hooks.ts` and registers it on `ctx.tool`,
+  `ctx.session` and `ctx.event`, so the guard, pruner, router and telemetry
+  enforce on both APIs. What the bridge cannot carry (`config`, `chat.params`,
+  Code Mode) is listed in `docs/KNOWN-LIMITS.md`.
+- **`oc-harness use --target v1|v2|auto`.** Picks the config dialect. V2 moved
+  `subagent_depth` under `experimental`, removed `batch_tool`,
+  `continue_loop_on_deny` and `lsp`, and stopped asking before an outside path.
+  The default stays `v1`, so an existing install regenerates unchanged; `auto`
+  reads `opencode --version`.
+- **`npm run gate:v2`.** Compiles a V2 config and reads it back through
+  `opencode debug config`, asserting the four moved or removed keys. It skips
+  with exit 0 when no 2.x binary is installed, so it stays out of `npm test`.
 - **`accept:` in `.space/tasks.md`.** An optional acceptance line, shown to the
   builder before the verify command. It is prose, so it never replaces the
   command that defines done.

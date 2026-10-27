@@ -1583,6 +1583,14 @@ function configDrift(p, actual) {
         comments: false,
         configDir: CONFIG_DIR,
         kitRoot: ROOT,
+        // Compare in the dialect the file is already in. Probing the installed
+        // opencode here would report every V2 config as drift on a machine
+        // without opencode, and every V1 config on a machine that has V2.
+        target:
+          actual?.experimental?.subagent_depth !== undefined ||
+          actual?.permission?.external_directory !== undefined
+            ? "v2"
+            : "v1",
       }),
     )
   } catch (err) {
@@ -1797,11 +1805,20 @@ async function cmdUse(id, catalog = null, sink = {}) {
   // Relative skills paths resolve against the same directory the file lives
   // in - the one OpenCode reads them against. The toolkit default assumes
   // the standard config dir; the CLI knows where it actually wrote this one.
+  // Which config dialect to write. `auto` reads the installed opencode; the
+  // default stays V1 so regenerating an existing install does not move keys
+  // under the reader.
+  /** @type {"v1" | "v2" | "auto"} */
+  const target = /** @type {any} */ (opt("--target") ?? "v1")
+  if (!["v1", "v2", "auto"].includes(target)) {
+    fail(`--target must be v1, v2 or auto, not "${target}"`)
+  }
   const out = generateConfig(p, {
     base: effectiveBase,
     comments: true,
     configDir: CONFIG_DIR,
     skills: !flag("--no-skills"),
+    target,
   })
   if (flag("--print")) {
     process.stdout.write(out)
@@ -3775,6 +3792,7 @@ try {
     --retention    filter list by retention class
     --free         list free profiles only
     --memory       turn on the memory plugin (--memory=<id> to pick one)
+    --target       use: v1, v2 or auto (which config dialect to write)
     --strict       doctor: fail on perishable catalogue drift too
     --watch        doctor: keep watching the catalogue, report what disappeared
     --check-models doctor: one run, non-zero when a shipped model is gone

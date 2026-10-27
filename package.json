@@ -92,7 +92,8 @@
     "prepublishOnly": "npm run build",
     "build:types": "tsc -p tsconfig.types.json",
     "test:loop": "OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json node --test test/loop-e2e.test.js test/cli-work.test.js test/work.test.js test/plan.test.js",
-    "gate:loop": "node eval/loop-gate.mjs"
+    "gate:loop": "node eval/loop-gate.mjs",
+    "gate:v2": "node eval/v2-smoke.mjs"
   },
   "keywords": [
     "opencode",
