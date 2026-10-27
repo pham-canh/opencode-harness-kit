@@ -1737,10 +1737,10 @@ function profileIdFromConfig() {
   if (!existsSync3(file)) return null;
   try {
     const parsed = parseJsonc(readFileSync(file, "utf8"));
-    const harness = parsed?.harness;
-    const id = harness && typeof harness === "object" ? (
+    const harness2 = parsed?.harness;
+    const id = harness2 && typeof harness2 === "object" ? (
       /** @type {{profile?: unknown}} */
-      harness.profile
+      harness2.profile
     ) : null;
     return typeof id === "string" && id ? id : null;
   } catch {
@@ -2521,7 +2521,7 @@ function applyEffort(config, result, opts = {}) {
 }
 
 // src/index.ts
-var HarnessPlugin = async (ctx, options) => {
+var harness = async (ctx, options) => {
   const opts = options ?? {};
   const want = new Set(opts.only ?? ["guard", "prune", "router", "telemetry"]);
   const plugins = [];
@@ -2563,6 +2563,11 @@ var HarnessPlugin = async (ctx, options) => {
   };
   return merged;
 };
+var HarnessPlugin = Object.assign(harness, {
+  id: "opencode-harness-kit",
+  async setup(_context) {
+  }
+});
 var index_default = HarnessPlugin;
 export {
   HarnessPlugin,

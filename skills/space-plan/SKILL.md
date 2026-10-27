@@ -42,7 +42,7 @@ file, and every later step reads the file instead of the conversation.
 - Path: `.space/tasks.md` in the project you are planning for.
 - Format: [`reference/task-template.md`](reference/task-template.md) — goal,
   constraints, decisions, risks, and one task per bullet with its files, its
-  concrete change, and its verify command.
+  concrete change, its acceptance line, and its verify command.
 - `space-plan` creates it and keeps the Tasks section current. `space-build`
   works from the task in the file. `space-review` diffs against it.
   `space-finish` treats any task still `pending` or `blocked` as unfinished.
@@ -74,6 +74,7 @@ Skip it for a single obvious edit. Writing a plan for `fix the typo` is waste.
 4. **Break it into tasks that fit in a few minutes each.** For every task:
    - exact file paths
    - the concrete change, not "handle errors"
+   - the acceptance line: what a reviewer can recognise as the result
    - the verify command, and what passing looks like
 5. **Order so the repository stays working.** Every step should leave the tests
    green. A plan whose middle step is red is a plan that gets abandoned.

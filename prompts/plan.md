@@ -50,9 +50,11 @@ anything else is rejected before an agent is called:
 - [ ] <task title>
   - files: <exact paths, comma separated>
   - change: <what changes, concretely>
+  - accept: <how a reviewer recognises the finished result>
   - verify: <exact command that fails before the change and passes after>
   - status: pending
 ```
 
-`files`, `change` and `verify` are required. `verify` must be a command that can
-fail - `true`, `echo ok` or a bare `exit 0` proves nothing and is refused.
+`files`, `change` and `verify` are required. `accept` is optional prose for the
+builder; it never replaces `verify`. `verify` must be a command that can fail -
+`true`, `echo ok` or a bare `exit 0` proves nothing and is refused.

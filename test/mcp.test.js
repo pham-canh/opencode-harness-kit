@@ -27,7 +27,14 @@ test("initialize and tools/list describe a read-only server", async () => {
   const list = await handleMessage("/tmp", { jsonrpc: "2.0", id: 2, method: "tools/list" })
   assert.equal(list.result.tools.length, TOOLS.length)
   assert.ok(TOOLS.every((tool) => tool.name.startsWith("harness_")))
-  const readOnly = new Set(["harness_status", "harness_report", "harness_evidence", "harness_events", "harness_health"])
+  const readOnly = new Set([
+    "harness_status",
+    "harness_report",
+    "harness_evidence",
+    "harness_events",
+    "harness_health",
+    "harness_tasks",
+  ])
   assert.ok(TOOLS.every((tool) => readOnly.has(tool.name)))
 })
 
@@ -43,6 +50,44 @@ test("harness_status returns the current record and no write tools exist", async
   assert.equal(body.id, "run-mcp")
   assert.equal(body.phase, "build")
   assert.deepEqual(body.tasks, [{ title: "one", status: "pending", phase: "pending" }])
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("harness_tasks returns the plan including acceptance", async () => {
+  const dir = scratch()
+  writeFileSync(
+    join(dir, ".space", "tasks.md"),
+    `# Ship the plan.\n\n## Constraints\n- offline\n\n## Decisions\n- keep V1\n\n## Risks\n- none\n\n## Tasks\n- [ ] one\n  - files: a\n  - change: b\n  - accept: a exists\n  - verify: true\n  - status: pending\n`,
+  )
+  const res = await handleMessage(dir, {
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "harness_tasks", arguments: {} },
+  })
+  const body = JSON.parse(res.result.content[0].text)
+  assert.equal(body.ok, true)
+  assert.equal(body.goal, "Ship the plan.")
+  assert.equal(body.constraints, "- offline")
+  assert.equal(body.decisions, "- keep V1")
+  assert.equal(body.risks, "- none")
+  assert.deepEqual(body.tasks, [
+    { title: "one", files: "a", change: "b", accept: "a exists", verify: "true", status: "pending" },
+  ])
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("harness_tasks explains a missing plan instead of throwing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-mcp-empty-"))
+  const res = await handleMessage(dir, {
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/call",
+    params: { name: "harness_tasks", arguments: {} },
+  })
+  const body = JSON.parse(res.result.content[0].text)
+  assert.equal(body.ok, false)
+  assert.match(body.reason, /\.space\/tasks\.md/)
   rmSync(dir, { recursive: true, force: true })
 })
 

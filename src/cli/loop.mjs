@@ -153,6 +153,7 @@ function loopFlags() {
     review: flag("--review"),
     maxFixRounds: optionalNumber(opt("--max-fix-rounds")),
     reviewFixRounds: optionalNumber(opt("--review-fix-rounds")),
+    verifyRepeats: positiveNumber(opt("--verify-repeats"), 1),
     maxTokens: optionalNumber(opt("--max-tokens")),
     maxTaskTokens: optionalNumber(opt("--max-task-tokens")),
     maxTaskMinutes: optionalNumber(opt("--max-task-minutes")),

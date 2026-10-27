@@ -13,6 +13,7 @@
 // the declarations it produces are never reached from `dist/index.d.ts`.
 
 import type { Plugin as OpencodePlugin } from "@opencode-ai/plugin"
+import type { Plugin as OpencodeV2Plugin } from "@opencode-ai/plugin/v2/promise"
 
 import type { Plugin } from "./plugin.js"
 
@@ -30,6 +31,10 @@ const _prune: OpencodePlugin = PrunePlugin
 const _router: OpencodePlugin = RouterPlugin
 const _telemetry: OpencodePlugin = TelemetryPlugin
 const _harness: OpencodePlugin = HarnessPlugin
+
+// The same entrypoint has to satisfy OpenCode 2, which looks for id + setup.
+// The V1 hook surface is not ported; only the loadable shape is promised.
+const _harnessV2: OpencodeV2Plugin = HarnessPlugin
 
 // And the other way round: the local type has to be wide enough to hold
 // them, so a plugin written against the local type is still a valid one.

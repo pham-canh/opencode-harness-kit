@@ -6,7 +6,7 @@
 // the goal, the constraints, the decisions, any prose a human added -- survives
 // a rewrite untouched.
 
-export const TASK_FIELDS = ["files", "change", "verify", "status", "output"]
+export const TASK_FIELDS = ["files", "change", "accept", "verify", "status", "output"]
 
 const SECTIONS = ["Constraints", "Decisions", "Risks", "Tasks"]
 
@@ -22,6 +22,7 @@ const fieldRe = new RegExp(`^\\s+-\\s+(${TASK_FIELDS.join("|")})\\s*:\\s*(.*)$`)
  * @property {string} title      the task on one line
  * @property {string} files      which files it is allowed to touch
  * @property {string} change     what it is supposed to change
+ * @property {string} accept     how a reader recognises the finished result
  * @property {string} verify     the command that proves it
  * @property {string} status     pending | done | blocked
  * @property {string} output     the output that command actually produced
@@ -98,6 +99,7 @@ export function parseTasks(text) {
       title,
       files: "",
       change: "",
+      accept: "",
       verify: "",
       status: "",
       output: "",
@@ -488,6 +490,7 @@ export function taskPrompt(task) {
   const out = [task.title]
   if (task.files) out.push("", `Files: ${task.files}`)
   if (task.change) out.push("", `Change: ${task.change}`)
+  if (task.accept) out.push("", `Acceptance: ${task.accept}`)
   if (task.verify) out.push("", `Verify: ${task.verify}`)
   return out.join("\n")
 }

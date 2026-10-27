@@ -32,7 +32,7 @@ function tailBytes(text, limit = MAX_TAIL_BYTES) {
 /**
  * Build the record for one verify execution. Pure: no filesystem, no clock.
  *
- * @param {{ runId?: string | null, planHash?: string | null, task?: string | null, phase?: string, command: string, result: any, route?: string | null, attempt?: number | null, at?: string }} input
+ * @param {{ runId?: string | null, planHash?: string | null, task?: string | null, phase?: string, command: string, result: any, route?: string | null, attempt?: number | null, at?: string, repeat?: number, repeats?: number }} input
  */
 export function verifyEntry({
   runId = null,
@@ -44,6 +44,8 @@ export function verifyEntry({
   route = null,
   attempt = null,
   at = new Date().toISOString(),
+  repeat = 1,
+  repeats = 1,
 }) {
   const output = String(result?.output ?? "")
   return {
@@ -59,6 +61,11 @@ export function verifyEntry({
     exit: result?.status ?? null,
     ok: result?.ok === true,
     seconds: result?.seconds ?? 0,
+    // A repeated verify is several executions of one command. Keeping the
+    // ordinal on every record is what lets a reader see that run 2 failed
+    // instead of inferring it from a count.
+    repeat,
+    repeats,
     sha256: createHash("sha256").update(output).digest("hex"),
     outputBytes: Buffer.byteLength(output),
     outputTail: redact(tailBytes(output)),

@@ -600,6 +600,10 @@ oc-harness plan "<request>"  turn a request into .space/tasks.md, and refuse a p
 oc-harness work "<request>"  plan when needed, then build, verify, review and finish
 ```
 
+`oc-harness mcp` answers `harness_status`, `harness_report`, `harness_evidence`,
+`harness_events`, `harness_health` and `harness_tasks` over stdio. Every tool is
+a read: the plan, the run record and the evidence, never resume or work.
+
 `work` is strict by default: it wants `--review`, `--final-verify`,
 `--final-review`, `--worktree` and `--commit` (and a git repository). For a
 quick local run on a dirty tree, pass `--no-strict`.
@@ -842,6 +846,20 @@ give it one:
 | `prune.ts` | `experimental.chat.messages.transform` | Replaces old tool output with a one-line stub. |
 | `router.ts` | `config`, `event`, `chat.message` | Moves a lane to the next rung of its chain when a route is spent. |
 | `telemetry.ts` | `event`, `tool.execute.after` | Local JSONL, gitignored, never a network call. |
+
+### OpenCode 2 and the V1 plugin surface
+
+OpenCode 2 does not load a V1 plugin. The config key is `plugins` rather than
+`plugin`, and the module shape is `Plugin.define({ id, setup(ctx) })` rather
+than a default-exported function that returns hooks. A V1 plugin under V2 is
+skipped without an error, so the session looks normal and is unguarded.
+
+This package's default export has both shapes: it is still the V1 function, and
+it carries `id` plus `setup()` so a V2 loader accepts it. That makes the module
+load under V2; it does **not** port the four hooks in the table above. Under V2
+the guard, pruning, router and telemetry are not registered yet. See
+[`docs/KNOWN-LIMITS.md`](docs/KNOWN-LIMITS.md#opencode-2-does-not-load-v1-plugins)
+for the compatibility table and what `setup()` does.
 
 Both `.space/telemetry.jsonl` and `.space/prune.jsonl` are written in the
 **project**, not wherever opencode was started from. The prune log used to
@@ -1114,8 +1132,10 @@ the first agent is called.
 
 `oc-harness plan "<request>"` turns a request into `.space/tasks.md`, and
 refuses to write a plan the loop cannot run: every task needs `files:`,
-`change:` and a `verify:` that can fail. The plan is validated before it
-replaces an existing file; a rejected plan never overwrites a good one.
+`change:` and a `verify:` that can fail. An optional `accept:` line says what a
+reviewer recognises as the result; the builder sees it, but it never replaces
+the verify command. The plan is validated before it replaces an existing file;
+a rejected plan never overwrites a good one.
 
 `oc-harness work "<request>"` is the whole sequence in one command: plan if
 there is no executable plan, run the loop, then final verify and final review.
@@ -1184,8 +1204,12 @@ command list on this one path.
 | 5 | a review failed after its fix rounds, or the reviewer's answer was not a verdict |
 
 `--final-verify "<cmd>"` runs one command after the last task - the project's
-whole suite, not one task's slice. `--final-review` reviews the whole diff from
-the commit the run started at, not just the last task. `--json` prints one
+whole suite, not one task's slice. `--verify-repeats <n>` runs every task
+verify, and the final verify, up to `n` times and stops at the first failure;
+each execution gets its own evidence entry with `repeat` and `repeats`, so a
+flaky second run is visible instead of averaged away. The default is 1.
+`--final-review` reviews the whole diff from the commit the run started at, not
+just the last task. `--json` prints one
 machine-readable report on stdout and sends human progress to stderr;
 `oc-harness status` answers "what did the last run do" from the record.
 

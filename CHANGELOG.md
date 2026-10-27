@@ -40,7 +40,18 @@ blind.
   `--agent-command` (or `OC_HARNESS_AGENT_CMD`); `{prompt}`, `{role}` and
   `{cwd}` are substituted, and the prompt goes on stdin otherwise.
 - **`oc-harness mcp`.** A read-only MCP server over stdio: status, report,
-  evidence, events and health. There is no tool that starts or changes a run.
+  evidence, events, health and the plan (`harness_tasks`, including each task's
+  `accept:` line). There is no tool that starts or changes a run.
+- **An OpenCode 2 loadable entrypoint.** The default export is still the V1
+  plugin function and now also carries `id` and `setup()`, so a V2 loader
+  accepts the module. The four V1 hooks are not ported; `docs/KNOWN-LIMITS.md`
+  spells out what a V2 session does and does not get.
+- **`accept:` in `.space/tasks.md`.** An optional acceptance line, shown to the
+  builder before the verify command. It is prose, so it never replaces the
+  command that defines done.
+- **`--verify-repeats <n>`.** Runs each task verify, and the final verify, up to
+  `n` times and stops at the first failure. Every execution is its own evidence
+  entry (`repeat` and `repeats`), so a flaky second run stays visible. Default 1.
 - **OTLP export.** With `OTEL_EXPORTER_OTLP_ENDPOINT` set, each run event is
   also sent as an OTLP/HTTP span. A collector that is down never fails the run.
 - **`run.schema.json`.** The written `run@2` record, so a script can validate

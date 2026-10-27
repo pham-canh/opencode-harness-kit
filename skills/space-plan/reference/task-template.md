@@ -20,12 +20,14 @@ has been pruned. Never keep it in your head.
 - [ ] <task, small enough to finish in a few minutes>
   - files: <exact paths to change>
   - change: <what the change is, concretely, not "handle errors">
+  - accept: <how a reader recognises the finished result>
   - verify: <the exact command that proves it, and nothing else>
   - status: <pending | done | blocked>
   - output: <the command's verbatim final lines>
 - [x] <finished task>
   - files: <paths>
   - change: <what was done, including anything the original task did not name>
+  - accept: <the result a reader can check>
   - verify: <the command that was actually run>
   - output: <the command's verbatim final lines>
   - status: done
@@ -36,6 +38,11 @@ output of that command goes on the `output:` line under it, never on the
 `verify:` line and never appended to it: a `verify:` that reads
 `npm test - 3 passed` is a command that does not exist, and the loop would
 fail on the command rather than on the work.
+
+`accept:` is prose and is optional. It answers "what would a reviewer accept as
+the result?" when the verify command proves behaviour but not the requirement,
+and the builder sees it before the command. It never replaces `verify:`: prose
+cannot fail, so it cannot be the definition of done.
 
 How the loop uses it:
 

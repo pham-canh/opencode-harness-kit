@@ -2,6 +2,31 @@
 
 Written down so nobody spends a day rediscovering them.
 
+## OpenCode 2 does not load V1 plugins
+
+The same package has two plugin shapes and two config keys, and picking the
+wrong pair fails without an error on the run itself.
+
+| | OpenCode 1 | OpenCode 2 |
+|---|---|---|
+| config key | `plugin` | `plugins` |
+| module shape | a default-exported function | `Plugin.define({ id, setup })` |
+| registration | the function returns a hooks object | `setup(ctx)` uses the context domains |
+| kit status | guard, prune, router and telemetry are registered | the entrypoint loads, but the V1 hooks are **not** registered |
+
+The failure is silent in the way that matters: a V1 plugin under V2 is simply
+not started, so the session looks normal and is unguarded. Confirmed against
+`@opencode-ai/plugin@1.19.2`: its `v2/promise` export declares `Plugin` as
+`{ id, setup(context) }`, and its V1 export still types a plugin as a function.
+
+`src/index.ts` therefore exports one default that can be called as the V1
+function and also carries `id` and `setup()`, so a V2 loader accepts the module
+instead of skipping it. `setup()` is deliberately a no-op for now: it proves
+the entrypoint loads, not that the guard, pruning, routing or telemetry run.
+Porting those hooks to the V2 context is separate work, and until it lands a
+V2 session gets the config and the lanes but not the protections. Run
+`oc-harness verify` and keep the V1 path when those protections matter.
+
 ## A global `permission.edit: "ask"` silently un-locks every read-only agent
 
 Worth knowing before you hand-edit the generated config, because the failure is

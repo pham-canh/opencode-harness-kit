@@ -825,6 +825,7 @@ export class CheckpointError extends Error {
  *   maxRounds?: number,
  *   budgetMinutes?: number,
  *   verifyTimeoutMs?: number,
+ *   verifyRepeats?: number,
  *   allowExtraFiles?: boolean,
  *   forceUnlock?: boolean,
  *   maxFixRounds?: number,
@@ -870,6 +871,9 @@ export function runLoop(options) {
   const budgetMs = (o.budgetMinutes ?? 45) * 60_000
   const maxFixRounds = Number.isInteger(o.maxFixRounds) ? o.maxFixRounds : 2
   const reviewFixRounds = Number.isInteger(o.reviewFixRounds) ? o.reviewFixRounds : 2
+  // A repeated verify is the same command run again, stopped at the first
+  // failure. Default 1 keeps the cost and the evidence of an existing run.
+  const verifyRepeats = Number.isInteger(o.verifyRepeats) && o.verifyRepeats > 0 ? o.verifyRepeats : 1
   const maxTokens = o.maxTokens ?? null
   const maxTaskTokens = Number.isFinite(o.maxTaskTokens) && o.maxTaskTokens > 0 ? o.maxTaskTokens : null
   const maxTaskMs = o.maxTaskMinutes ? o.maxTaskMinutes * 60_000 : null
@@ -1318,30 +1322,41 @@ export function runLoop(options) {
         }
         if (stateTask) stateTask.phase = "verify"
         if (run) applyTransition(run, "verify", { task: task.title, detail: { attempt: stateTask?.attempts ?? null } })
-        const verify = task.verify
-          ? runVerify(sandboxed(task.verify), {
-              cwd,
-              timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))),
-              env: process.env,
-            })
-          : { ok: false, status: null, output: "no verify command", seconds: 0 }
-        lastVerify = verify
-        // The verify command already ran; its output is in the record. What the
-        // loop refuses to do is start a fix round after someone asked it to stop.
-        const stoppedAfterVerify = interruption(verify?.signal)
-        if (stoppedAfterVerify) return stoppedAfterVerify
-        const evidence = verifyEntry({
-          runId: run?.id ?? null,
-          planHash: run?.planHash ?? null,
-          task: task.title,
-          phase: "verify",
-          command: task.verify ?? "",
-          result: verify,
-          route: run?.routes?.current ?? null,
-          attempt: stateTask?.attempts ?? null,
-        })
-        if (stateTask) stateTask.verifyRuns = [...(stateTask.verifyRuns ?? []), evidence]
-        appendVerify(cwd, evidence)
+        // Each repetition is a real execution with its own evidence record.
+        // The timeout is recomputed per execution so the whole sequence still
+        // shares the run budget, and a failure stops the sequence because the
+        // next run of a command that just failed proves nothing new.
+        let verify = null
+        for (let repeat = 1; repeat <= verifyRepeats; repeat++) {
+          const attempt = task.verify
+            ? runVerify(sandboxed(task.verify), {
+                cwd,
+                timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))),
+                env: process.env,
+              })
+            : { ok: false, status: null, output: "no verify command", seconds: 0 }
+          // The verify command already ran; its output is in the record. What the
+          // loop refuses to do is start a fix round after someone asked it to stop.
+          const stoppedAfterVerify = interruption(attempt?.signal)
+          if (stoppedAfterVerify) return stoppedAfterVerify
+          verify = attempt
+          lastVerify = attempt
+          const evidence = verifyEntry({
+            runId: run?.id ?? null,
+            planHash: run?.planHash ?? null,
+            task: task.title,
+            phase: "verify",
+            command: task.verify ?? "",
+            result: attempt,
+            route: run?.routes?.current ?? null,
+            attempt: stateTask?.attempts ?? null,
+            repeat,
+            repeats: verifyRepeats,
+          })
+          if (stateTask) stateTask.verifyRuns = [...(stateTask.verifyRuns ?? []), evidence]
+          appendVerify(cwd, evidence)
+          if (!attempt.ok) break
+        }
         checkpoint("verify", {
           task: task.title,
           attempt: stateTask?.attempts ?? null,
@@ -1563,20 +1578,27 @@ export function runLoop(options) {
         })
       }
       if (run) applyTransition(run, "final-verify", { task: "final verify" })
-      const final = runVerify(sandboxed(o.finalVerify), { cwd, timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))), env: process.env })
-      appendVerify(
-        cwd,
-        verifyEntry({
-          runId: run?.id ?? null,
-          planHash: run?.planHash ?? null,
-          task: "final verify",
-          phase: "final-verify",
-          command: o.finalVerify,
-          result: final,
-          route: run?.routes?.current ?? null,
-          attempt: null,
-        }),
-      )
+      let final = null
+      for (let repeat = 1; repeat <= verifyRepeats; repeat++) {
+        const attempt = runVerify(sandboxed(o.finalVerify), { cwd, timeoutMs: Math.max(1, Math.min(o.verifyTimeoutMs ?? 5 * 60_000, budgetMs - (Date.now() - started))), env: process.env })
+        final = attempt
+        appendVerify(
+          cwd,
+          verifyEntry({
+            runId: run?.id ?? null,
+            planHash: run?.planHash ?? null,
+            task: "final verify",
+            phase: "final-verify",
+            command: o.finalVerify,
+            result: attempt,
+            route: run?.routes?.current ?? null,
+            attempt: null,
+            repeat,
+            repeats: verifyRepeats,
+          }),
+        )
+        if (!attempt.ok) break
+      }
       if (run) {
         run.finalVerify = { command: o.finalVerify, exit: final.status ?? null, ok: final.ok === true, seconds: final.seconds ?? 0 }
         checkpoint("final-verify", {

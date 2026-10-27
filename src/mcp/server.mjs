@@ -6,9 +6,11 @@
 // no resume, no work, no cleanup - a client that could start a run would make
 // the approval gate a formality.
 
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
 import { buildReport } from "../cli/report.mjs"
+import { parseTasks } from "../tasks.js"
 import { liveUnhealthy, readHealth } from "../health.js"
 import { readEvidence } from "../driver/evidence.mjs"
 import { readEvents } from "../driver/events.mjs"
@@ -48,6 +50,11 @@ export const TOOLS = [
   {
     name: "harness_health",
     description: "Routes currently recorded as spent or withdrawn.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "harness_tasks",
+    description: "The current plan: goal, constraints, decisions, risks and tasks with their acceptance and verify lines.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
 ]
@@ -94,6 +101,26 @@ export async function callTool(cwd, name, args = {}) {
     }
     case "harness_health":
       return text({ unhealthy: liveUnhealthy(readHealth(cwd)) })
+    case "harness_tasks": {
+      const file = join(cwd, ".space", "tasks.md")
+      if (!existsSync(file)) return text({ ok: false, reason: `no plan recorded in ${file}` })
+      const plan = parseTasks(readFileSync(file, "utf8"))
+      return text({
+        ok: true,
+        goal: plan.goal,
+        constraints: plan.constraints,
+        decisions: plan.decisions,
+        risks: plan.risks,
+        tasks: plan.tasks.map((task) => ({
+          title: task.title,
+          files: task.files,
+          change: task.change,
+          accept: task.accept,
+          verify: task.verify,
+          status: task.status,
+        })),
+      })
+    }
     default:
       throw new Error(`unknown tool ${JSON.stringify(name)}`)
   }
