@@ -156,6 +156,9 @@ export function advance(run, event, detail = {}) {
     // `endedAt` belongs to the attempt that stopped. Carrying it into a live
     // record made `status` print a finish time for a run that is still going.
     ...(reset ? { endedAt: null, next: "" } : {}),
+    // A stale lock and a signal both reach this event; the time belongs to the
+    // event, so every writer that records `interrupted` stamps the same field.
+    ...(terminalEvent?.terminal === "interrupted" ? { interruptedAt: at } : {}),
     updatedAt: at,
     history: [...history, entry].slice(-HISTORY_LIMIT),
   }

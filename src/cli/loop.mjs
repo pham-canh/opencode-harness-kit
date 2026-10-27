@@ -452,7 +452,7 @@ function positionalRequest() {
 }
 
 async function cmdStatus() {
-  const { inspectRunLock, readRun } = await import("../driver/run-state.mjs")
+  const { inspectRunLock, nextActionFor, readRun } = await import("../driver/run-state.mjs")
   const cwd = process.cwd()
   const run = readRun(cwd)
   const tasksFile = join(cwd, ".space", "tasks.md")
@@ -464,13 +464,18 @@ async function cmdStatus() {
   const interrupted = Boolean(run && run.status === "running" && lock.stale)
   const phase = interrupted ? "interrupted" : run?.phase ?? null
   const terminal = interrupted ? "interrupted" : run?.terminal ?? null
-  const next = terminal
-    ? terminal === "done"
+  // The record's own `next` carries the command that matches the stop, such as
+  // the token cap a budget stop needs. Falling back to `nextActionFor` keeps an
+  // old record readable; a stale lock still overrides both because the record
+  // itself has not been reconciled yet.
+  const next =
+    terminal === "done"
       ? ""
-      : "oc-harness resume"
-    : run
-      ? "oc-harness resume"
-      : "oc-harness work"
+      : interrupted
+        ? "oc-harness resume"
+        : run
+          ? run.next || nextActionFor(run)
+          : "oc-harness work"
   // `run` is null when a plan has never been run: still a useful answer.
   const report = { ok: true, run, tasks: summary, phase, terminal, next, lock }
 

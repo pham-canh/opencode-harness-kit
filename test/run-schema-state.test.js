@@ -15,6 +15,7 @@ import Ajv from "ajv"
 
 import {
   PHASES,
+  STATUSES,
   TERMINAL,
   createRun,
   resumeRun,
@@ -26,22 +27,6 @@ import { advance } from "../src/driver/transitions.mjs"
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const schema = JSON.parse(readFileSync(join(ROOT, "run.schema.json"), "utf8"))
 const validate = new Ajv({ strict: false, allErrors: true }).compile(schema)
-
-const STATUSES = [
-  "running",
-  "done",
-  "preflight-failed",
-  "budget",
-  "blocked",
-  "round-cap",
-  "route-failed",
-  "lost-task",
-  "checkpoint-failed",
-  "final-verify-failed",
-  "final-review-failed",
-  "interrupted",
-  "stopped",
-]
 
 // A live phase each terminal event can leave. The event names the edge; this
 // only gives the test a starting point that has one.

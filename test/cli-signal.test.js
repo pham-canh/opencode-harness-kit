@@ -89,7 +89,30 @@ test("interruptRun writes interrupted, leaves the lock, and returns 130", () => 
   assert.equal(record.terminal, "interrupted")
   assert.equal(record.exitCode, 130)
   assert.equal(record.history.at(-1).event, "interrupted")
+  assert.equal(record.interruptedAt, record.history.at(-1).at)
   assert.equal(record.next, "oc-harness resume")
+  assert.equal(result.written, true)
+})
+
+test("a record that cannot be written is not reported as a clean interruption", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oc-interrupt-fail-"))
+  // A file where `.space` should be makes the atomic write fail before the
+  // rename, without needing a permission bit the test runner may ignore.
+  writeFileSync(join(dir, ".space"), "not a directory\n")
+  const run = {
+    ...createRun({ cwd: dir, id: "run-interrupt-fail", goal: "stop" }),
+    phase: "build",
+    status: "running",
+    terminal: null,
+  }
+  let released = false
+
+  const result = interruptRun(dir, { signal: "SIGINT", run, lock: { release: () => (released = true) } })
+  assert.equal(result.code, 2, "a stop that did not reach the disk is a harness refusal")
+  assert.equal(result.written, false)
+  assert.match(result.reason, /interrupted by SIGINT/)
+  assert.match(result.reason, /could not write the run record/)
+  assert.equal(released, true, "the lock is still released, or the next run cannot start")
 })
 
 test("SIGINT during an agent exits 130 and leaves a resumable record", async () => {
@@ -131,6 +154,7 @@ test("SIGINT during an agent exits 130 and leaves a resumable record", async () 
   assert.equal(record.phase, "interrupted")
   assert.equal(record.terminal, "interrupted")
   assert.equal(record.exitCode, 130)
+  assert.ok(record.interruptedAt, "the signal path stamps when it stopped")
   assert.equal(record.next, "oc-harness resume")
   assert.equal(record.tasks[0].status, "running", "the task is in flight, never done")
   assert.equal(existsSync(join(dir, ".space", "run.lock")), false, "the stop releases the lock")

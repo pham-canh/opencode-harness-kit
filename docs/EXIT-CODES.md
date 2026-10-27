@@ -51,7 +51,9 @@ two work requests on the same project cannot interleave.
 terminal sends Ctrl-C to the foreground process group, so the agent or verify
 child dies with the signal and the loop records `interrupted` at its next safe
 point. The record is resumable; the task stays in flight and is re-run by
-`resume`, and the lock is released.
+`resume`, and the lock is released. If the interrupted record cannot be
+written, the command exits 2 with the write error instead of 130, because the
+process stopped but the durable state did not.
 
 `--commit` commits a task before the task file is marked `done`. A refused
 commit is exit 2 with `checkpoint-failed`, and the task stays pending so the

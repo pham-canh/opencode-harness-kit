@@ -58,8 +58,7 @@
         "checkpoint-failed",
         "final-verify-failed",
         "final-review-failed",
-        "interrupted",
-        "stopped"
+        "interrupted"
       ]
     },
     "phase": {

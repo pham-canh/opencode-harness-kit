@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
-import { PHASES, TASK_PHASES, TERMINAL } from "./phases.mjs"
+import { PHASES, STATUSES, TASK_PHASES, TERMINAL } from "./phases.mjs"
 import { applyTransition } from "./transitions.mjs"
 
 export const RUN_SCHEMA = "oc-harness/run@2"
@@ -20,7 +20,7 @@ export const RUN_SCHEMA = "oc-harness/run@2"
 // Re-exported so every caller that imported the vocabulary from here keeps
 // working; the definitions themselves live in `phases.mjs` to break the cycle
 // with the transition table.
-export { PHASES, TASK_PHASES, TERMINAL }
+export { PHASES, STATUSES, TASK_PHASES, TERMINAL }
 
 /**
  * The v1 `status` values, mapped to a terminal state. A v1 record has no
@@ -154,6 +154,7 @@ export function reconcileRunLock(cwd, { force = false, at = new Date().toISOStri
   try {
     updated = applyTransition({ ...run }, "interrupted", { at, exitCode: 2, reason })
     updated.interruptedAt = at
+    updated.endedAt = at
     updated.updatedAt = at
   } catch (err) {
     // A record in a phase the table cannot interrupt is damaged. Removing the

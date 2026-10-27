@@ -98,9 +98,11 @@ function pidAlive(pid) {
 export function interruptRun(cwd, { signal = "SIGINT", run = null, lock = null } = {}) {
   const current = run ?? readRun(cwd)
   const reason = `interrupted by ${signal}`
+  let wrote = { ok: true }
   if (current) {
+    const at = new Date().toISOString()
     try {
-      applyTransition(current, "interrupted", { reason, exitCode: 130 })
+      applyTransition(current, "interrupted", { at, reason, exitCode: 130 })
     } catch {
       current.phase = "interrupted"
       current.terminal = "interrupted"
@@ -108,12 +110,20 @@ export function interruptRun(cwd, { signal = "SIGINT", run = null, lock = null }
     current.status = "interrupted"
     current.exitCode = 130
     current.reason = reason
-    current.endedAt = new Date().toISOString()
+    current.endedAt = at
+    current.interruptedAt = at
     current.next = nextActionFor(current)
-    writeRun(cwd, current)
+    wrote = writeRun(cwd, current)
   }
   lock?.release?.()
-  return { ok: false, code: 130, reason, run: current }
+  if (wrote && wrote.ok === false) {
+    // Returning 130 here would claim a stop the record does not contain. The
+    // interruption itself happened, but its durable half did not, so this is
+    // the harness saying no (exit 2) with the real write error attached.
+    const failed = `${reason}; could not write the run record: ${wrote.error}`
+    return { ok: false, code: 2, reason: failed, run: current, written: false }
+  }
+  return { ok: false, code: 130, reason, run: current, written: Boolean(current) }
 }
 
 /**
@@ -979,7 +989,7 @@ export function runLoop(options) {
   const finish = (stopArgs) => {
     const result = stop(entries, { ...stopArgs, rounds, tokens, run })
     if (run) {
-      const status = result.code === 0 ? "done" : stopArgs.status ?? "stopped"
+      const status = result.code === 0 ? "done" : stopArgs.status ?? "needs-human"
       // One vocabulary on disk: the writer-local status stays for compatibility,
       // and `terminal` is the name a reader switches on. A successful run ends
       // in `finish`; a stopped one stays in the phase that stopped it, so

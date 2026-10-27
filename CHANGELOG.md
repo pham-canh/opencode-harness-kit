@@ -73,6 +73,9 @@ blind.
 - **A task is committed before it is marked done.** A refused commit stops the
   run as `checkpoint-failed` with the task still pending, so the plan never
   claims work git does not have.
+- **`status` prints the record's own next command.** A budget stop reports the
+  `resume --max-tokens` it actually needs instead of a generic resume; a stale
+  lock still overrides it with the reconciliation command.
 
 ### Fixed
 
@@ -98,7 +101,11 @@ blind.
   live `route-failed` record is no longer mistaken for a finished run.
 - **The schema and the state machine share one vocabulary.** `phase`,
   `terminal` and `status` come from `phases.mjs`, so a record the driver writes
-  validates against the schema it ships.
+  validates against the schema it ships. The unused `stopped` status is gone,
+  and a drift test compares the code, the schema and `docs/RUN-STATE.md`.
+- **An interruption stamps `interruptedAt`** on the signal path as well as on
+  stale-lock reconciliation, and a record that cannot be written makes the
+  interruption exit 2 with the write error instead of a misleading 130.
 - `readEvents` no longer lets a torn JSONL line consume one of the requested
   slots.
 - Worktree cleanup ignores the harness's own `.space/` when deciding whether a

@@ -39,3 +39,24 @@ export const TERMINAL = Object.freeze([
   "preflight-failed",
   "interrupted",
 ])
+
+/**
+ * The writer-local status a record can carry. This is a compatibility label,
+ * not the state machine's answer: readers branch on `terminal`. It is here so
+ * the schema, the docs and the writer cannot drift apart without a test saying
+ * so.
+ */
+export const STATUSES = Object.freeze([
+  "running",
+  "done",
+  "preflight-failed",
+  "budget",
+  "blocked",
+  "round-cap",
+  "route-failed",
+  "lost-task",
+  "checkpoint-failed",
+  "final-verify-failed",
+  "final-review-failed",
+  "interrupted",
+])

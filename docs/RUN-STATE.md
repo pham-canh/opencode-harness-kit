@@ -16,7 +16,7 @@ The current schema is `oc-harness/run@2`.
 | `goal` | What the run was asked to do. |
 | `role` | Lane the run is using. |
 | `branch`, `worktree` | Git isolation, when the run uses it. |
-| `status` | Writer-local status: `running`, `done`, `preflight-failed`, `budget`, `blocked`, `round-cap`, `route-failed`, `lost-task`, `checkpoint-failed`, `final-verify-failed`, `final-review-failed`, `interrupted` or `stopped`. `route-failed` is the one live status that can carry `terminal: null`. |
+| `status` | Writer-local status: `running`, `done`, `preflight-failed`, `budget`, `blocked`, `round-cap`, `route-failed`, `lost-task`, `checkpoint-failed`, `final-verify-failed`, `final-review-failed` or `interrupted`. `route-failed` is the one live status that can carry `terminal: null`. |
 | `phase` | Last state machine phase: `intake`, `plan`, `preflight`, `build`, `verify`, `review`, `fix`, `task-done`, `final-verify`, `final-review`, `finish`, `needs-human`, `interrupted`. |
 | `terminal` | `done`, `needs-human`, `route-exhausted`, `verify-failed`, `review-failed`, `budget`, `preflight-failed`, `interrupted`, or `null` while running. |
 | `reason`, `exitCode` | Why the run stopped and the CLI exit code. |
@@ -121,9 +121,15 @@ released, so the next `resume` sees a stopped run rather than a live one.
 `SIGINT` and `SIGTERM` become a stop, not a dead process. A terminal sends
 Ctrl-C to the whole foreground process group, so `spawnSync` returns with the
 agent or verify child's terminating signal; the loop reports that as
-`interrupted`, exit 130, `phase: interrupted`, `terminal: interrupted`, and
-releases the lock. The task stays `running` (in flight, never done) and
-`next` is `oc-harness resume`.
+`interrupted`, exit 130, `phase: interrupted`, `terminal: interrupted`,
+`interruptedAt` set to the same instant as the history entry, and releases the
+lock. The task stays `running` (in flight, never done) and `next` is
+`oc-harness resume`.
+
+If the record cannot be written, the interruption is not reported as a clean
+130: the command exits 2, prints the write error, and still releases the lock,
+so the failure to persist is visible instead of hiding behind a stopped
+process.
 
 The same stop is checked between rounds, after the agent, after verify and
 before the final gates. Because the loop is synchronous, a signal sent to the
