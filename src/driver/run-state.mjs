@@ -423,6 +423,10 @@ export function upgradeRun(value) {
       spentCacheTokens: budget.spentCacheTokens ?? 0,
     },
     routes: {
+      // Spread first: `recordRouteAttempt` keeps its history in `attempts`,
+      // which this list does not name, and naming only three fields dropped it
+      // on every write. The named fields stay last so they are still coerced.
+      ...routes,
       current: routes.current ?? null,
       tried: Array.isArray(routes.tried) ? routes.tried : [],
       skipped: Array.isArray(routes.skipped) ? routes.skipped : [],

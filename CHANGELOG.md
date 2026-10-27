@@ -127,6 +127,24 @@ blind.
 - **An interruption stamps `interruptedAt`** on the signal path as well as on
   stale-lock reconciliation, and a record that cannot be written makes the
   interruption exit 2 with the write error instead of a misleading 130.
+- **`routes.attempts` reaches the disk.** `upgradeRun` rebuilt `routes` from
+  three named fields on every read and write, so the history a failover had just
+  recorded was gone on the next checkpoint. Unknown route fields are now kept.
+- **Verify output is clipped before it becomes a prompt.** The reviewer prompt,
+  the fix-round prompt and the task note take at most 8 KB (2 KB of head, the
+  rest of the tail) with an omitted-byte marker; a 1 MB failing log no longer
+  costs that many tokens on every round or grows `.space/tasks.md` without
+  bound.
+- **The review diff is capped in bytes, not UTF-16 units.** `reviewDiff` measured
+  `Buffer.byteLength` but cut with `slice`, so non-ASCII diffs could be 2-3x the
+  budget and end on half a character. `src/driver/text.mjs` now cuts on the
+  encoded bytes and drops a partial sequence instead of emitting U+FFFD.
+- **The review verdict is redacted before it is written.** `writeVerdict` was
+  the one `.space/` writer that skipped `redactDeep`, so a key quoted in a
+  blocker or in the verify command reached `.space/review/*.json` verbatim.
+- **A late signal does not overwrite a finished run.** `interruptRun` now leaves
+  a record whose status is not `running` untouched and only releases the lock;
+  a `done` run stays `done` instead of being rewritten as `interrupted`.
 - `readEvents` no longer lets a torn JSONL line consume one of the requested
   slots.
 - Worktree cleanup ignores the harness's own `.space/` when deciding whether a

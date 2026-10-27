@@ -53,11 +53,18 @@ import { exportSpan } from "./otel.mjs"
 import { assertPromptFits } from "./lane-budget.mjs"
 import { inspectVerify } from "./policy.mjs"
 import { failureFingerprint, recordFailure } from "./retry.mjs"
-import { createRun, nextActionFor, readRun, redact, runPath, runTask, terminalForStatus, writeRun } from "./run-state.mjs"
+import { clip } from "./text.mjs"
+import { createRun, nextActionFor, readRun, redact, redactDeep, runPath, runTask, terminalForStatus, writeRun } from "./run-state.mjs"
 import { applyTransition, terminalEventFor } from "./transitions.mjs"
 
 const TASKS_PATH = join(".space", "tasks.md")
 const LOCK_PATH = join(".space", "run.lock")
+// A verify command can print a whole test log or a bundled stack trace. The
+// verdict is at both ends, so a failing log keeps its first lines and its last
+// ones; the middle is what a fix round never reads, and it is the part that
+// grows with the test suite.
+const VERIFY_PROMPT_BYTES = 8000
+const VERIFY_PROMPT_HEAD = 2000
 
 /**
  * Whether a process is still there.
@@ -99,6 +106,14 @@ function pidAlive(pid) {
 export function interruptRun(cwd, { signal = "SIGINT", run = null, lock = null } = {}) {
   const current = run ?? readRun(cwd)
   const reason = `interrupted by ${signal}`
+  // A signal that lands after the loop finished is not the stop that ended the
+  // run. Rewriting a `done` record as `interrupted` discards the result the
+  // exit code and the plan already agree on, so the lock is released and the
+  // record is left alone.
+  if (current && current.status !== "running") {
+    lock?.release?.()
+    return { ok: true, code: 0, reason: "run already stopped", run: current, written: false }
+  }
   let wrote = { ok: true }
   if (current) {
     const at = new Date().toISOString()
@@ -506,7 +521,10 @@ export function reviewDiff(cwd, { maxBytes = 200_000, baseRef = null, changesBef
 
   let diff = [tracked, staged].filter((part) => part.trim()).join("\n")
   const truncated = Buffer.byteLength(diff) > maxBytes
-  if (truncated) diff = `${diff.slice(0, maxBytes)}\n[diff truncated at ${maxBytes} bytes]`
+  // `slice` counts UTF-16 units; `maxBytes` counts bytes. The two disagree by
+  // 2-3x on non-ASCII source and the cut could split a character, so the cap
+  // is applied on the encoded bytes.
+  if (truncated) diff = clip(diff, { maxBytes })
 
   return { diff, untracked, truncated }
 }
@@ -521,7 +539,7 @@ export function buildReviewPrompt(task, { diff, untracked }, verifyOutput) {
     ``,
     `The verify command already ran in the orchestrator and passed: ${task.verify}`,
     `Its real output was:`,
-    verifyOutput || "(no output)",
+    clip(verifyOutput || "(no output)", { maxBytes: VERIFY_PROMPT_BYTES, head: VERIFY_PROMPT_HEAD }),
     ``,
     `Review the change against the task. Pass 1: does it do exactly what was asked, with no extra changes? Pass 2: defects that will bite next, each with a concrete consequence.`,
     ``,
@@ -566,7 +584,9 @@ export function verdictPath(cwd, task, round) {
 /** Record a verdict atomically, next to the plan it belongs to. */
 export function writeVerdict(cwd, task, round, verdict, verify) {
   const path = verdictPath(cwd, task, round)
-  const record = {
+  // The reviewer quotes the diff, and a diff can quote a key. Every `.space/`
+  // write is redacted for the same reason; this one was the exception.
+  const record = redactDeep({
     schema: REVIEW_SCHEMA,
     at: new Date().toISOString(),
     task: task.title,
@@ -576,7 +596,7 @@ export function writeVerdict(cwd, task, round, verdict, verify) {
     verdict: verdict.verdict,
     blockers: verdict.blockers,
     notes: verdict.notes,
-  }
+  })
   const tmp = `${path}.tmp`
   try {
     mkdirSync(join(cwd, ".space", "review"), { recursive: true })
@@ -1454,7 +1474,7 @@ export function runLoop(options) {
               code: 2,
               terminal: "needs-human",
               reason: `${task.title}: the same verify failure repeated ${failure.count} times with no new change; stopping instead of spending another fix round. Run \`oc-harness resume\` after changing the code or the command.`,
-              verifyOutput: verify.output ?? "",
+              verifyOutput: clip(verify.output ?? "", { maxBytes: VERIFY_PROMPT_BYTES, head: VERIFY_PROMPT_HEAD }),
             }
             break
           }
@@ -1511,7 +1531,8 @@ export function runLoop(options) {
         if (verifyFixes < maxFixRounds) {
           verifyFixes++
           if (stateTask) stateTask.verifyFailures++
-          fixNote = `The verify command failed (exit ${verify.status ?? "?"}): ${task.verify}\nIts real output was:\n${verify.output || "(no output)"}`
+          const fixOutput = clip(verify.output || "(no output)", { maxBytes: VERIFY_PROMPT_BYTES, head: VERIFY_PROMPT_HEAD })
+          fixNote = `The verify command failed (exit ${verify.status ?? "?"}): ${task.verify}\nIts real output was:\n${fixOutput}`
           checkpoint("fix", {
             task: task.title,
             attempt: stateTask?.attempts ?? null,
@@ -1528,7 +1549,7 @@ export function runLoop(options) {
           code: 4,
           terminal: "verify-failed",
           reason: `${task.title}: verify failed after ${verifyFixes} fix round(s): ${task.verify}${capNote ? `\n${capNote}` : ""}`,
-          verifyOutput: `verify failed after ${verifyFixes} fix rounds: ${task.verify}\n${verify.output || "(no output)"}${capNote ? `\n\n${capNote}` : ""}`,
+          verifyOutput: `verify failed after ${verifyFixes} fix rounds: ${task.verify}\n${clip(verify.output || "(no output)", { maxBytes: VERIFY_PROMPT_BYTES, head: VERIFY_PROMPT_HEAD })}${capNote ? `\n\n${capNote}` : ""}`,
         }
         break
       }
@@ -1553,7 +1574,7 @@ export function runLoop(options) {
         if (current && !isBlocked(current) && !isDone(current)) {
           writeTasks(file, markTask(text, current, {
             status: "blocked",
-            verifyOutput: blocked.verifyOutput ?? lastVerify?.output ?? blocked.reason,
+            verifyOutput: clip(blocked.verifyOutput ?? lastVerify?.output ?? blocked.reason, { maxBytes: VERIFY_PROMPT_BYTES, head: VERIFY_PROMPT_HEAD }),
           }))
         }
         if (stateTask) {
@@ -1595,7 +1616,9 @@ export function runLoop(options) {
             return finish({ reason: `checkpoint failed: ${hook.reason}`, code: hook.code ?? 2, status: "checkpoint-failed" })
           }
         }
-        const output = review ? "review: pass" : lastVerify?.output || ""
+        const output = review
+          ? "review: pass"
+          : clip(lastVerify?.output || "", { maxBytes: VERIFY_PROMPT_BYTES, head: VERIFY_PROMPT_HEAD })
         writeTasks(file, markTask(text, current, { status: "done", verifyOutput: output }))
       }
 
