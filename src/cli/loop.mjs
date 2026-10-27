@@ -651,5 +651,5 @@ async function cmdRun() {
   if (report.code !== 0) process.exitCode = report.code
 }
 
-  return { run: cmdRun, plan: cmdPlan, work: cmdWork, resume: cmdResume, status: cmdStatus, report: cmdReport }
+  return { run: cmdRun, plan: cmdPlan, work: cmdWork, goal: cmdWork, resume: cmdResume, status: cmdStatus, report: cmdReport }
 }

@@ -1867,6 +1867,10 @@ async function cmdUse(id, catalog = null, sink = {}) {
     throw err
   }
   console.log(`\n  ${green("✓")} wrote ${CONFIG_FILE}`)
+  try {
+    const { writeDefaultPolicy } = await import("../src/driver/policy.mjs")
+    writeDefaultPolicy(CONFIG_DIR)
+  } catch {}
   summary(p)
   console.log(`\n  ${stamp("verify with: opencode debug config")}\n`)
 }
@@ -3720,6 +3724,9 @@ try {
       break
     case "work":
       await loopCommands.work()
+      break
+    case "goal":
+      await loopCommands.goal()
       break
     case "resume":
       await loopCommands.resume()

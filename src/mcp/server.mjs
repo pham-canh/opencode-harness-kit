@@ -198,3 +198,9 @@ export function serveStdio({ cwd = process.cwd(), input = process.stdin, output 
 
 // Kept as a string so the server can also be started from a symlinked bin.
 export const SELF_PATH = import.meta.url
+
+
+if (process.argv.includes("--selftest")) {
+  console.log(JSON.stringify({ ok: true, tools: TOOLS.map((t) => t.name) }))
+  process.exit(0)
+}

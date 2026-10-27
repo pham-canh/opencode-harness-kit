@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 // What a verify command is allowed to be.
 //
 // A verify command is the one line an autonomous run trusts as evidence. A
@@ -92,3 +94,37 @@ export function inspectPlan(tasks, { finalVerify = null, allowCompound = false }
 
 /** The exit code this policy uses. Kept in the same range as the other stops. */
 export const POLICY_EXIT = 2
+
+
+export function readPolicy(cwd) {
+  const path = join(cwd, ".space", "policy.json")
+  if (!existsSync(path)) return null
+  try { return JSON.parse(readFileSync(path, "utf8")) } catch { return null }
+}
+
+export function policyDecision(command, policy) {
+  const text = String(command ?? "").trim()
+  if (!policy) return { ok: true, code: null, reason: "", effect: "allow" }
+  const deny = Array.isArray(policy.deny) ? policy.deny : []
+  const allow = Array.isArray(policy.allow) ? policy.allow : []
+  const ask = Array.isArray(policy.ask) ? policy.ask : []
+  for (const p of deny) {
+    if (text === p || text.startsWith(`${p} `)) return { ok: false, code: "policy-deny", reason: `policy denies: ${p}`, effect: "deny" }
+  }
+  for (const p of ask) {
+    if (text === p || text.startsWith(`${p} `)) return { ok: false, code: "policy-ask", reason: `policy asks: ${p}`, effect: "ask" }
+  }
+  if (allow.length && !allow.some((p) => text === p || text.startsWith(`${p} `))) {
+    return { ok: false, code: "policy-deny", reason: "command not in the allow list", effect: "deny" }
+  }
+  return { ok: true, code: null, reason: "", effect: "allow" }
+}
+
+export function writeDefaultPolicy(cwd) {
+  const dir = join(cwd, ".space")
+  mkdirSync(dir, { recursive: true })
+  const path = join(dir, "policy.json")
+  if (existsSync(path)) return path
+  writeFileSync(path, JSON.stringify({ allow: [], deny: ["npm publish", "git push"], ask: [] }, null, 2))
+  return path
+}
