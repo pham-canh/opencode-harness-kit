@@ -15,8 +15,9 @@ import test from "node:test"
 
 import { mkdtemp } from "./helpers.mjs"
 
-const bundle = new URL("../dist/index.js", import.meta.url)
+const bundle = new URL("../dist/v2.js", import.meta.url)
 const { default: HarnessPlugin } = await import(bundle.href)
+const v1 = await import(new URL("../dist/index.js", import.meta.url).href)
 
 const MARKER = "[opencode-harness-kit] blocked"
 
@@ -53,6 +54,18 @@ function fakeContext(dir) {
   }
   return { ctx, tool, session, state }
 }
+
+test("the V2 entrypoint is a plain object, not a function", () => {
+  assert.equal(typeof HarnessPlugin, "object")
+  assert.equal(HarnessPlugin.id, "opencode-harness-kit")
+  assert.equal(typeof HarnessPlugin.setup, "function")
+})
+
+test("the V1 entrypoint stays a function", () => {
+  // V2's loader rejects this shape; V1's loader requires it. Keeping both
+  // entrypoints is what lets one install work on either CLI.
+  assert.equal(typeof v1.default, "function")
+})
 
 test("setup registers the tool, session and event hooks", async () => {
   const dir = mkdtemp("oc-v2-entry-")

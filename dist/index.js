@@ -2567,93 +2567,12 @@ async function createHarnessHooks(ctx, options) {
   return merged;
 }
 
-// src/v2-runtime.ts
-async function setupV2(context, options) {
-  const ctx = context ?? {};
-  if (!ctx.tool?.hook && !ctx.session?.hook && !ctx.event?.subscribe) return void 0;
-  const opts = options ?? ctx.options ?? {};
-  const directory = ctx.location?.project?.canonical ?? ctx.location?.directory ?? process.cwd();
-  const hooks = await createHarnessHooks(
-    { directory, worktree: ctx.location?.directory ?? directory },
-    opts
-  );
-  const registrations = [];
-  const controller = new AbortController();
-  if (ctx.tool?.hook) {
-    if (hooks["tool.execute.before"]) {
-      registrations.push(
-        await ctx.tool.hook("execute.before", async (event) => {
-          const output = { args: event.input };
-          await hooks["tool.execute.before"]({ tool: event.tool, args: event.input }, output);
-          if (output.args !== event.input) event.input = output.args;
-        })
-      );
-    }
-    if (hooks["tool.execute.after"]) {
-      registrations.push(
-        await ctx.tool.hook("execute.after", async (event) => {
-          const output = {
-            title: "",
-            output: typeof event.result === "string" ? event.result : "",
-            metadata: { status: event.status }
-          };
-          await hooks["tool.execute.after"]({ tool: event.tool, args: event.input ?? {} }, output);
-        })
-      );
-    }
-  }
-  if (ctx.session?.hook) {
-    if (hooks["chat.message"]) {
-      registrations.push(
-        await ctx.session.hook("prompt", async (event) => {
-          const before = String(event?.prompt?.text ?? "");
-          const parts = [{ type: "text", text: before }];
-          await hooks["chat.message"]({}, { parts });
-          const after = parts.filter((p) => p.type === "text").map((p) => p.text).join("");
-          if (after !== before) event.prompt.text = after;
-        })
-      );
-    }
-    if (hooks["experimental.chat.messages.transform"]) {
-      registrations.push(
-        await ctx.session.hook("context", async (event) => {
-          await hooks["experimental.chat.messages.transform"]({}, { messages: event.messages });
-        })
-      );
-    }
-  }
-  if (ctx.event?.subscribe && hooks.event) {
-    void (async () => {
-      try {
-        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
-          try {
-            await hooks.event({ event });
-          } catch {
-          }
-        }
-      } catch {
-      }
-    })();
-  }
-  return () => {
-    controller.abort();
-    for (const r of registrations) void r?.dispose?.();
-    if (hooks.dispose) void hooks.dispose();
-  };
-}
-
 // src/index.ts
 var harness = async (ctx, options) => {
   return createHarnessHooks(ctx, options);
 };
-var HarnessPlugin = Object.assign(harness, {
-  id: "opencode-harness-kit",
-  setup: (context, options) => {
-    const cleanup = setupV2(context, options);
-    return cleanup;
-  }
-});
-var index_default = HarnessPlugin;
+var HarnessPlugin = harness;
+var index_default = harness;
 export {
   HarnessPlugin,
   index_default as default

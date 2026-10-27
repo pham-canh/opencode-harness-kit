@@ -10,7 +10,7 @@ wrong pair fails without an error on the run itself.
 | | OpenCode 1 | OpenCode 2 |
 |---|---|---|
 | config key | `plugin` | `plugins` (the compiler renames your list for `--target v2`) |
-| module shape | a default-exported function | `Plugin.define({ id, setup })` |
+| module shape | a default-exported function | a plain `{ id, setup }` object |
 | registration | the function returns a hooks object | `setup(ctx)` uses the context domains |
 | kit status | guard, prune, router and telemetry are registered | the same hooks, bridged by `src/v2-runtime.ts` |
 
@@ -19,10 +19,34 @@ not started, so the session looks normal and is unguarded. Confirmed against
 `@opencode-ai/plugin@1.19.2`: its `v2/promise` export declares `Plugin` as
 `{ id, setup(context) }`, and its V1 export still types a plugin as a function.
 
-`src/index.ts` exports one default that is callable as the V1 function and also
-carries `id` and `setup()`. `setup()` builds the same hook map through
-`src/harness-hooks.ts` and registers it on `ctx.tool`, `ctx.session` and
-`ctx.event`, so a fix to the guard is a fix on both APIs.
+The two shapes cannot share one default export. A function with `id` and
+`setup` properties attached is still a function, and V2 validates `default` as
+an **object**; the real loader logs
+
+```
+ERROR plugin load failed: Plugin must export a default definition
+      with an id and an effect or setup function
+      (cause: Expected object at ["default"])
+```
+
+and carries on with the plugin unloaded. So the package has two entrypoints:
+
+| entrypoint | default | loader |
+|---|---|---|
+| `opencode-harness-kit` (`dist/index.js`) | the V1 function | OpenCode 1 |
+| `opencode-harness-kit/v2` (`dist/v2.js`) | `{ id, setup }` | OpenCode 2 |
+
+`setup(ctx)` builds the same hook map through `src/harness-hooks.ts` and
+registers it on `ctx.tool`, `ctx.session` and `ctx.event`, so a fix to the
+guard is a fix on both APIs.
+
+V2 loads a project plugin from `.opencode/plugins/*.ts` on its own. A `plugins`
+entry in the config is a **package spec that V2 installs itself**, not a path to
+a local file: pointing it at `dist/index.js` logs `configured plugin path must be
+a directory`, and a local `node_modules` symlink is ignored with
+`Package is not installed`. For a checkout, copy `dist/v2.js` to
+`.opencode/plugins/v2.ts`. A published release can be named as
+`opencode-harness-kit/v2` in `plugins`.
 
 What the bridge cannot carry:
 
@@ -38,10 +62,15 @@ What the bridge cannot carry:
   tool `patch` (not `apply_patch`). Both names are in `src/tool-names.ts`; a
   third name would have to be added there or the guard, pruner and telemetry
   each miss it again.
-- **Code Mode.** V2 enables Code Mode by default. Whether a plugin's
-  `execute.before` runs for a tool invoked *inside* Code Mode has not been
-  verified on a real V2 session. Until it is, the config's `permissions` array
-  is the backstop, not the plugin guard.
+- **Code Mode.** V2 enables Code Mode by default. Measured on 2.1.4 with a
+  fake model and an `execute` call that prints its sandbox: `execute.before`
+  fires once for `execute` itself and **not** for anything called inside it.
+  Today that does not leave a shell reachable - the sandbox exposes `tools`
+  = `opencode` (`session_rename`, `session_move`, `worktree_*`, `models`,
+  `list_mcp_resources`, `read_mcp_resource`) and `browser`, with both `shell`
+  and `bash` undefined. If a later V2 adds a command tool to the sandbox, the
+  config's `permissions` array is the backstop, not the plugin guard.
+  `npm run gate:v2` fails if either builtin appears.
 
 ## The config has two dialects
 
@@ -53,8 +82,10 @@ V2 moved `subagent_depth` under `experimental`, removed `batch_tool` and
 `continue_loop_on_deny`, removed `lsp`, and made `external_directory` default
 to **allow**. A V1 file under V2 is accepted and those keys are ignored, so
 the file looks tuned and enforces none of them. `npm run gate:v2` compiles a V2
-config and reads the resolved result back through `opencode debug config`; it
-skips cleanly when no 2.x binary is installed.
+config, reads the resolved result back through `opencode debug config`, then
+starts a real `opencode serve` against a fake model and checks that the guard
+refuses `npm publish` through the V2 `execute.before` hook. It skips cleanly
+when no 2.x binary is installed.
 
 ## A global `permission.edit: "ask"` silently un-locks every read-only agent
 

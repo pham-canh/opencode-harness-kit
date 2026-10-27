@@ -20,7 +20,7 @@ import test from "node:test"
 
 import { mkdtemp } from "./helpers.mjs"
 
-const bundle = new URL("../dist/index.js", import.meta.url)
+const bundle = new URL("../dist/v2.js", import.meta.url)
 const { default: HarnessPlugin } = await import(bundle.href)
 
 /** A fake V2 context, same surface the real loader provides. */

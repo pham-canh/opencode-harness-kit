@@ -21,7 +21,8 @@ import { GuardPlugin } from "./guard.js"
 import { PrunePlugin } from "./prune.js"
 import { RouterPlugin } from "./router.js"
 import { TelemetryPlugin } from "./telemetry.js"
-import { HarnessPlugin } from "./index.js"
+import HarnessPlugin from "./index.js"
+import HarnessV2 from "./v2.js"
 
 // The kit's own plugins have to be opencode plugins. If opencode's type
 // changes shape, this stops compiling, and the fix is a real one rather than
@@ -32,9 +33,10 @@ const _router: OpencodePlugin = RouterPlugin
 const _telemetry: OpencodePlugin = TelemetryPlugin
 const _harness: OpencodePlugin = HarnessPlugin
 
-// The same entrypoint has to satisfy OpenCode 2, which looks for id + setup.
-// The V1 hook surface is not ported; only the loadable shape is promised.
-const _harnessV2: OpencodeV2Plugin = HarnessPlugin
+// The `./v2` entrypoint has to satisfy OpenCode 2, which validates an object
+// with id + setup. The V1 function is not that shape, which is why the two
+// entrypoints exist.
+const _harnessV2: OpencodeV2Plugin = HarnessV2
 
 // And the other way round: the local type has to be wide enough to hold
 // them, so a plugin written against the local type is still a valid one.

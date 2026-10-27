@@ -28,7 +28,8 @@ function run(cmd, args, options) {
 function versionMajor() {
   const r = run("opencode", ["--version"])
   if (r.error || r.status !== 0) return null
-  const m = String(r.stdout ?? "").trim().match(/^(\d+)\./)
+  // V1 prints `1.19.4`, V2 prints `opencode v2.1.4`.
+  const m = String(r.stdout ?? "").trim().match(/(\d+)\.\d+/)
   return m ? Number(m[1]) : null
 }
 
@@ -68,12 +69,22 @@ function main() {
       return 1
     }
 
-    let config
+    let parsed
     try {
-      config = JSON.parse(String(r.stdout ?? ""))
+      parsed = JSON.parse(String(r.stdout ?? ""))
     } catch {
       const first = String(r.stdout ?? "").trim().split("\n")[0]
       process.stdout.write(`FAIL opencode debug config is not JSON\n     ${first}\n`)
+      return 1
+    }
+
+    // V1 resolves the config and prints one object. V2 prints the source list,
+    // each document under `info`; the project file is the last entry.
+    const config = Array.isArray(parsed)
+      ? parsed.filter((source) => source?.type === "document").at(-1)?.info
+      : parsed
+    if (!config) {
+      process.stdout.write("FAIL opencode debug config has no document source\n")
       return 1
     }
 
@@ -84,9 +95,12 @@ function main() {
         `got ${JSON.stringify(config?.experimental?.subagent_depth)}`,
       ),
       check(
-        "permission.external_directory is ask",
-        config?.permission?.external_directory === "ask",
-        `got ${JSON.stringify(config?.permission?.external_directory)}`,
+        "external_directory resolves to ask",
+        // V2 migrates the V1 permission block into `permissions[]`.
+        config?.permission?.external_directory === "ask" ||
+          (Array.isArray(config?.permissions) &&
+            config.permissions.some((p) => p?.action === "external_directory" && p?.effect === "ask")),
+        `got ${JSON.stringify(config?.permission?.external_directory ?? config?.permissions?.filter((p) => p?.action === "external_directory"))}`,
       ),
       check(
         "no experimental.batch_tool",

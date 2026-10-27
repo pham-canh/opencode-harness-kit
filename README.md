@@ -851,16 +851,19 @@ give it one:
 ### OpenCode 2 and the V1 plugin surface
 
 OpenCode 2 does not load a V1 plugin. The config key is `plugins` rather than
-`plugin`, and the module shape is `Plugin.define({ id, setup(ctx) })` rather
+`plugin`, and the module shape is a plain `{ id, setup(ctx) }` object rather
 than a default-exported function that returns hooks. A V1 plugin under V2 is
 skipped without an error, so the session looks normal and is unguarded.
 
-This package's default export has both shapes: it is still the V1 function, and
-it carries `id` plus `setup(ctx)`. `setup` builds the same hooks the V1 function
-returns and registers them on `ctx.tool`, `ctx.session` and `ctx.event`, so the
-four concerns in the table above run on both APIs rather than being silently
-absent on V2. What the V2 bridge cannot carry - the startup `config` hook,
-`chat.params`, and Code Mode's inner tool calls until measured - is listed in
+The two shapes cannot share one default export: a function with `id` and
+`setup` attached still fails V2's object schema. The package therefore ships
+two entrypoints. `opencode-harness-kit` is the V1 function. On OpenCode 2,
+copy `dist/v2.js` into `.opencode/plugins/v2.ts` from a checkout, or name the
+published `opencode-harness-kit/v2` in the config's `plugins` list. Its `setup`
+builds the same hooks the V1 function returns and registers them on
+`ctx.tool`, `ctx.session` and `ctx.event`, so the four concerns in the table
+above run on both APIs rather than being silently absent on V2. What the bridge cannot carry - the startup `config` hook, `chat.params`,
+and nested calls inside Code Mode - is listed in
 [`docs/KNOWN-LIMITS.md`](docs/KNOWN-LIMITS.md#opencode-2-does-not-load-v1-plugins).
 
 The config dialect follows the loader: `oc-harness use <id> --target v2` moves
@@ -868,8 +871,9 @@ The config dialect follows the loader: `oc-harness use <id> --target v2` moves
 `continue_loop_on_deny` and `lsp`, and sets `external_directory` to `ask`.
 `--target auto` reads `opencode --version`; the default stays `v1` so an
 existing install regenerates unchanged. `npm run gate:v2` reads the resolved
-config back through `opencode debug config` and skips when no 2.x binary is
-installed.
+config back through `opencode debug config`, then runs a live V2 server with a
+fake model and checks that the guard blocks a denied command. It skips when no
+2.x binary is installed.
 
 Both `.space/telemetry.jsonl` and `.space/prune.jsonl` are written in the
 **project**, not wherever opencode was started from. The prune log used to

@@ -37,6 +37,10 @@
     "./rules": {
       "types": "./dist/rules.d.ts",
       "import": "./src/rules.js"
+    },
+    "./v2": {
+      "types": "./dist/v2.d.ts",
+      "import": "./dist/v2.js"
     }
   },
   "bin": {
@@ -64,7 +68,7 @@
     "eval/"
   ],
   "scripts": {
-    "build": "npm run build:types && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
+    "build": "npm run build:types && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js && esbuild src/v2.ts --bundle --platform=node --format=esm --outfile=dist/v2.js",
     "typecheck": "tsc --noEmit && npm run typecheck:scripts",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "pretest": "node -e \"const fs=require('fs');if(!fs.existsSync('test')){console.error('no test directory here - this is an installed package, not a checkout');process.exit(1)}\"",
@@ -93,7 +97,7 @@
     "build:types": "tsc -p tsconfig.types.json",
     "test:loop": "OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json node --test test/loop-e2e.test.js test/cli-work.test.js test/work.test.js test/plan.test.js",
     "gate:loop": "node eval/loop-gate.mjs",
-    "gate:v2": "node eval/v2-smoke.mjs"
+    "gate:v2": "npm run build --silent && node eval/v2-smoke.mjs && node eval/v2-runtime.mjs"
   },
   "keywords": [
     "opencode",
