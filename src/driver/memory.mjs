@@ -6,7 +6,7 @@
 // from. Search is lexical on purpose - no embeddings, no vector database, no
 // new dependency - so the file stays readable and diffable.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { redact } from "./run-state.mjs"
 
@@ -56,7 +56,12 @@ export function recordMemory(cwd, text, meta = {}) {
     text: redact(String(text ?? "")),
     tags: Array.isArray(meta.tags) ? meta.tags : [],
   }
-  appendFileSync(join(cwd, MEMORY_FILE), `${JSON.stringify(row)}\n`)
+  const path = join(cwd, MEMORY_FILE)
+  const line = `${JSON.stringify(row)}\n`
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`
+  const prior = existsSync(path) ? readFileSync(path, "utf8") : ""
+  writeFileSync(tmp, `${prior}${line}`)
+  renameSync(tmp, path)
   return row
 }
 

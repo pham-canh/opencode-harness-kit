@@ -13,6 +13,7 @@ import { checkBash, checkDenied, checkWrite, insideRoot } from "./rules.js"
 import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
 import { SHELL_TOOLS, WRITE_TOOLS } from "./tool-names.js"
+import { policyDecision, readPolicy } from "./driver/policy.mjs"
 
 export const MARKER = "[opencode-harness-kit] blocked"
 
@@ -271,6 +272,11 @@ export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
                 `the working directory is ${truncate(target)}, and this project's files are the ones you were asked to change`,
               )
             }
+          }
+          const policy = readPolicy(project)
+          const decision = policyDecision(String(output.args?.command ?? ""), policy)
+          if (!decision.ok) {
+            refuse(input.tool, decision.code ?? "policy", decision.reason, decision.reason)
           }
           const hit = checkBash(String(output.args?.command ?? ""))
           if (hit) {

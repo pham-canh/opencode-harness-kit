@@ -80,14 +80,14 @@ export function inspectVerify(command, { allowCompound = false } = {}) {
 export function inspectPlan(tasks, { finalVerify = null, allowCompound = false } = {}) {
   const problems = []
   for (const task of tasks ?? []) {
-    const verdict = inspectVerify(task.verify, { allowCompound })
+    const verdict = inspectVerify(String(task?.verify ?? ""), { allowCompound })
     if (!verdict.ok) {
       problems.push({ title: task.title ?? "(untitled)", command: String(task.verify ?? ""), reason: verdict.reason })
     }
   }
   if (finalVerify) {
-    const verdict = inspectVerify(finalVerify, { allowCompound })
-    if (!verdict.ok) problems.push({ title: "final verify", command: finalVerify, reason: verdict.reason })
+    const verdict = inspectVerify(String(finalVerify), { allowCompound })
+    if (!verdict.ok) problems.push({ title: "final verify", command: String(finalVerify), reason: verdict.reason })
   }
   return problems
 }
@@ -96,30 +96,42 @@ export function inspectPlan(tasks, { finalVerify = null, allowCompound = false }
 export const POLICY_EXIT = 2
 
 
+/** @param {string} cwd @returns {any} */
 export function readPolicy(cwd) {
   const path = join(cwd, ".space", "policy.json")
   if (!existsSync(path)) return null
   try { return JSON.parse(readFileSync(path, "utf8")) } catch { return null }
 }
 
+/** @param {string} command @param {any} policy @returns {{ok:boolean,code:string|null,reason:string,effect:string}} */
 export function policyDecision(command, policy) {
   const text = String(command ?? "").trim()
   if (!policy) return { ok: true, code: null, reason: "", effect: "allow" }
   const deny = Array.isArray(policy.deny) ? policy.deny : []
   const allow = Array.isArray(policy.allow) ? policy.allow : []
   const ask = Array.isArray(policy.ask) ? policy.ask : []
-  for (const p of deny) {
-    if (text === p || text.startsWith(`${p} `)) return { ok: false, code: "policy-deny", reason: `policy denies: ${p}`, effect: "deny" }
+  /** @param {any} rule @returns {boolean} */
+  function matches(rule) {
+    if (text === rule || text.startsWith(`${rule} `)) return true
+    try {
+      return new RegExp(rule).test(text)
+    } catch {
+      return false
+    }
   }
-  for (const p of ask) {
-    if (text === p || text.startsWith(`${p} `)) return { ok: false, code: "policy-ask", reason: `policy asks: ${p}`, effect: "ask" }
+  for (const p of /** @type {any[]} */ (deny)) {
+    if (matches(p)) return { ok: false, code: "policy-deny", reason: `policy denies: ${p}`, effect: "deny" }
   }
-  if (allow.length && !allow.some((p) => text === p || text.startsWith(`${p} `))) {
+  for (const p of /** @type {any[]} */ (ask)) {
+    if (matches(p)) return { ok: false, code: "policy-ask", reason: `policy asks: ${p}`, effect: "ask" }
+  }
+  if (allow.length && !/** @type {any[]} */ (allow).some((p) => matches(p))) {
     return { ok: false, code: "policy-deny", reason: "command not in the allow list", effect: "deny" }
   }
   return { ok: true, code: null, reason: "", effect: "allow" }
 }
 
+/** @param {string} cwd @returns {string} */
 export function writeDefaultPolicy(cwd) {
   const dir = join(cwd, ".space")
   mkdirSync(dir, { recursive: true })

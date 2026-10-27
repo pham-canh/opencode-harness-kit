@@ -1,14 +1,14 @@
 // src/v2-runtime.ts
-import { mkdirSync as mkdirSync4, readFileSync as readFileSync4, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join11 } from "node:path";
+import { mkdirSync as mkdirSync5, readFileSync as readFileSync5, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join12 } from "node:path";
 
 // src/harness-hooks.ts
-import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join10 } from "node:path";
+import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join11 } from "node:path";
 
 // src/guard.ts
 import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
-import { join as join4, resolve as resolve2 } from "node:path";
+import { join as join5, resolve as resolve2 } from "node:path";
 
 // src/rules.js
 import { homedir, tmpdir } from "node:os";
@@ -953,6 +953,53 @@ function projectRoot(directory, worktree) {
 var SHELL_TOOLS = /* @__PURE__ */ new Set(["bash", "shell"]);
 var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
 
+// src/driver/policy.mjs
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync, writeFileSync } from "node:fs";
+import { join as join4 } from "node:path";
+function readPolicy(cwd) {
+  const path = join4(cwd, ".space", "policy.json");
+  if (!existsSync3(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function policyDecision(command, policy) {
+  const text = String(command ?? "").trim();
+  if (!policy) return { ok: true, code: null, reason: "", effect: "allow" };
+  const deny2 = Array.isArray(policy.deny) ? policy.deny : [];
+  const allow = Array.isArray(policy.allow) ? policy.allow : [];
+  const ask = Array.isArray(policy.ask) ? policy.ask : [];
+  function matches2(rule) {
+    if (text === rule || text.startsWith(`${rule} `)) return true;
+    try {
+      return new RegExp(rule).test(text);
+    } catch {
+      return false;
+    }
+  }
+  for (
+    const p of
+    /** @type {any[]} */
+    deny2
+  ) {
+    if (matches2(p)) return { ok: false, code: "policy-deny", reason: `policy denies: ${p}`, effect: "deny" };
+  }
+  for (
+    const p of
+    /** @type {any[]} */
+    ask
+  ) {
+    if (matches2(p)) return { ok: false, code: "policy-ask", reason: `policy asks: ${p}`, effect: "ask" };
+  }
+  if (allow.length && !/** @type {any[]} */
+  allow.some((p) => matches2(p))) {
+    return { ok: false, code: "policy-deny", reason: "command not in the allow list", effect: "deny" };
+  }
+  return { ok: true, code: null, reason: "", effect: "allow" };
+}
+
 // src/guard.ts
 var MARKER = "[opencode-harness-kit] blocked";
 function hunkFollows(lines, from) {
@@ -1054,7 +1101,7 @@ function truncate(s, n = 200) {
 }
 var GuardPlugin = async ({ worktree, directory }) => {
   const project = projectRoot(directory, worktree);
-  const telemetryDir = join4(project, ".space");
+  const telemetryDir = join5(project, ".space");
   const refuse = (tool, rule, why, detail) => {
     write(telemetryDir, { kind: "guard", tool, rule });
     deny(why, detail);
@@ -1065,7 +1112,7 @@ var GuardPlugin = async ({ worktree, directory }) => {
         if (SHELL_TOOLS.has(input.tool)) {
           const raw = output.args?.workdir;
           if (typeof raw === "string" && raw.trim()) {
-            const target = raw.startsWith("~") ? join4(homedir2(), raw.slice(1)) : resolve2(project, raw);
+            const target = raw.startsWith("~") ? join5(homedir2(), raw.slice(1)) : resolve2(project, raw);
             if (!insideRoot(target, project) && !insideRoot(target, tmpdir2())) {
               refuse(
                 input.tool,
@@ -1074,6 +1121,11 @@ var GuardPlugin = async ({ worktree, directory }) => {
                 `the working directory is ${truncate(target)}, and this project's files are the ones you were asked to change`
               );
             }
+          }
+          const policy = readPolicy(project);
+          const decision = policyDecision(String(output.args?.command ?? ""), policy);
+          if (!decision.ok) {
+            refuse(input.tool, decision.code ?? "policy", decision.reason, decision.reason);
           }
           const hit = checkBash(String(output.args?.command ?? ""));
           if (hit) {
@@ -1127,15 +1179,15 @@ var GuardPlugin = async ({ worktree, directory }) => {
 };
 
 // src/profile.js
-import { readFileSync, existsSync as existsSync3, readdirSync } from "node:fs";
-import { dirname as dirname3, join as join5, resolve as resolve3 } from "node:path";
+import { readFileSync as readFileSync2, existsSync as existsSync4, readdirSync } from "node:fs";
+import { dirname as dirname3, join as join6, resolve as resolve3 } from "node:path";
 import { homedir as homedir3 } from "node:os";
 import { fileURLToPath } from "node:url";
 var HERE = dirname3(fileURLToPath(import.meta.url));
 function findRoot(start) {
   let dir = start;
   for (let i = 0; i < 12; i++) {
-    if (existsSync3(join5(dir, "profiles"))) return dir;
+    if (existsSync4(join6(dir, "profiles"))) return dir;
     const parent = dirname3(dir);
     if (parent === dir) break;
     dir = parent;
@@ -1165,12 +1217,12 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [process.env.OPENCODE_HARNESS_PROFILES ?? join5(ROOT, "profiles")];
+  return [process.env.OPENCODE_HARNESS_PROFILES ?? join6(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
-    const full = join5(dir, `${id}.json`);
-    if (existsSync3(full)) return full;
+    const full = join6(dir, `${id}.json`);
+    if (existsSync4(full)) return full;
   }
   return null;
 }
@@ -1181,7 +1233,7 @@ function loadProfile(id) {
   }
   let raw;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8"));
+    raw = JSON.parse(readFileSync2(path, "utf8"));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new ProfileError(`cannot read ${path}: ${msg}`);
@@ -1220,11 +1272,11 @@ function normalize(p) {
 var laneCache = null;
 function loadLanes() {
   if (laneCache) return laneCache;
-  const file = join5(ROOT, "lanes.json");
-  if (!existsSync3(file)) {
+  const file = join6(ROOT, "lanes.json");
+  if (!existsSync4(file)) {
     throw new ProfileError(`lane table missing: ${file}`);
   }
-  const parsed = JSON.parse(readFileSync(file, "utf8"));
+  const parsed = JSON.parse(readFileSync2(file, "utf8"));
   const lanes = parsed.lanes ?? {};
   for (const [name, lane] of Object.entries(lanes)) {
     if (!lane.description) {
@@ -1243,8 +1295,8 @@ function laneMeta(name) {
 var retentionCache = null;
 function loadRetention() {
   if (retentionCache) return retentionCache;
-  const file = join5(ROOT, "retention.yml");
-  if (!existsSync3(file)) {
+  const file = join6(ROOT, "retention.yml");
+  if (!existsSync4(file)) {
     retentionCache = { models: {}, defaults: {} };
     return retentionCache;
   }
@@ -1256,7 +1308,7 @@ function loadRetention() {
     /** @type {Record<string, string>} */
     {}
   );
-  const lines = readFileSync(file, "utf8").split("\n");
+  const lines = readFileSync2(file, "utf8").split("\n");
   let current = null;
   let inDefaults = false;
   let i = 0;
@@ -1663,10 +1715,10 @@ function worstRetention(ids) {
   return { retention, worst };
 }
 function configDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join5(homedir3(), ".config", "opencode");
+  return process.env.OPENCODE_CONFIG_DIR ?? join6(homedir3(), ".config", "opencode");
 }
 function configFilePath() {
-  return join5(configDir(), "opencode.jsonc");
+  return join6(configDir(), "opencode.jsonc");
 }
 function parseJsonc(text) {
   let out = "";
@@ -1741,9 +1793,9 @@ function profileIdFromConfig() {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv) return fromEnv.trim() || null;
   const file = configFilePath();
-  if (!existsSync3(file)) return null;
+  if (!existsSync4(file)) return null;
   try {
-    const parsed = parseJsonc(readFileSync(file, "utf8"));
+    const parsed = parseJsonc(readFileSync2(file, "utf8"));
     const harness = parsed?.harness;
     const id = harness && typeof harness === "object" ? (
       /** @type {{profile?: unknown}} */
@@ -1756,17 +1808,17 @@ function profileIdFromConfig() {
 }
 
 // src/prune.ts
-import { readFileSync as readFileSync2, existsSync as existsSync4 } from "node:fs";
-import { join as join6 } from "node:path";
+import { readFileSync as readFileSync3, existsSync as existsSync5 } from "node:fs";
+import { join as join7 } from "node:path";
 function activeProfileId(worktree) {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  const candidates = [join6(worktree, ".space", "active")];
+  const candidates = [join7(worktree, ".space", "active")];
   for (const f of candidates) {
     if (!f) continue;
     try {
-      if (existsSync4(f)) {
-        const v = readFileSync2(f, "utf8").trim();
+      if (existsSync5(f)) {
+        const v = readFileSync3(f, "utf8").trim();
         if (v) return v;
       }
     } catch {
@@ -1998,13 +2050,13 @@ var PrunePlugin = async ({ worktree, directory }) => {
   };
 };
 async function logPrune(worktree, profileId, stats, maxBytes = MAX_BYTES) {
-  const dir = join6(worktree, ".space");
+  const dir = join7(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
-    rotate(join6(dir, "prune.jsonl"), maxBytes);
+    rotate(join7(dir, "prune.jsonl"), maxBytes);
     await appendFile(
-      join6(dir, "prune.jsonl"),
+      join7(dir, "prune.jsonl"),
       JSON.stringify({
         t: (/* @__PURE__ */ new Date()).toISOString(),
         profile: profileId,
@@ -2032,9 +2084,9 @@ function safeStringify(value) {
 }
 
 // src/config.js
-import { join as join7, resolve as resolve4 } from "node:path";
+import { join as join8, resolve as resolve4 } from "node:path";
 import { homedir as homedir4 } from "node:os";
-var DEFAULT_CONFIG_DIR = join7(homedir4(), ".config/opencode");
+var DEFAULT_CONFIG_DIR = join8(homedir4(), ".config/opencode");
 function utilityModel(p) {
   const u = p?.utility;
   if (!u || typeof u.model !== "string" || !u.model) return null;
@@ -2042,8 +2094,8 @@ function utilityModel(p) {
 }
 
 // src/health.js
-import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
-import { join as join8 } from "node:path";
+import { existsSync as existsSync6, mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync2, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join9 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
@@ -2085,12 +2137,12 @@ function liveUnhealthy(health, now = Date.now()) {
   return out;
 }
 function healthPath(dir) {
-  return join8(dir, ".space", "health.json");
+  return join9(dir, ".space", "health.json");
 }
 function readHealth(dir) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync3(healthPath(dir), "utf8"));
+    parsed = JSON.parse(readFileSync4(healthPath(dir), "utf8"));
   } catch {
     return { unhealthy: {} };
   }
@@ -2105,13 +2157,13 @@ function readHealth(dir) {
 }
 function writeHealth(dir, health) {
   try {
-    const spaceDir = join8(dir, ".space");
-    if (!existsSync5(spaceDir)) mkdirSync2(spaceDir, { recursive: true });
+    const spaceDir = join9(dir, ".space");
+    if (!existsSync6(spaceDir)) mkdirSync3(spaceDir, { recursive: true });
     const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
     const file = healthPath(dir);
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {
-      writeFileSync(tmp, JSON.stringify(pruned, null, 2));
+      writeFileSync2(tmp, JSON.stringify(pruned, null, 2));
       renameSync2(tmp, file);
     } catch (err) {
       try {
@@ -2373,9 +2425,9 @@ function applySessionModel(cfg, profile, opts = {}) {
 }
 
 // src/telemetry.ts
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 var TelemetryPlugin = async ({ worktree, directory }) => {
-  const dir = join9(projectRoot(directory, worktree), ".space");
+  const dir = join10(projectRoot(directory, worktree), ".space");
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
@@ -2561,9 +2613,9 @@ async function createHarnessHooks(ctx, options) {
     } catch {
     }
     try {
-      const dir = join10(project, ".space");
-      mkdirSync3(dir, { recursive: true });
-      writeFileSync2(join10(dir, "active"), `${id}
+      const dir = join11(project, ".space");
+      mkdirSync4(dir, { recursive: true });
+      writeFileSync3(join11(dir, "active"), `${id}
 `);
     } catch {
     }
@@ -2579,12 +2631,12 @@ function projectOf(ctx) {
 }
 function writeActiveMarker(project, id) {
   try {
-    const dir = join11(project, ".space");
-    mkdirSync4(dir, { recursive: true });
-    const tmp = join11(dir, `.active.${process.pid}`);
-    writeFileSync3(tmp, `${id}
+    const dir = join12(project, ".space");
+    mkdirSync5(dir, { recursive: true });
+    const tmp = join12(dir, `.active.${process.pid}`);
+    writeFileSync4(tmp, `${id}
 `);
-    renameSync3(tmp, join11(dir, "active"));
+    renameSync3(tmp, join12(dir, "active"));
   } catch {
   }
 }
@@ -2615,7 +2667,7 @@ async function setupV2(ctx, options) {
               seenMessages.add(key);
               const agent = event?.agent;
               if (agent) {
-                write(join11(project, ".space"), { kind: "lane", agent, sessionID: event?.sessionID, messageID });
+                write(join12(project, ".space"), { kind: "lane", agent, sessionID: event?.sessionID, messageID });
               }
             }
           } catch {
@@ -2679,9 +2731,9 @@ async function setupV2(ctx, options) {
   let profileId = opts?.profile ?? profileIdFromConfig();
   if (!profileId) {
     for (const name of ["opencode.json", "opencode.jsonc"]) {
-      const fp = join11(project, name);
+      const fp = join12(project, name);
       try {
-        const raw = readFileSync4(fp, "utf8");
+        const raw = readFileSync5(fp, "utf8");
         const parsed = JSON.parse(raw);
         const id = parsed?.harness?.profile;
         if (typeof id === "string" && id) {

@@ -3690,7 +3690,11 @@ try {
       await cmdInit()
       break
     case "auto":
-      await cmdAuto()
+      if (args[1] && !String(args[1]).startsWith("--")) {
+        await loopCommands.goal()
+      } else {
+        await cmdAuto()
+      }
       break
     case "verify":
       // The exit code is the gate. `verify` runs as the last step of the
