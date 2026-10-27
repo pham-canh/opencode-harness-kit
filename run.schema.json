@@ -190,6 +190,12 @@
         "null"
       ]
     },
+    "finalBaseRef": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "rounds": {
       "type": "integer",
       "minimum": 0

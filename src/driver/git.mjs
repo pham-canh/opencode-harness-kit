@@ -242,6 +242,35 @@ export function removeWorktree(cwd, path, { force = false } = {}) {
   return { ok: true, path, removed: true }
 }
 
+/**
+ * A commit that represents the working tree as it is right now.
+ *
+ * `git stash create` writes the object without touching the index or the
+ * working tree, so a reviewer can diff a task from the exact state the agent
+ * started in. Untracked files are not part of that object - the caller keeps
+ * the pre-agent `gitChanges` map for those. Outside git, or when the tree has
+ * nothing to record, the current HEAD is the best available baseline.
+ *
+ * @param {string} cwd
+ * @returns {string | null}
+ */
+export function gitStashCreate(cwd) {
+  if (!isGitRepo(cwd)) return null
+  const made = git(cwd, [
+    "-c",
+    "user.name=oc-harness",
+    "-c",
+    "user.email=oc-harness@localhost",
+    "stash",
+    "create",
+    "oc-harness task baseline",
+  ])
+  const sha = String(made.stdout ?? "").trim()
+  if (made.status === 0 && sha) return sha
+  const head = git(cwd, ["rev-parse", "HEAD"])
+  return head.status === 0 ? String(head.stdout).trim() : null
+}
+
 /** The current branch, or null on a detached HEAD / outside git. */
 export function currentBranch(cwd) {
   const res = git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])

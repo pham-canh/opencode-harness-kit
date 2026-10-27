@@ -56,13 +56,13 @@ test("rotateEvents moves the log aside above the limit", () => {
 
 test("summarizeEvents groups by phase", () => {
   const rows = summarizeEvents([
-    { phase: "build", tokens: 10, ms: 5 },
-    { phase: "build", tokens: 2, ms: 5 },
+    { phase: "build", tokens: 10, cache: 4, ms: 5 },
+    { phase: "build", tokens: 2, cache: 1, ms: 5 },
     { phase: "verify", tokens: 0, ms: 50 },
   ])
   assert.deepEqual(rows, [
-    { phase: "build", count: 2, ms: 10, tokens: 12 },
-    { phase: "verify", count: 1, ms: 50, tokens: 0 },
+    { phase: "build", count: 2, ms: 10, tokens: 12, cache: 5 },
+    { phase: "verify", count: 1, ms: 50, tokens: 0, cache: 0 },
   ])
 })
 

@@ -27,6 +27,7 @@ import {
   writeFileSync,
   renameSync,
   unlinkSync,
+  readdirSync,
   realpathSync,
   statSync,
 } from "node:fs"
@@ -43,7 +44,7 @@ import {
   isDone,
   isVacuousVerify,
 } from "../tasks.js"
-import { gitEnv } from "./git.mjs"
+import { gitEnv, gitStashCreate } from "./git.mjs"
 import { appendVerify, verifyEntry } from "./evidence.mjs"
 import { appendEvent } from "./events.mjs"
 import { agentInvocation } from "./adapter.mjs"
@@ -474,7 +475,7 @@ export function formatBlockers(blockers) {
  * itself. A diff alone cannot show a new file, and a reviewer that is not told
  * that is a reviewer that passes work it never saw.
  */
-export function reviewDiff(cwd, { maxBytes = 200_000, baseRef = null } = {}) {
+export function reviewDiff(cwd, { maxBytes = 200_000, baseRef = null, changesBefore = null } = {}) {
   const run = (args) => {
     const res = spawnSync("git", ["-C", cwd, ...args], {
       env: gitEnv(),
@@ -492,8 +493,15 @@ export function reviewDiff(cwd, { maxBytes = 200_000, baseRef = null } = {}) {
     : run(["diff", "--no-color", "--no-ext-diff", "--", "."])
   const staged = baseRef ? "" : run(["diff", "--cached", "--no-color", "--no-ext-diff", "--", "."])
   const changes = gitChanges(cwd)
+  // With a task baseline, an untracked file that was already sitting in the
+  // tree before the agent ran is not part of this task. The diff is scoped by
+  // `baseRef`; the untracked list has no such ref, so it is scoped by the
+  // pre-agent snapshot instead.
+  const touched = baseRef && changesBefore ? new Set(changedSince(changesBefore, changes)) : null
   const untracked = changes
-    ? [...changes.files].filter(([, value]) => value.code === "??").map(([path]) => path)
+    ? [...changes.files]
+        .filter(([path, value]) => value.code === "??" && (!touched || touched.has(path)))
+        .map(([path]) => path)
     : []
 
   let diff = [tracked, staged].filter((part) => part.trim()).join("\n")
@@ -622,6 +630,7 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs, adapter = "opencode"
       error: invocation.reason,
       steps: 0,
       tokens: 0,
+      cacheTokens: 0,
     }
   }
   const res = spawnSync(invocation.command, invocation.args, {
@@ -634,6 +643,7 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs, adapter = "opencode"
     ...(invocation.input === undefined ? {} : { input: invocation.input }),
   })
   const stdout = res.stdout ?? ""
+  const usage = tokenUsage(stdout)
   return {
     ok: res.status === 0,
     status: res.status,
@@ -649,7 +659,8 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs, adapter = "opencode"
     output: `${stdout}${res.stderr ?? ""}`.trimEnd(),
     error: res.error ? String(res.error.message) : "",
     steps: countSteps(stdout),
-    tokens: countTokens(stdout),
+    tokens: usage.total,
+    cacheTokens: usage.cache,
   }
 }
 
@@ -660,11 +671,18 @@ export function invokeAgent(role, prompt, { cwd, timeoutMs, adapter = "opencode"
  * opencode builds. Older builds omit it, so the answer is 0 rather than a
  * guess - a budget that fires on invented numbers is worse than no budget.
  *
+ * `total` includes the cache buckets: reading a cached prompt and writing a
+ * new cache entry are both provider work, and a budget that ignored them would
+ * undercount exactly the long runs it exists to stop. `cache` is the same
+ * cache read/write sum, kept separately so `report` can show what the saving
+ * was without re-parsing the transcript.
+ *
  * @param {string} stdout
- * @returns {number}
+ * @returns {{ total: number, cache: number }}
  */
-export function countTokens(stdout) {
+export function tokenUsage(stdout) {
   let total = 0
+  let cache = 0
   for (const line of String(stdout ?? "").split("\n")) {
     const text = line.trim()
     if (!text) continue
@@ -673,14 +691,32 @@ export function countTokens(stdout) {
       if (event?.type !== "step_finish") continue
       const tokens = event?.part?.tokens ?? event?.tokens
       if (!tokens || typeof tokens !== "object") continue
-      for (const value of Object.values(tokens)) {
+      for (const [key, value] of Object.entries(tokens)) {
         if (typeof value === "number" && Number.isFinite(value)) total += value
+        if (key !== "cache" || !value || typeof value !== "object") continue
+        for (const bucket of ["read", "write"]) {
+          const amount = value[bucket]
+          if (typeof amount === "number" && Number.isFinite(amount)) {
+            total += amount
+            cache += amount
+          }
+        }
       }
     } catch {
       // Not an event line.
     }
   }
-  return total
+  return { total, cache }
+}
+
+/**
+ * The token total a transcript reports.
+ *
+ * @param {string} stdout
+ * @returns {number}
+ */
+export function countTokens(stdout) {
+  return tokenUsage(stdout).total
 }
 
 /**
@@ -901,16 +937,26 @@ export function runLoop(options) {
   const started = Date.now()
   // The diff a final review looks at starts HERE. Captured before the first
   // task, because a commit made between tasks would otherwise shrink the
-  // change a reviewer sees to only the uncommitted tail.
-  const finalBaseRef = o.finalBaseRef ?? gitHead(cwd)
+  // change a reviewer sees to only the uncommitted tail. A resume reads the
+  // ref the record already stored: recomputing HEAD after those task commits
+  // would silently drop every committed task from the final review.
+  const finalBaseRef = o.finalBaseRef ?? o.runState?.finalBaseRef ?? gitHead(cwd)
   /** @type {any[]} */
   const entries = []
   // A resumed run continues the count it stopped at. Starting from zero made
   // the round cap and the token budget a per-process limit instead of a
-  // per-run one, so resuming was a way to spend both twice.
+  // per-run one, so resuming was a way to spend both twice. Review rounds are
+  // recovered from the task records, and from the verdict files when the
+  // record was written by an older build that did not keep them.
   let rounds = Number.isInteger(o.runState?.rounds) ? o.runState.rounds : 0
-  let reviewCount = 0
+  let reviewCount = lastReviewRound(o.runState, cwd)
   let tokens = typeof o.runState?.tokens === "number" ? o.runState.tokens : 0
+  let cacheTokens = typeof o.runState?.budget?.spentCacheTokens === "number" ? o.runState.budget.spentCacheTokens : 0
+  // Events record the tokens spent between checkpoints, not the running
+  // total. Seeding from the resumed counters keeps the first checkpoint after
+  // a resume from re-reporting what the earlier process already logged.
+  let eventTokens = tokens
+  let eventCacheTokens = cacheTokens
   let run = null
   let lock = null
 
@@ -935,7 +981,7 @@ export function runLoop(options) {
       maxTokens: maxTokens ?? run.budget?.maxTokens ?? null,
       maxTaskTokens: maxTaskTokens ?? run.budget?.maxTaskTokens ?? null,
       spentTokens: tokens,
-      spentCacheTokens: run.budget?.spentCacheTokens ?? 0,
+      spentCacheTokens: cacheTokens,
     }
     run.seconds = Math.round(elapsed())
     // Every phase change goes through the table. A checkpoint that names the
@@ -974,12 +1020,18 @@ export function runLoop(options) {
         attempt,
         phase: run.phase,
         route: run.routes?.current ?? null,
-        tokens,
+        // The record holds the running total; an event says what THIS
+        // checkpoint spent. Summing a cumulative value over every phase would
+        // count the same tokens once per phase after they were spent.
+        tokens: Math.max(0, tokens - eventTokens),
+        cache: Math.max(0, cacheTokens - eventCacheTokens),
         ms: extra.ms ?? 0,
         code: extra.code ?? null,
         terminal: extra.terminal ?? run.terminal ?? null,
         detail: extra.detail,
       }
+      eventTokens = tokens
+      eventCacheTokens = cacheTokens
       appendEvent(cwd, logged)
       if (o.otel !== false && (o.otelEndpoint || process.env.OTEL_EXPORTER_OTLP_ENDPOINT)) {
         // Fire and forget: a collector that is down must not slow a run down,
@@ -1098,6 +1150,7 @@ export function runLoop(options) {
         branch: o.branch ?? null,
       })
       run.goal = run.goal || o.goal || parsed.goal || ""
+      run.finalBaseRef = finalBaseRef
       for (const t of parsed.tasks) runTask(run, t)
       // Opening a record is a transition like any other. `start` only exists
       // from `intake`; anything left in a live phase with a verdict attached is
@@ -1211,6 +1264,11 @@ export function runLoop(options) {
           checkpoint("build", { task: task.title, data: { fixRound: verifyFixes + reviewFixes } })
         }
         const changesBefore = gitChanges(cwd)
+        // The exact tree this attempt starts from. A task review diffs against
+        // it, so work that was already in the tree - or a previous task's
+        // commit - is not presented as this task's change. Outside git there
+        // is no ref, and `reviewDiff` falls back to the working-tree diff.
+        const taskBase = gitStashCreate(cwd)
         const prompt = fixNote ? `${buildPrompt(task)}\n\nThis is a FIX round. The previous attempt did not pass.\n\n${fixNote}` : buildPrompt(task)
         if (o.laneBudget) {
           const fits = assertPromptFits(prompt, o.laneBudget)
@@ -1225,8 +1283,10 @@ export function runLoop(options) {
         const stoppedAfterAgent = interruption(agent?.signal)
         if (stoppedAfterAgent) return stoppedAfterAgent
         const spent = Number(agent?.tokens ?? 0) || 0
+        const spentCache = Number(agent?.cacheTokens ?? 0) || 0
         tokens += spent
         taskTokens += spent
+        cacheTokens += spentCache
         // A per-task cap stops the one task that is looping before it can
         // spend the whole run's budget on its own.
         if (maxTaskTokens !== null && taskTokens > maxTaskTokens) {
@@ -1402,21 +1462,24 @@ export function runLoop(options) {
 
         if (verify.ok) {
           if (!review) break
-          const diff = reviewDiff(cwd, { baseRef: null })
+          const diff = reviewDiff(cwd, { baseRef: taskBase, changesBefore })
           // `rounds` counts tasks, not reviews. A review that fails and is
           // fixed is a second review of the SAME task round; keying the
           // verdict file by `rounds` alone made the second write overwrite the
           // first, so the audit trail lost the failure that caused the fix.
           const reviewRound = ++reviewCount
           const verdict = readVerdict(runReviewer, cwd, task, reviewRound, diff, verify, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)), budget: o.laneBudget ?? null })
+          tokens += Number(verdict.tokens ?? 0) || 0
+          taskTokens += Number(verdict.tokens ?? 0) || 0
+          cacheTokens += Number(verdict.cacheTokens ?? 0) || 0
           if (stateTask) {
-            stateTask.reviews.push({ round: reviewRound, verdict: verdict.verdict ?? "invalid", at: new Date().toISOString(), note: verdict.error ?? "" })
+            stateTask.reviews.push({ round: reviewRound, verdict: verdict.parsed?.verdict ?? "invalid", at: new Date().toISOString(), note: verdict.error ?? "" })
           }
           checkpoint("review", {
             task: task.title,
             attempt: stateTask?.attempts ?? null,
             taskState: stateTask,
-            data: { round: reviewRound, verdict: verdict.verdict ?? "invalid", error: verdict.error ?? "" },
+            data: { round: reviewRound, verdict: verdict.parsed?.verdict ?? "invalid", error: verdict.error ?? "" },
           })
           if (verdict.error) {
             blocked = { code: 5, reason: `${task.title}: reviewer did not return a schema'd verdict: ${verdict.error}` }
@@ -1629,7 +1692,9 @@ export function runLoop(options) {
         change: "every task in the plan, reviewed as one change",
         verify: o.finalVerify ?? "(see tasks.md)",
       }
-      const verdict = readVerdict(runReviewer, cwd, wholePlan, "final", diff, { status: 0, output: "final verify passed" }, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)) })
+      const verdict = readVerdict(runReviewer, cwd, wholePlan, "final", diff, { status: 0, output: "final verify passed" }, { timeoutMs: Math.max(1, budgetMs - (Date.now() - started)), budget: o.laneBudget ?? null })
+      tokens += Number(verdict.tokens ?? 0) || 0
+      cacheTokens += Number(verdict.cacheTokens ?? 0) || 0
       if (run) {
         run.finalReview = verdict.error
           ? { verdict: "invalid", error: verdict.error }
@@ -1709,22 +1774,26 @@ export function runLoop(options) {
  * stream rather than scraped from whatever the process printed last. A
  * reviewer that crashed and one that answered in prose are different failures,
  * and the message says which.
+ *
+ * @returns {{ tokens: number, cacheTokens: number, error?: string, parsed?: any }}
  */
 function readVerdict(runReviewer, cwd, task, round, diff, verify, { timeoutMs, budget = null }) {
   const prompt = buildReviewPrompt(task, diff, verify.output)
   if (budget) {
     const fits = assertPromptFits(prompt, budget)
-    if (!fits.ok) return { error: fits.reason }
+    if (!fits.ok) return { tokens: 0, cacheTokens: 0, error: fits.reason }
   }
   const result = runReviewer("reviewer", prompt, { cwd, timeoutMs })
+  const usage = { tokens: Number(result?.tokens ?? 0) || 0, cacheTokens: Number(result?.cacheTokens ?? 0) || 0 }
   if (!result?.ok) {
     return {
+      ...usage,
       error: `reviewer agent failed (exit ${result?.status ?? "?"}): ${result?.error || result?.output || "no output"}`.slice(0, 2_000),
     }
   }
   const parsed = parseVerdict(agentText(result.stdout ?? result.output ?? ""))
-  if (!parsed.ok) return { error: parsed.error }
-  return { parsed }
+  if (!parsed.ok) return { ...usage, error: parsed.error }
+  return { ...usage, parsed }
 }
 
 /** Why the build agent did not run, in the terms the report uses. */
@@ -1820,6 +1889,38 @@ function stop(log, { reason, code, summary, rounds, tokens, run }) {
 function gitHead(cwd) {
   const res = spawnSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 10_000, env: gitEnv() })
   return res.status === 0 ? String(res.stdout).trim() : null
+}
+
+/**
+ * The highest review round this run has already recorded.
+ *
+ * `run@2` keeps every verdict in `tasks[].reviews`. A record from an older
+ * build, or one written before that field existed, still has the files on
+ * disk; their `NN-slug.json` names carry the same number. Resuming from 0
+ * would overwrite `01-task.json` and lose the failure that caused the fix.
+ *
+ * @param {any} runState
+ * @param {string} cwd
+ * @returns {number}
+ */
+function lastReviewRound(runState, cwd) {
+  let max = 0
+  for (const task of runState?.tasks ?? []) {
+    for (const review of task?.reviews ?? []) {
+      const round = Number(review?.round)
+      if (Number.isInteger(round) && round > max) max = round
+    }
+  }
+  try {
+    for (const name of readdirSync(join(cwd, ".space", "review"))) {
+      const match = /^(\d+)-/.exec(name)
+      const round = match ? Number(match[1]) : NaN
+      if (Number.isInteger(round) && round > max) max = round
+    }
+  } catch {
+    // No review directory yet, or it is unreadable; the record is enough.
+  }
+  return max
 }
 
 export { TASKS_PATH }

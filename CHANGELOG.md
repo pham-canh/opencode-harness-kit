@@ -61,6 +61,16 @@ blind.
 - **`oc-harness resume` and `run` stop on `SIGINT`/`SIGTERM`.** The record ends
   as `interrupted` with exit 130 and releases the lock, instead of the process
   dying while `run.json` still says `running`.
+- **Cache tokens are counted, not hidden.** `run.budget.spentTokens` includes
+  cache reads and writes, and `spentCacheTokens` reports that share. The event
+  log keeps `tokens` and `cache` as per-checkpoint deltas.
+- **A task review diffs from the tree the attempt started in.** `reviewDiff`
+  takes a `git stash create` baseline, so pre-existing tracked edits and
+  untracked files are not blamed on the agent.
+- **A resumed run continues its review rounds.** The count is seeded from the
+  record's `tasks[].reviews` (and the verdict files on disk), so a resume no
+  longer overwrites `01-*.json`. The final review base is stored in
+  `finalBaseRef` and reused after task commits.
 - **`npm run gate:loop`.** Five offline loop scenarios: a pass, a repeated
   verify failure, a destructive verify command, a spent task budget, and a
   route failure that stops provisionally and is resumed.

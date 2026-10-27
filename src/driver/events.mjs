@@ -110,16 +110,17 @@ export function readEvents(cwd, limit = 500) {
  * The phase transitions an event log contains, for `report`.
  *
  * @param {any[]} events
- * @returns {Array<{ phase: string, count: number, ms: number, tokens: number }>}
+ * @returns {Array<{ phase: string, count: number, ms: number, tokens: number, cache: number }>}
  */
 export function summarizeEvents(events) {
   const byPhase = new Map()
   for (const event of events ?? []) {
     if (!event?.phase) continue
-    const row = byPhase.get(event.phase) ?? { phase: event.phase, count: 0, ms: 0, tokens: 0 }
+    const row = byPhase.get(event.phase) ?? { phase: event.phase, count: 0, ms: 0, tokens: 0, cache: 0 }
     row.count++
     row.ms += Number(event.ms ?? 0) || 0
     row.tokens += Number(event.tokens ?? 0) || 0
+    row.cache += Number(event.cache ?? 0) || 0
     byPhase.set(event.phase, row)
   }
   return [...byPhase.values()]

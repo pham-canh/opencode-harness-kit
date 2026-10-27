@@ -302,6 +302,7 @@ export function createRun({
     updatedAt: now,
     resumeCount: 0,
     planHash,
+    finalBaseRef: null,
     rounds: 0,
     tokens: 0,
     seconds: 0,

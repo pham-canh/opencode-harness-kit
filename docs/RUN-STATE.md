@@ -23,7 +23,8 @@ The current schema is `oc-harness/run@2`.
 | `endedAt`, `interruptedAt` | When the attempt stopped, and when a signal or a stale lock stopped it. `endedAt` is cleared when the record is resumed; `finishedAt` is a v1 alias kept for old readers. |
 | `resumeCount` | How many times this record has been resumed. |
 | `planHash` | Hash of the task file the run started from. `null` on v1 records. |
-| `budget` | `maxMinutes`, `maxTokens`, `maxTaskTokens`, `spentTokens`, `spentCacheTokens`. |
+| `finalBaseRef` | The commit the final review diffs from, captured before the first task. Kept across a resume so task commits do not shrink the final diff; `null` outside git. |
+| `budget` | `maxMinutes`, `maxTokens`, `maxTaskTokens`, `spentTokens`, `spentCacheTokens`. `spentTokens` includes cache reads and writes; `spentCacheTokens` is the cache share, not an additional cost. |
 | `routes` | `current`, `tried`, `skipped` agent routes. |
 | `checkpoint` | `at` and the last `sha` a resume can trust. |
 | `finalVerify`, `finalReview` | The final gate results, when they ran. |
@@ -61,6 +62,11 @@ only `work` writes `route-exhausted` (phase `needs-human`, exit 3,
 
 The checkpoint writes the phase, the task, the route and the transition detail,
 so `history` is enough to reconstruct how a run reached its current state.
+
+`.space/run-events.jsonl` records what each checkpoint spent, not the running
+total: `tokens` and `cache` are deltas since the previous event. Summing a
+cumulative value over every phase would count the same work again at each
+phase after it was spent.
 
 ## Reading a v1 record
 
