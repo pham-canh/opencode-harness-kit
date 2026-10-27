@@ -97,7 +97,8 @@
     "build:types": "tsc -p tsconfig.types.json",
     "test:loop": "OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json node --test test/loop-e2e.test.js test/cli-work.test.js test/work.test.js test/plan.test.js",
     "gate:loop": "node eval/loop-gate.mjs",
-    "gate:v2": "npm run build --silent && node eval/v2-smoke.mjs && node eval/v2-runtime.mjs"
+    "gate:v2": "npm run build --silent && node eval/v2-smoke.mjs && node eval/v2-runtime.mjs",
+    "prove:autopilot": "node eval/autopilot-proof.mjs"
   },
   "keywords": [
     "opencode",
