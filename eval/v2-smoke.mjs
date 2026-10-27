@@ -77,16 +77,17 @@ function main() {
       process.stdout.write(`FAIL opencode debug config is not JSON\n     ${first}\n`)
       return 1
     }
-
     // V1 resolves the config and prints one object. V2 prints the source list,
     // each document under `info`; the project file is the last entry.
     const config = Array.isArray(parsed)
       ? parsed.filter((source) => source?.type === "document").at(-1)?.info
       : parsed
+
     if (!config) {
       process.stdout.write("FAIL opencode debug config has no document source\n")
       return 1
     }
+
 
     const checks = [
       check(
@@ -112,6 +113,12 @@ function main() {
           (Array.isArray(config?.permissions) &&
             config.permissions.some((p) => p?.action === "external_directory" && p?.effect === "ask")),
         `got ${JSON.stringify(config?.permission?.external_directory ?? config?.permissions?.filter((p) => p?.action === "external_directory"))}`,
+      ),
+      check(
+        "lane prompts are embedded",
+        typeof config?.agents?.plan?.request?.body?.system === "string" &&
+          config.agents.plan.request.body.system.length > 0,
+        `got ${JSON.stringify(config?.agents?.plan?.request?.body?.system?.slice?.(0, 40))}`,
       ),
       check(
         "no experimental.batch_tool",

@@ -18,7 +18,7 @@
 // PATH. It shells out and opens a local socket, so it stays out of `npm test`.
 
 import { spawn, spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -278,11 +278,22 @@ async function main() {
     )
     const codeText = toolText(model.requests)
 
+    // Parity checks: the V2 setup must have written the active-profile marker
+    // and recorded the lane that ran the tool call.
+    const activePath = join(project, ".space", "active")
+    const markerOk = existsSync(activePath)
+    const markerText = markerOk ? readFileSync(activePath, "utf8").trim() : ""
+    const telemetryPath = join(project, ".space", "telemetry.jsonl")
+    const telemetryText = existsSync(telemetryPath) ? readFileSync(telemetryPath, "utf8") : ""
+    const telemetryOk = telemetryText.includes('"kind":"lane"') || telemetryText.includes('"kind": "lane"')
+
     const checks = [
       [blocked && blockedText.includes(MARKER), "execute.before ran on V2 and blocked npm publish", blockedText.slice(0, 500)],
       [blockedText.includes("denied command"), "the refusal is the guard's, not a permission error", blockedText.slice(0, 500)],
       [measured && codeText.includes('"shell":"undefined"'), "Code Mode exposes no shell builtin", codeText.slice(0, 500)],
       [measured && codeText.includes('"bash":"undefined"'), "Code Mode exposes no bash builtin", codeText.slice(0, 500)],
+      [markerOk && markerText.length > 0, "setupV2 wrote .space/active", markerText || "(missing)"],
+      [telemetryOk, "telemetry recorded the running lane", telemetryText.slice(0, 500) || "(missing)"],
     ]
 
     let passed = true

@@ -428,7 +428,8 @@ export function configTarget(opts = {}) {
  * @returns {string | null}
  */
 /** @param {string} ref @param {string} configDir @returns {string | null} */
-function resolvePromptFile(ref, configDir) {
+/** @param {string} ref @param {string} configDir @param {string} [kitRoot] @returns {string | null} */
+function resolvePromptFile(ref, configDir, kitRoot) {
   const match = String(ref ?? "").trim().match(/^\{file:(.+)\}$/)
   if (!match) return null
   let path = match[1].trim()
@@ -442,6 +443,20 @@ function resolvePromptFile(ref, configDir) {
       return readFileSync(candidate, "utf8")
     } catch {
       return null
+    }
+  }
+
+  // Smoke gates and CI run with a temporary HOME that has no installed
+  // prompts. Fall back to the kit's own copy so the assertion stays meaningful.
+  const laneMatch = String(ref ?? "").match(/prompts\/([a-z-]+)\.md\}$/)
+  if (laneMatch && kitRoot) {
+    const kitPrompt = join(kitRoot, "prompts", `${laneMatch[1]}.md`)
+    if (existsSync(kitPrompt)) {
+      try {
+        return readFileSync(kitPrompt, "utf8")
+      } catch {
+        return null
+      }
     }
   }
   return null
@@ -653,7 +668,7 @@ export function generateConfig(p, opts = {}) {
       if (!entry || typeof entry !== "object") continue
       const prompt = entry.prompt
       if (typeof prompt !== "string") continue
-      const content = resolvePromptFile(prompt, configDir)
+      const content = resolvePromptFile(prompt, configDir, opts.kitRoot ?? kitRoot())
       if (content !== null) entry.system = content
       else entry.system = prompt
       delete entry.prompt

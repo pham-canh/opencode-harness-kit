@@ -1,5 +1,5 @@
 // src/v2-runtime.ts
-import { mkdirSync as mkdirSync4, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { mkdirSync as mkdirSync4, readFileSync as readFileSync4, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import { join as join11 } from "node:path";
 
 // src/harness-hooks.ts
@@ -2610,8 +2610,9 @@ async function setupV2(ctx, options) {
           if (output.args !== event?.input) event.input = output.args;
           try {
             const messageID = event?.messageID;
-            if (messageID && !seenMessages.has(messageID)) {
-              seenMessages.add(messageID);
+            const key = messageID ?? event?.sessionID ?? event?.id;
+            if (key && !seenMessages.has(key)) {
+              seenMessages.add(key);
               const agent = event?.agent;
               if (agent) {
                 write(join11(project, ".space"), { kind: "lane", agent, sessionID: event?.sessionID, messageID });
@@ -2675,7 +2676,22 @@ async function setupV2(ctx, options) {
       }
     })();
   }
-  const profileId = opts?.profile ?? profileIdFromConfig();
+  let profileId = opts?.profile ?? profileIdFromConfig();
+  if (!profileId) {
+    for (const name of ["opencode.json", "opencode.jsonc"]) {
+      const fp = join11(project, name);
+      try {
+        const raw = readFileSync4(fp, "utf8");
+        const parsed = JSON.parse(raw);
+        const id = parsed?.harness?.profile;
+        if (typeof id === "string" && id) {
+          profileId = id;
+          break;
+        }
+      } catch (e) {
+      }
+    }
+  }
   if (profileId) writeActiveMarker(project, profileId);
   if (context.agent?.transform && profileId) {
     try {
@@ -2687,12 +2703,19 @@ async function setupV2(ctx, options) {
             const id = agent?.id ?? agent?.name;
             if (!id || !(id in (result.roles ?? {}))) continue;
             editor.update(id, (draft) => {
+              const provider = String(result.model ?? "").split("/")[0] || "opencode";
+              const laneModel = result.laneModels?.[id];
               if (!draft.model) {
-                const laneModel = result.laneModels?.[id];
-                if (laneModel) draft.model = `${String(result.model).split("/")[0]}/${laneModel}`;
-                else draft.model = result.model;
+                draft.model = {
+                  providerID: provider,
+                  id: laneModel ?? String(result.model ?? "").split("/").slice(1).join("/")
+                };
               }
               const level = result.roles[id];
+              if (draft.model && typeof draft.model === "object") {
+                if (level === null) delete draft.model.variant;
+                else if (level !== void 0) draft.model.variant = level;
+              }
               if (level === null) delete draft.variant;
               else if (level !== void 0) draft.variant = level;
             });
@@ -2716,11 +2739,19 @@ async function setupV2(ctx, options) {
               if (!agent) continue;
               const resolved = resolveLaneModel(profile, lane, { unhealthy });
               const wantModel = routeKey(profile.provider, resolved.model);
-              if (agent.model === wantModel) continue;
+              const currentKey = agent.model && typeof agent.model === "object" ? routeKey(profile.provider, agent.model.id) : routeKey(profile.provider, String(agent.model ?? "").split("/").pop() ?? "");
+              if (currentKey === wantModel) continue;
               editor.update(lane, (draft) => {
-                draft.model = wantModel;
+                draft.model = {
+                  providerID: profile.provider,
+                  id: resolved.model
+                };
                 const requested = profile.roles?.[lane] ?? null;
                 const next = resolveEffort(resolved.levels, requested);
+                if (draft.model && typeof draft.model === "object") {
+                  if (next === null) delete draft.model.variant;
+                  else if (next !== void 0) draft.model.variant = next;
+                }
                 if (next === null) delete draft.variant;
                 else if (next !== void 0) draft.variant = next;
               });
