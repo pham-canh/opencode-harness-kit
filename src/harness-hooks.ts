@@ -5,7 +5,7 @@
 // the guard, pruner, router and telemetry are the same code on both sides
 // instead of a second implementation drifting from the first.
 
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Plugin } from "./plugin.js"
 import { GuardPlugin } from "./guard.js"
@@ -108,7 +108,14 @@ export async function createHarnessHooks(
     try {
       const dir = join(project, ".space")
       mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, "active"), `${id}\n`)
+      const path = join(dir, "active")
+      const tmp = `${path}.${process.pid}.tmp`
+      try {
+        writeFileSync(tmp, `${id}\n`)
+        renameSync(tmp, path)
+      } catch {
+        try { unlinkSync(tmp) } catch {}
+      }
     } catch {
       // Never block startup on a bad profile.
     }

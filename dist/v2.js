@@ -1,9 +1,9 @@
 // src/v2-runtime.ts
-import { mkdirSync as mkdirSync5, readFileSync as readFileSync5, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { mkdirSync as mkdirSync5, readFileSync as readFileSync5, renameSync as renameSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { join as join12 } from "node:path";
 
 // src/harness-hooks.ts
-import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { mkdirSync as mkdirSync4, renameSync as renameSync4, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import { join as join11 } from "node:path";
 
 // src/guard.ts
@@ -954,7 +954,7 @@ var SHELL_TOOLS = /* @__PURE__ */ new Set(["bash", "shell"]);
 var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
 
 // src/driver/policy.mjs
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync, writeFileSync } from "node:fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
 import { join as join4 } from "node:path";
 function readPolicy(cwd) {
   const path = join4(cwd, ".space", "policy.json");
@@ -2094,7 +2094,7 @@ function utilityModel(p) {
 }
 
 // src/health.js
-import { existsSync as existsSync6, mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync2, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join9 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1e3;
@@ -2164,10 +2164,10 @@ function writeHealth(dir, health) {
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {
       writeFileSync2(tmp, JSON.stringify(pruned, null, 2));
-      renameSync2(tmp, file);
+      renameSync3(tmp, file);
     } catch (err) {
       try {
-        unlinkSync(tmp);
+        unlinkSync2(tmp);
       } catch {
       }
       throw err;
@@ -2615,8 +2615,18 @@ async function createHarnessHooks(ctx, options) {
     try {
       const dir = join11(project, ".space");
       mkdirSync4(dir, { recursive: true });
-      writeFileSync3(join11(dir, "active"), `${id}
+      const path = join11(dir, "active");
+      const tmp = `${path}.${process.pid}.tmp`;
+      try {
+        writeFileSync3(tmp, `${id}
 `);
+        renameSync4(tmp, path);
+      } catch {
+        try {
+          unlinkSync3(tmp);
+        } catch {
+        }
+      }
     } catch {
     }
   };
@@ -2636,7 +2646,7 @@ function writeActiveMarker(project, id) {
     const tmp = join12(dir, `.active.${process.pid}`);
     writeFileSync4(tmp, `${id}
 `);
-    renameSync3(tmp, join12(dir, "active"));
+    renameSync5(tmp, join12(dir, "active"));
   } catch {
   }
 }

@@ -1588,7 +1588,9 @@ function configDrift(p, actual) {
         // without opencode, and every V1 config on a machine that has V2.
         target:
           actual?.experimental?.subagent_depth !== undefined ||
-          actual?.permission?.external_directory !== undefined
+          (actual?.subagent_depth === undefined &&
+            (actual?.permission?.external_directory !== undefined ||
+             Array.isArray(actual?.plugins)))
             ? "v2"
             : "v1",
       }),

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 // What a verify command is allowed to be.
 //
@@ -137,6 +137,13 @@ export function writeDefaultPolicy(cwd) {
   mkdirSync(dir, { recursive: true })
   const path = join(dir, "policy.json")
   if (existsSync(path)) return path
-  writeFileSync(path, JSON.stringify({ allow: [], deny: ["npm publish", "git push"], ask: [] }, null, 2))
+  const tmp = `${path}.${process.pid}.tmp`
+  try {
+    writeFileSync(tmp, JSON.stringify({ allow: [], deny: ["npm publish", "git push"], ask: [] }, null, 2))
+    renameSync(tmp, path)
+  } catch (err) {
+    try { unlinkSync(tmp) } catch {}
+    throw err
+  }
   return path
 }

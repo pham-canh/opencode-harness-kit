@@ -6,9 +6,9 @@
 // from. Search is lexical on purpose - no embeddings, no vector database, no
 // new dependency - so the file stays readable and diffable.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { redact } from "./run-state.mjs"
+import { redact, redactDeep } from "./run-state.mjs"
 
 const MEMORY_FILE = join(".space", "memory.jsonl")
 
@@ -51,17 +51,18 @@ export function readMemory(cwd) {
 export function recordMemory(cwd, text, meta = {}) {
   const dir = join(cwd, ".space")
   mkdirSync(dir, { recursive: true })
-  const row = {
+  const row = redactDeep({
     ts: meta.ts ?? new Date().toISOString(),
     text: redact(String(text ?? "")),
     tags: Array.isArray(meta.tags) ? meta.tags : [],
-  }
+  })
   const path = join(cwd, MEMORY_FILE)
   const line = `${JSON.stringify(row)}\n`
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`
-  const prior = existsSync(path) ? readFileSync(path, "utf8") : ""
-  writeFileSync(tmp, `${prior}${line}`)
-  renameSync(tmp, path)
+  // Append, do not read-modify-write: a JSONL log is append-only, and a single
+  // appendFileSync is the smallest write the kernel will not interleave with
+  // another process's. Rewriting the whole file on every record loses concurrent
+  // appends and re-reads the entire history for one line.
+  appendFileSync(path, line)
   return row
 }
 
@@ -100,5 +101,13 @@ export function injectMemory(prompt, memories) {
 
 export function clearMemory(cwd) {
   const path = join(cwd, MEMORY_FILE)
-  if (existsSync(path)) writeFileSync(path, "")
+  if (!existsSync(path)) return
+  const tmp = `${path}.${process.pid}.tmp`
+  try {
+    writeFileSync(tmp, "")
+    renameSync(tmp, path)
+  } catch (err) {
+    try { unlinkSync(tmp) } catch {}
+    throw err
+  }
 }
