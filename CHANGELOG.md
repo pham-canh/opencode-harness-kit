@@ -19,14 +19,36 @@ leaves evidence, an event log and a record a script can read; a worktree run
 can be found after the terminal closes; and a route that died is not retried
 blind.
 
+### Fixed
+
+- **Three latency assumptions in `test/eval-failfast.test.js`.** Under eight
+  concurrent runs of the file, 16 of 16 runs failed at least one test; alone it
+  passed 17 of 17. Two tests gave a child 1–2 seconds to start, which a loaded
+  machine cannot guarantee: the "killed by the ceiling" test then died on ENOENT
+  because the pid file was never written, and the "stalls before the ceiling"
+  test saw an empty stream and was correctly classified as "produced no tool
+  calls and no text" instead. The third failed on the preflight's 5-second
+  deadline, which has nothing to do with what it asserts. All three now have
+  startup headroom (`--timeout 5`) or skip the probe (`--no-preflight`), and 16
+  of 16 concurrent runs pass.
+- **`eval/token-burn.mjs` reported prune coverage it could not see.** It counted
+  stored parts carrying a "pruned from context" marker and warned when the count
+  was zero, which is the normal case — opencode prunes the request, not the
+  history. It now reports the weight of the tool output (bytes, how many results
+  are over 8k characters, the largest one) and treats a marker as evidence of a
+  resumed session.
+
 ### Added
 
 - **`eval/token-burn.mjs` (`npm run token-burn`).** The reading that was missing
   when a session on a free route spent 67.93M prompt tokens, peaked at 169,597
   tokens in one request and ended with "Free usage limit reached": requests,
   prompt and output tokens, the worst request and when it happened, how many
-  tokens were re-sent in refusals, and how many tool results the pruner actually
-  replaced — per day, from the database the session already wrote. The gate is
+  tokens were re-sent in refusals, and what the tool output weighs — per day,
+  from the database the session already wrote. It does not report prune
+  coverage, because opencode stores a part unpruned and the pruner rewrites the
+  outgoing request: a stored prune marker means the session was resumed from a
+  pruned transcript, not that pruning ran. The gate is
   the fleet's own compaction threshold plus the size of one tool result, judged
   only on requests made after the running config was installed, so the history
   that motivated the fix does not fail every run forever.

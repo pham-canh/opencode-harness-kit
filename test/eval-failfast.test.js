@@ -74,7 +74,14 @@ sleep 5
 
   const r = spawnSync(
     process.execPath,
-    [AB, "--target", target, "--task", "say something", "--reps", "5", "--timeout", "2", "--fail-fast", "2", "--no-preflight"],
+    // --timeout 5, not 2. The fake emits one step and then goes quiet, and the
+    // property under test needs the step to have ARRIVED before the ceiling:
+    // at 2s a loaded machine killed the child before its shell had run, the
+    // stream file was empty, and the run was correctly classified as "produced
+    // no tool calls and no text" instead of a stall. 5s gives the spawn that
+    // headroom and the quiet-time check still sees 5s of silence against its
+    // 2.5s threshold.
+    [AB, "--target", target, "--task", "say something", "--reps", "5", "--timeout", "5", "--fail-fast", "2", "--no-preflight"],
     { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
   )
 
@@ -168,7 +175,11 @@ exit 0
 
   const r = spawnSync(
     process.execPath,
-    [AB, "--target", target, "--task", "say something", "--reps", "1", "--timeout", "5"],
+    // --no-preflight: this test reads the config an arm was given, and the
+    // preflight probes the route with a 5s deadline. Under a loaded machine
+    // that deadline expires and the test fails on "the preflight did not
+    // answer within 5s" - a fact about the machine, not about small_model.
+    [AB, "--target", target, "--task", "say something", "--reps", "1", "--timeout", "5", "--no-preflight"],
     {
       encoding: "utf8",
       timeout: 60_000,
@@ -204,7 +215,12 @@ test("a run killed by the ceiling takes its process group with it", async () => 
 
   const r = spawnSync(
     process.execPath,
-    [AB, "--target", target, "--task", "hang", "--reps", "1", "--timeout", "1", "--fail-fast", "5", "--no-preflight"],
+    // --timeout 5, not 1. The fake records its pid as its first action, and at
+    // a 1s ceiling a loaded machine killed the process group before that shell
+    // line ran: the pid file was never written and the test died on ENOENT
+    // with the kill itself working. 5s is headroom for the spawn, and the fake
+    // sleeps 60s, so the ceiling is still what ends the run.
+    [AB, "--target", target, "--task", "hang", "--reps", "1", "--timeout", "5", "--fail-fast", "5", "--no-preflight"],
     {
       encoding: "utf8",
       timeout: 60_000,

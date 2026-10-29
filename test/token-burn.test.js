@@ -337,7 +337,13 @@ test("the audit gates the worst request, and the gate can fail", (t) => {
     assert.equal(pass.report.refusals, 1, "the refusal row is counted")
     assert.ok(pass.report.refusal_bytes >= 400, `refusal_bytes ${pass.report.refusal_bytes}`)
     assert.equal(pass.report.tool_parts, 1)
-    assert.equal(pass.report.pruned_parts, 0)
+    // Not "pruned_parts": opencode stores the part unpruned and the pruner
+    // rewrites the request. The audit reports what the tool output weighs, and
+    // a prune marker only appears when a session resumed from a pruned
+    // transcript - so this number must not be read as prune coverage.
+    assert.equal(pass.report.tool_output_bytes, "rows".length)
+    assert.equal(pass.report.tool_output_over_8k, 0)
+    assert.equal(pass.report.resumed_parts, 0)
 
     // Now the same install makes one request at 200,000 tokens. That is past
     // the threshold and past the slack, which is the only thing the gate is for.

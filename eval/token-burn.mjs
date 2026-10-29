@@ -178,13 +178,30 @@ const refusal = query(`
   from part
   where time_created >= ${since} and data like '%prevents you from using%'`)[0] ?? {}
 
+// What the tool output in this window weighs.
+//
+// NOT "how much was pruned": opencode stores the stored part unpruned, because
+// the pruner rewrites the outgoing request and leaves the history alone (see
+// eval/measure-prune.mjs, which is the tool that replays the pruner to answer
+// the saving question). A stored part only carries a "pruned from context"
+// marker when the session was resumed from an already-pruned transcript, so
+// `pruned` is a count of resumes, not of pruning. The first version of this
+// script reported it as prune coverage and warned on it - a false alarm that
+// would have sent the next reader after a pruner that was working.
 const prune = query(`
   select
     (select count(*) from part
       where time_created >= ${since} and json_extract(data,'$.type')='tool') as tool_parts,
     (select count(*) from part
       where time_created >= ${since} and json_extract(data,'$.type')='tool'
-        and data like '%pruned from context%') as pruned`)[0] ?? {}
+        and data like '%pruned from context%') as pruned,
+    (select coalesce(sum(length(json_extract(data,'$.state.output'))),0) from part
+      where time_created >= ${since} and json_extract(data,'$.type')='tool') as tool_bytes,
+    (select count(*) from part
+      where time_created >= ${since} and json_extract(data,'$.type')='tool'
+        and length(coalesce(json_extract(data,'$.state.output'),'')) > 8000) as tool_big,
+    (select coalesce(max(length(json_extract(data,'$.state.output'))),0) from part
+      where time_created >= ${since} and json_extract(data,'$.type')='tool') as tool_biggest`)[0] ?? {}
 
 const perDay = query(`
   select date(time_created/1000,'unixepoch','localtime') as day,
@@ -214,6 +231,9 @@ const userBilled = input + output
 const prompt = input + cacheRead
 const toolParts = n(prune.tool_parts)
 const pruned = n(prune.pruned)
+const toolBytes = n(prune.tool_bytes)
+const toolBig = n(prune.tool_big)
+const toolBiggest = n(prune.tool_biggest)
 const gatedCalls = n(gated.calls)
 const gatedWorst = n(gated.worst)
 
@@ -260,9 +280,12 @@ if (maxWaste != null && wasteShare !== null && wasteShare > maxWaste) {
     `refusals re-sent ${tokens(refusalTokens)} tokens, ${wasteShare.toFixed(1)}% of the window's prompt tokens, over the ${maxWaste}% ceiling`,
   )
 }
-if (pruned === 0 && worst > cap * 0.8) {
+if (toolParts > 0 && toolBiggest > cap * 4) {
+  // A single tool result larger than four windows is the one number that makes
+  // every later request in the session expensive, whether pruning is on or not:
+  // it is re-read by the model, and it is what the pruner has to replace.
   warnings.push(
-    `0 of ${commas(toolParts)} tool results carry a prune marker, while requests reached ${commas(worst)} tokens - pruning is gated on compaction, so check that the session that produced this shipped from a config with compaction.prune on`,
+    `the largest tool result is ${commas(toolBiggest)} characters, ${Math.round(toolBiggest / 4 / cap)}x the ${commas(cap)} window - a read that big is paid for on every request that can still see it`,
   )
 }
 if (gatedCalls > 0 && gatedWorst > ceiling) {
@@ -301,7 +324,10 @@ if (wantJson) {
         refusal_tokens: refusalTokens,
         refusal_share_pct: wasteShare === null ? null : Number(wasteShare.toFixed(2)),
         tool_parts: toolParts,
-        pruned_parts: pruned,
+        tool_output_bytes: toolBytes,
+        tool_output_over_8k: toolBig,
+        largest_tool_output: toolBiggest,
+        resumed_parts: pruned,
         per_day: perDay.map((r) => ({
           day: r.day,
           calls: n(r.calls),
@@ -335,7 +361,10 @@ if (wantJson) {
   console.log(
     `refusals              ${commas(refusals)}   ${commas(refusalBytes)} bytes ~ ${tokens(refusalTokens)} tokens re-sent${wasteShare === null ? "" : ` (${wasteShare.toFixed(1)}%)`}`,
   )
-  console.log(`pruned tool results   ${commas(pruned)} of ${commas(toolParts)}`)
+  console.log(
+    `tool output           ${tokens(Math.round(toolBytes / 4))} tokens stored over ${commas(toolParts)} results, ${commas(toolBig)} over 8k chars, largest ${commas(toolBiggest)}`,
+  )
+  if (pruned > 0) console.log(`resumed from pruned   ${commas(pruned)} part(s) carry a prune marker`)
   console.log("")
   console.log("day           requests      prompt   worst request")
   for (const r of perDay.slice(-14)) {
