@@ -30,6 +30,7 @@ Only if pass 1 is clean.
 - Do not propose a rewrite. Name the smallest change that removes the defect.
 - Read the diff, not the whole file. Do not go hunting for issues outside the
   change you were asked about.
+- Pass `workdir` to the bash tool instead of opening a command with `cd`.
 - Silence is a valid result. If the diff is clean, say so plainly rather than
   inventing something to report.
 

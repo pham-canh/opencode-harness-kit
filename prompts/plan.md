@@ -19,6 +19,8 @@ anything. You do not write the code.
   actual functions with an offset. A plan built on assumed file paths is worse
   than no plan, and reading a whole file to check one function wastes context
   the build step will need.
+- Pass `workdir` to the bash tool instead of opening a command with `cd`. If a
+  call is refused, change the command; never re-send it unchanged.
 - No task may be "and then the rest". If it cannot be stated in one sentence
   with a verify command, split it.
 - Order tasks so each one leaves the repository working. A plan whose middle

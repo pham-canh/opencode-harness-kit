@@ -15,21 +15,7 @@
       "steps": 25,
       "permission": {
         "edit": "deny",
-        "bash": {
-          "*": "deny",
-          "git status *": "allow",
-          "git log *": "allow",
-          "git diff *": "allow",
-          "git show*": "allow",
-          "git -C * status*": "allow",
-          "git -C * log*": "allow",
-          "git -C * diff*": "allow",
-          "grep*": "allow",
-          "rg*": "allow",
-          "find*": "allow",
-          "cat*": "allow",
-          "ls*": "allow"
-        }
+        "bash": "allow"
       },
       "prompt": "prompts/plan.md"
     },
@@ -39,19 +25,7 @@
       "steps": 15,
       "permission": {
         "edit": "deny",
-        "bash": {
-          "*": "deny",
-          "git status *": "allow",
-          "git log *": "allow",
-          "git diff *": "allow",
-          "git show*": "allow",
-          "git -C * status*": "allow",
-          "git -C * log*": "allow",
-          "git -C * diff*": "allow",
-          "grep*": "allow",
-          "rg*": "allow",
-          "cat*": "allow"
-        }
+        "bash": "allow"
       },
       "prompt": "prompts/reviewer.md"
     },
@@ -68,27 +42,7 @@
       "steps": 20,
       "permission": {
         "edit": "deny",
-        "bash": {
-          "*": "ask",
-          "git status *": "allow",
-          "git diff *": "allow",
-          "ps*": "allow",
-          "node --test*": "allow",
-          "npm test*": "allow",
-          "npm run *": "allow",
-          "npx *": "allow",
-          "bun test*": "allow",
-          "deno test*": "allow",
-          "make*": "allow",
-          "python3 -m pytest*": "allow",
-          "pytest*": "allow",
-          "ruff*": "allow",
-          "mypy*": "allow",
-          "black*": "allow",
-          "npx tsc*": "allow",
-          "cargo test*": "allow",
-          "go test*": "allow"
-        }
+        "bash": "allow"
       },
       "prompt": "prompts/verify.md"
     },
