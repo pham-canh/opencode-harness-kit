@@ -366,10 +366,11 @@ test("reserved tokens and prune threshold size for the NARROWEST model in play",
     ...roleSplitModels(fleet).map((s) => s.limits?.input ?? s.limits?.context),
   )
   assert.equal(inputCap(fleet), narrowest)
-  assert.equal(reservedTokens(fleet), Math.round(narrowest * 0.12))
+  const share = fleet.effort.reserveShare
+  assert.equal(reservedTokens(fleet), Math.round(narrowest * share))
   assert.equal(pruneThreshold(fleet), narrowest - reservedTokens(fleet))
-  // The base model is 1M, so the old rule would have reserved 125,829.
-  assert.ok(reservedTokens(fleet) < 30_000, "the reserve must fit the narrowest lane")
+  // The base model is 1M, so sizing by the widest would have reserved 125,829.
+  assert.ok(reservedTokens(fleet) < narrowest / 2, "the reserve must fit the narrowest lane")
 
   // A single-model profile sizes for its own model.
   const single = normalize(loadProfile("beam-free"))
@@ -1266,4 +1267,15 @@ test("an empty or comments-only config is an empty config, not a broken one", ()
   assert.deepEqual(parseJsonc("   \n  "), {})
   assert.deepEqual(parseJsonc("// nothing here\n/* yet */"), {})
   assert.equal(parseJsonc("{ this is not json"), null, "real junk is still rejected")
+})
+
+// A free route's window is spent by request count, and each request carries the
+// whole context. So both numbers that multiply into the spend are capped here:
+// compaction fires at 130k instead of 176k, and one task cannot run 120 calls.
+// See docs/issue-token-burn.md.
+test("the free fleet compacts early and caps one task's calls", () => {
+  const c = cfg("fleet-safe")
+  assert.equal(c.compaction.reserved, 70_000, "35% of the 200k cap is held back")
+  assert.ok(c.compaction.reserved >= 60_000, "free profiles compact before 140k")
+  assert.equal(c.agent.build.steps, 40, "one task is capped at 40 model calls")
 })

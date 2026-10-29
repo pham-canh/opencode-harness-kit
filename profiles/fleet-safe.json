@@ -27,7 +27,7 @@
       "max"
     ],
     "default": "max",
-    "reserveShare": 0.12
+    "reserveShare": 0.35
   },
   "roles": {
     "plan": "max",

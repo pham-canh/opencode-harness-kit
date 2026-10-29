@@ -5,7 +5,7 @@
     "build": {
       "mode": "primary",
     "description": "Writes and verifies code. Use when the plan is settled and files need to change.",
-    "steps": 120,
+    "steps": 40,
       "permission": { "edit": "allow" },
       "prompt": "prompts/build.md"
     },
