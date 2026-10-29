@@ -622,6 +622,7 @@ at the top of the file:
 node eval/run.mjs               the pruner and the allowlist
 node eval/measure-prune.mjs     the pruner, on real sessions
 node eval/measure-install.mjs   before and after the install
+node eval/token-burn.mjs        where a session's tokens went, and the per-request gate
 node eval/models.mjs            every model the profiles use, one line each
 node eval/models.mjs --free --list   free models, and the ones a probe rejected
 node eval/models.mjs --free --check  probe each free route: ok, empty, timeout, error

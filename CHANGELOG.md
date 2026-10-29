@@ -21,6 +21,24 @@ blind.
 
 ### Added
 
+- **`eval/token-burn.mjs` (`npm run token-burn`).** The reading that was missing
+  when a session on a free route spent 67.93M prompt tokens, peaked at 169,597
+  tokens in one request and ended with "Free usage limit reached": requests,
+  prompt and output tokens, the worst request and when it happened, how many
+  tokens were re-sent in refusals, and how many tool results the pruner actually
+  replaced — per day, from the database the session already wrote. The gate is
+  the fleet's own compaction threshold plus the size of one tool result, judged
+  only on requests made after the running config was installed, so the history
+  that motivated the fix does not fail every run forever.
+- **`test/token-burn.test.js`, the token-burn suite.** Eleven tests, each
+  pinning one factor of `requests x context`: compaction at 130k rather than
+  176k, 40 calls per build rather than 120, no lane narrowing bash with a
+  catch-all rule map, no lane prompt carrying a copy of the allowlist, the
+  refusal text under its measured size, `tool_output` wide enough that a `read`
+  is not truncated, a denial ending the turn, and compaction running the pruner.
+  The last test runs the audit itself against a database it builds, including
+  the case where the gate fails.
+
 - **`oc-harness report [--json]`.** One run as numbers: phases and their
   tokens, verify count and failures, routes used, recorded error codes, and
   the next action.

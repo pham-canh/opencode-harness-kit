@@ -88,6 +88,7 @@
     "release:trust": "node bin/oc-harness.mjs trust",
     "eval": "node eval/run.mjs",
     "measure": "node eval/measure-install.mjs",
+    "token-burn": "node eval/token-burn.mjs",
     "measure:prune": "node eval/measure-prune.mjs --sessions 60 --days 30 --min-saved 20",
     "measure:check": "npm run measure:prune && node eval/measure-install.mjs --min-narrow 45 --min-ctx-drop 20",
     "attribute": "node eval/attribute.mjs",
