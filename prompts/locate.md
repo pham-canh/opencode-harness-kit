@@ -31,3 +31,10 @@ agent exists to stop.
 Under 200 words. Findings as `file:line — what it does`, ordered by relevance.
 If you ran more than about eight searches without converging, say so and name
 the two places you would look next.
+
+## No shell
+
+Bash is denied in this lane. Never call it: OpenCode answers a denied call with
+an 11 KB rule dump that stays in the context for the rest of the session, which
+is the most expensive mistake available here. `grep`, `glob` and `read` are the
+tools for this lane.

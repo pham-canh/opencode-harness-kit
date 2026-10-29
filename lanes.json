@@ -59,18 +59,7 @@
       "steps": 12,
       "permission": {
         "edit": "deny",
-        "bash": {
-          "*": "deny",
-          "pdftotext*": "allow",
-          "cat*": "allow",
-          "ls*": "allow",
-          "head*": "allow",
-          "tail*": "allow",
-          "wc*": "allow",
-          "file*": "allow",
-          "grep*": "allow",
-          "rg*": "allow"
-        }
+        "bash": "allow"
       },
       "prompt": "prompts/doc.md"
     },

@@ -31,3 +31,10 @@ question with the picture attached, sometimes nothing but the picture.
 Plain prose, at most a few lines. Text found in the image goes in a fenced
 block so the caller can copy it exactly. Then one line saying what the image
 was, so the answer can be filed without re-opening it.
+
+## No shell
+
+Bash is denied in this lane. Never call it: OpenCode answers a denied call with
+an 11 KB rule dump that stays in the context for the rest of the session, which
+is the most expensive mistake available here. `grep`, `glob` and `read` are the
+tools for this lane.

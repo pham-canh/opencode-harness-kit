@@ -28,3 +28,10 @@ it is either valid or it is broken.
 The JSON, exactly. Then, in one line outside the JSON, a note if you had to
 deviate from the requested shape and why. If you did not deviate, the JSON is
 the whole report.
+
+## No shell
+
+Bash is denied in this lane. Never call it: OpenCode answers a denied call with
+an 11 KB rule dump that stays in the context for the rest of the session, which
+is the most expensive mistake available here. `grep`, `glob` and `read` are the
+tools for this lane.

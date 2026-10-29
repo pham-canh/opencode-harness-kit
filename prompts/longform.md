@@ -32,3 +32,10 @@ task asked for one.
 The answer first. For a long-context job: the finding, its location, and the
 quote that proves it. For an alternatives job: each option with one line on
 what it trades away, then one line saying which you would pick and why.
+
+## No shell
+
+Bash is denied in this lane. Never call it: OpenCode answers a denied call with
+an 11 KB rule dump that stays in the context for the rest of the session, which
+is the most expensive mistake available here. `grep`, `glob` and `read` are the
+tools for this lane.

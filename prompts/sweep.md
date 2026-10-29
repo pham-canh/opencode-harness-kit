@@ -27,3 +27,10 @@ judgement, no interpretation, no opinions about what the matches mean.
 
 `file:line — the matching text`, one per line, ordered by file. Nothing else.
 If there are no matches, one line: the pattern searched and the file count.
+
+## No shell
+
+Bash is denied in this lane. Never call it: OpenCode answers a denied call with
+an 11 KB rule dump that stays in the context for the rest of the session, which
+is the most expensive mistake available here. `grep`, `glob` and `read` are the
+tools for this lane.

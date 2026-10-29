@@ -494,6 +494,20 @@ test("lanes that must not edit are locked in the generated config", () => {
   assert.equal(c.agent.sweep.permission.bash, "deny")
 })
 
+// A lane bash map with a bare `*` key is a token trap, not a guard: the merged
+// rule list puts it after the global allows, so it cancels them, and every
+// denied call comes back as an 11 KB rule dump that stays in the context for
+// the rest of the session. See docs/issue-token-burn.md.
+test("no lane narrows bash with a catch-all map", () => {
+  const c = cfg("fleet-safe")
+  for (const role of Object.keys(c.agent)) {
+    const bash = c.agent[role].permission?.bash
+    if (bash && typeof bash === "object") {
+      assert.equal(bash["*"], undefined, `${role} must not carry a catch-all bash rule`)
+    }
+  }
+})
+
 test("every lane declares its own model, because variant needs it", () => {
   for (const id of listProfileIds()) {
     const c = cfg(id)
