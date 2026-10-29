@@ -35,11 +35,30 @@ blind.
   stored parts carrying a "pruned from context" marker and warned when the count
   was zero, which is the normal case — opencode prunes the request, not the
   history. It now reports the weight of the tool output (bytes, how many results
-  are over 8k characters, the largest one) and treats a marker as evidence of a
-  resumed session.
+  are over 8k characters, the largest one and which tool produced it) and treats
+  a marker as evidence of a resumed session. A result past
+  `tool_output.max_bytes` (51,200) is a warning that names the tool: the
+  measured install had 57,941 characters from `read --limit 1500`, because
+  `read` truncates by lines and not by bytes, so `--limit` is what sets its
+  size.
 
 ### Added
 
+- **A ceiling on what one session may spend (`effort.sessionTokens`).** The kit
+  bounded one request (compaction at 130k) and one task (40 calls for a build),
+  and neither bounds a session: the measured one made 769 requests, every one
+  of them under the ceiling, and spent 67.93M prompt tokens until the route
+  answered "Free usage limit reached". `fleet-safe` now sets 6,000,000 tokens;
+  the telemetry hook charges each finished message (`input + cache read +
+  output`, counted once per message id), and the guard throws a three-line
+  message at 70% and refuses every tool call at 100%. The message is prose, not
+  a rule map, because opencode echoes a rule map back as the refusal and the
+  measured one was 11,041 characters. `0` turns the ceiling off, which is what
+  every install had before this; a value under one 200,000-token window is
+  rejected as a profile that would stop a session before its first request.
+  `test/budget.test.js` covers the arithmetic, both thresholds, the
+  once-per-session warning, and the guard actually refusing a call - the last
+  one is why the test bundles the guard and the counter into one graph.
 - **`eval/token-burn.mjs` (`npm run token-burn`).** The reading that was missing
   when a session on a free route spent 67.93M prompt tokens, peaked at 169,597
   tokens in one request and ended with "Free usage limit reached": requests,

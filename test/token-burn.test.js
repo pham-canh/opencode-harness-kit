@@ -382,3 +382,54 @@ test("the audit gates the worst request, and the gate can fail", (t) => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("the audit names the tool whose result got past the output cap", (t) => {
+  if (!hasPythonSqlite()) {
+    t.skip("python3 has no sqlite3 module, so the fixture database cannot be built")
+    return
+  }
+  const dir = mkdtempSync(join(tmpdir(), "ock-token-burn-tool-"))
+  const db = join(dir, "opencode.db")
+  const at = Date.parse("2026-01-02T03:04:05Z")
+  const rows = [
+    // A `read --limit 1500` result. The measured install produced 57,941
+    // characters this way, past the 51,200-byte cap opencode applies to tool
+    // output, because read truncates by lines and not by bytes.
+    ["insert into part (id, time_created, data) values (?, ?, ?)", "p1", at, { type: "tool", tool: "read", state: { output: "x".repeat(57_941) } }],
+    ["insert into part (id, time_created, data) values (?, ?, ?)", "p2", at + 1, { type: "tool", tool: "bash", state: { output: "y".repeat(1_000) } }],
+    ["insert into message (id, time_created, data) values (?, ?, ?)", "m1", at + 2, { role: "assistant", tokens: { input: 50_000, cache: { read: 40_000 }, output: 10 } }],
+  ]
+  const script = [
+    "import json, sqlite3",
+    `con = sqlite3.connect(${JSON.stringify(db)})`,
+    'con.execute("create table if not exists message (id text primary key, time_created integer, data text)")',
+    'con.execute("create table if not exists part (id text primary key, time_created integer, data text)")',
+    ...rows.map(
+      ([sql, id, time, data]) =>
+        `con.execute(${JSON.stringify(sql)}, (${JSON.stringify(id)}, ${time}, ${JSON.stringify(JSON.stringify(data))}))`,
+    ),
+    "con.commit()",
+  ].join("\n")
+  execFileSync("python3", ["-c", script])
+
+  try {
+    const out = spawnSync(
+      process.execPath,
+      [join(REPO, "eval", "token-burn.mjs"), "--json", "--db", db, "--since", "2026-01-01T00:00:00Z"],
+      { encoding: "utf8" },
+    )
+    assert.equal(out.stderr, "", out.stderr)
+    const report = JSON.parse(out.stdout)
+    assert.equal(report.largest_tool_output, 57_941)
+    assert.equal(report.largest_tool_output_tool, "read", "the biggest result names its tool")
+    // A warning, not a failure: one big result is a real cost but the request
+    // gate is what decides pass/fail, and this request is under it.
+    assert.equal(report.ok, true)
+    assert.match(
+      report.warnings.join(" "),
+      /57,941 characters from read, over the 51,200-byte tool_output\.max_bytes/,
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

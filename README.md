@@ -158,6 +158,7 @@ $ oc-harness use fleet-safe --print
 // retention    zero-retention
 //
 // Derived numbers, do not hand-edit:
+//   session ceiling      6,000,000 tokens  (effort.sessionTokens, 0 = off)
 //   compaction.reserved  24,000  (12% of the narrowest input cap in play)
 //   prune threshold      176,000  (narrowest input cap minus reserve)
 //   role effort          plan=max  build=max  reviewer=max  locate=low  ...
@@ -175,6 +176,14 @@ round at some point:
 - **A lane's model is a chain, not a pin.** Free routes get withdrawn in days.
   Every lane lists the models that could serve it, best first, and the first
   rung the profile's privacy ceiling allows is the one that runs it.
+
+`effort.sessionTokens` is the third number that was the wrong way round: the
+kit bounded one request (compaction) and one task (calls per lane) and left the
+session unbounded, and the measured session spent 67.93M prompt tokens in 769
+requests that were each individually under the ceiling. The telemetry hook
+charges every finished message, the guard warns once at 70% and refuses every
+tool call at 100%, and `0` turns it off. It counts `input + cache read +
+output`, because cached context is discounted rather than free.
 
 ### Levels are resolved, never emitted raw
 

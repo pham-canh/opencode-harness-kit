@@ -143,6 +143,12 @@
           "maximum": 0.5,
           "default": 0.12,
           "description": "Share of the narrowest input ceiling in play held back for reasoning and tool output growth."
+        },
+        "sessionTokens": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "description": "Ceiling on the tokens one session may spend, prompt plus output. 0 turns the ceiling off. The guard warns at 70% and refuses every tool call at 100%."
         }
       }
     },

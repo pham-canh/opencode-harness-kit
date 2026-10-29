@@ -1,14 +1,14 @@
 // src/v2-runtime.ts
-import { mkdirSync as mkdirSync5, readFileSync as readFileSync5, renameSync as renameSync5, writeFileSync as writeFileSync4 } from "node:fs";
-import { join as join12 } from "node:path";
+import { mkdirSync as mkdirSync5, readFileSync as readFileSync6, renameSync as renameSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join13 } from "node:path";
 
 // src/harness-hooks.ts
 import { mkdirSync as mkdirSync4, renameSync as renameSync4, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // src/guard.ts
-import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
-import { join as join5, resolve as resolve2 } from "node:path";
+import { homedir as homedir3, tmpdir as tmpdir2 } from "node:os";
+import { join as join7, resolve as resolve3 } from "node:path";
 
 // src/rules.js
 import { homedir, tmpdir } from "node:os";
@@ -949,252 +949,27 @@ function projectRoot(directory, worktree) {
   return start;
 }
 
-// src/tool-names.ts
-var SHELL_TOOLS = /* @__PURE__ */ new Set(["bash", "shell"]);
-var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
-
-// src/driver/policy.mjs
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
-import { join as join4 } from "node:path";
-function readPolicy(cwd) {
-  const path = join4(cwd, ".space", "policy.json");
-  if (!existsSync3(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function policyDecision(command, policy) {
-  const text = String(command ?? "").trim();
-  if (!policy) return { ok: true, code: null, reason: "", effect: "allow" };
-  const deny2 = Array.isArray(policy.deny) ? policy.deny : [];
-  const allow = Array.isArray(policy.allow) ? policy.allow : [];
-  const ask = Array.isArray(policy.ask) ? policy.ask : [];
-  function matches2(rule) {
-    if (text === rule || text.startsWith(`${rule} `)) return true;
-    try {
-      return new RegExp(rule).test(text);
-    } catch {
-      return false;
-    }
-  }
-  for (
-    const p of
-    /** @type {any[]} */
-    deny2
-  ) {
-    if (matches2(p)) return { ok: false, code: "policy-deny", reason: `policy denies: ${p}`, effect: "deny" };
-  }
-  for (
-    const p of
-    /** @type {any[]} */
-    ask
-  ) {
-    if (matches2(p)) return { ok: false, code: "policy-ask", reason: `policy asks: ${p}`, effect: "ask" };
-  }
-  if (allow.length && !/** @type {any[]} */
-  allow.some((p) => matches2(p))) {
-    return { ok: false, code: "policy-deny", reason: "command not in the allow list", effect: "deny" };
-  }
-  return { ok: true, code: null, reason: "", effect: "allow" };
-}
-
-// src/guard.ts
-var MARKER = "[opencode-harness-kit] blocked";
-function hunkFollows(lines, from) {
-  for (let i = from; i < lines.length; i++) {
-    if (/^@@/.test(lines[i])) return true;
-    if (/^(?:---|\+\+\+)\s/.test(lines[i])) return false;
-  }
-  return false;
-}
-function hunkLineCount(header) {
-  const m = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/.exec(header);
-  if (!m) return 0;
-  const oldCount = m[2] === void 0 ? 1 : Number(m[2]);
-  const newCount = m[4] === void 0 ? 1 : Number(m[4]);
-  return oldCount + newCount;
-}
-function pathsInPatch(text) {
-  const out = [];
-  const push = (p) => {
-    const v = p.split("	")[0].trim();
-    if (!v) return;
-    if (v === "/dev/null") return;
-    if (!out.includes(v)) out.push(v);
-  };
-  const lines = text.split("\n");
-  let seenHunk = false;
-  let hunkRemaining = 0;
-  let applyPatch = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const marker = /^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/.exec(line);
-    if (marker) {
-      applyPatch = true;
-      push(marker[1]);
-      continue;
-    }
-    const move = /^\*\*\*\s+Move to:\s*(.+)$/.exec(line);
-    if (move) {
-      push(move[1]);
-      continue;
-    }
-    if (applyPatch) continue;
-    if (hunkRemaining > 0) {
-      const first = line[0];
-      if (first === " " || first === "-" || first === "+") {
-        hunkRemaining--;
-        continue;
-      }
-      if (first === "\\") continue;
-      hunkRemaining = 0;
-    }
-    if (/^@@/.test(line)) {
-      seenHunk = true;
-      hunkRemaining = hunkLineCount(line);
-      continue;
-    }
-    const minus = /^---\s+(?:a\/)?(.+)$/.exec(line);
-    const next = i + 1 < lines.length ? /^\+\+\+\s+(?:b\/)?(.+)$/.exec(lines[i + 1]) : null;
-    if (minus && next) {
-      if (hunkFollows(lines, i + 2)) {
-        push(minus[1]);
-        push(next[1]);
-      }
-      i++;
-      continue;
-    }
-    const plus = /^\+\+\+\s+(?:b\/)?(.+)$/.exec(line);
-    if (plus && !seenHunk) push(plus[1]);
-  }
-  return out;
-}
-function writeTargets(tool, args) {
-  if (!args || typeof args !== "object") return [];
-  if (tool === "apply_patch" || tool === "patch") {
-    return pathsInPatch(String(args.patchText ?? args.patch ?? ""));
-  }
-  const out = [];
-  const one = (v) => {
-    if (typeof v === "string" && v) out.push(v);
-  };
-  one(args.filePath);
-  one(args.path);
-  for (const c of Array.isArray(args.changes) ? args.changes : []) {
-    one(c?.filePath);
-    one(c?.path);
-  }
-  return out;
-}
-function deny(why, detail) {
-  throw new Error(
-    `${MARKER}: ${why}
-  ${detail}
-  This is enforced in code, not by a prompt. If the command is genuinely safe, run it yourself in a terminal.`
-  );
-}
-function truncate(s, n = 200) {
-  const one = s.replace(/\s+/g, " ").trim();
-  return one.length > n ? `${one.slice(0, n)}...` : one;
-}
-var GuardPlugin = async ({ worktree, directory }) => {
-  const project = projectRoot(directory, worktree);
-  const telemetryDir = join5(project, ".space");
-  const refuse = (tool, rule, why, detail) => {
-    write(telemetryDir, { kind: "guard", tool, rule });
-    deny(why, detail);
-  };
-  return {
-    "tool.execute.before": async (input, output) => {
-      try {
-        if (SHELL_TOOLS.has(input.tool)) {
-          const raw = output.args?.workdir;
-          if (typeof raw === "string" && raw.trim()) {
-            const target = raw.startsWith("~") ? join5(homedir2(), raw.slice(1)) : resolve2(project, raw);
-            if (!insideRoot(target, project) && !insideRoot(target, tmpdir2())) {
-              refuse(
-                input.tool,
-                "command outside the project",
-                "command runs outside the project",
-                `the working directory is ${truncate(target)}, and this project's files are the ones you were asked to change`
-              );
-            }
-          }
-          const policy = readPolicy(project);
-          const decision = policyDecision(String(output.args?.command ?? ""), policy);
-          if (!decision.ok) {
-            refuse(input.tool, decision.code ?? "policy", decision.reason, decision.reason);
-          }
-          const hit = checkBash(String(output.args?.command ?? ""));
-          if (hit) {
-            refuse(input.tool, hit.name, hit.name, `${hit.why}
-  command: ${truncate(hit.segment)}`);
-          }
-          const command = String(output.args?.command ?? "");
-          const denied = checkDenied(command);
-          if (denied) {
-            refuse(
-              input.tool,
-              `denied command (${denied.pattern})`,
-              "denied command",
-              `this command matches \`${denied.pattern}\`, which the kit never allows.
-  command: ${truncate(denied.segment)}`
-            );
-          }
-          return;
-        }
-        if (WRITE_TOOLS.has(input.tool)) {
-          const targets = writeTargets(input.tool, output.args);
-          if (!targets.length) {
-            refuse(
-              input.tool,
-              "unknown write target",
-              "cannot tell what this write touches",
-              `the ${input.tool} tool's arguments name no file, so the scope of the write is unknown`
-            );
-          }
-          for (const target of targets) {
-            const hit = checkWrite(target, void 0, project);
-            if (hit) {
-              refuse(input.tool, hit.name, hit.name, `${hit.why}
-  file: ${truncate(hit.segment)}`);
-            }
-          }
-        }
-      } catch (err) {
-        if (err instanceof Error && err.message.startsWith(MARKER)) throw err;
-        write(telemetryDir, {
-          kind: "guard",
-          tool: input.tool,
-          rule: "guard failed closed"
-        });
-        throw new Error(
-          `${MARKER} (guard failed closed): ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-  };
-};
+// src/budget.ts
+import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
+import { join as join5 } from "node:path";
 
 // src/profile.js
-import { readFileSync as readFileSync2, existsSync as existsSync4, readdirSync } from "node:fs";
-import { dirname as dirname3, join as join6, resolve as resolve3 } from "node:path";
-import { homedir as homedir3 } from "node:os";
+import { readFileSync, existsSync as existsSync3, readdirSync } from "node:fs";
+import { dirname as dirname3, join as join4, resolve as resolve2 } from "node:path";
+import { homedir as homedir2 } from "node:os";
 import { fileURLToPath } from "node:url";
 var HERE = dirname3(fileURLToPath(import.meta.url));
 function findRoot(start) {
   let dir = start;
   for (let i = 0; i < 12; i++) {
-    if (existsSync4(join6(dir, "profiles"))) return dir;
+    if (existsSync3(join4(dir, "profiles"))) return dir;
     const parent = dirname3(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return resolve3(start, "..");
+  return resolve2(start, "..");
 }
-var ROOT = findRoot(resolve3(HERE, ".."));
+var ROOT = findRoot(resolve2(HERE, ".."));
 var ProfileError = class extends Error {
 };
 var LANE_NAMES = [
@@ -1217,12 +992,12 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [process.env.OPENCODE_HARNESS_PROFILES ?? join6(ROOT, "profiles")];
+  return [process.env.OPENCODE_HARNESS_PROFILES ?? join4(ROOT, "profiles")];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
-    const full = join6(dir, `${id}.json`);
-    if (existsSync4(full)) return full;
+    const full = join4(dir, `${id}.json`);
+    if (existsSync3(full)) return full;
   }
   return null;
 }
@@ -1233,7 +1008,7 @@ function loadProfile(id) {
   }
   let raw;
   try {
-    raw = JSON.parse(readFileSync2(path, "utf8"));
+    raw = JSON.parse(readFileSync(path, "utf8"));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new ProfileError(`cannot read ${path}: ${msg}`);
@@ -1253,7 +1028,12 @@ function normalize(p) {
     effort: {
       levels: p.effort?.levels ?? [],
       default: p.effort?.default ?? null,
-      reserveShare: p.effort?.reserveShare ?? 0.12
+      reserveShare: p.effort?.reserveShare ?? 0.12,
+      // 0 is "no ceiling", which is what every install had before this
+      // existed. Carried through normalize because the budget reads the
+      // PROFILE, not the generated config: the config schema has no field for
+      // it and opencode would drop an unknown key.
+      sessionTokens: p.effort?.sessionTokens ?? 0
     },
     maxRetention: p.maxRetention ?? p.retention,
     prune: {
@@ -1272,11 +1052,11 @@ function normalize(p) {
 var laneCache = null;
 function loadLanes() {
   if (laneCache) return laneCache;
-  const file = join6(ROOT, "lanes.json");
-  if (!existsSync4(file)) {
+  const file = join4(ROOT, "lanes.json");
+  if (!existsSync3(file)) {
     throw new ProfileError(`lane table missing: ${file}`);
   }
-  const parsed = JSON.parse(readFileSync2(file, "utf8"));
+  const parsed = JSON.parse(readFileSync(file, "utf8"));
   const lanes = parsed.lanes ?? {};
   for (const [name, lane] of Object.entries(lanes)) {
     if (!lane.description) {
@@ -1295,8 +1075,8 @@ function laneMeta(name) {
 var retentionCache = null;
 function loadRetention() {
   if (retentionCache) return retentionCache;
-  const file = join6(ROOT, "retention.yml");
-  if (!existsSync4(file)) {
+  const file = join4(ROOT, "retention.yml");
+  if (!existsSync3(file)) {
     retentionCache = { models: {}, defaults: {} };
     return retentionCache;
   }
@@ -1308,7 +1088,7 @@ function loadRetention() {
     /** @type {Record<string, string>} */
     {}
   );
-  const lines = readFileSync2(file, "utf8").split("\n");
+  const lines = readFileSync(file, "utf8").split("\n");
   let current = null;
   let inDefaults = false;
   let i = 0;
@@ -1526,6 +1306,17 @@ function validate(p, path = "<memory>") {
       `${where}: effort.reserveShare must be between 0 and 0.5`
     );
   }
+  const sessionTokens = p.effort?.sessionTokens;
+  if (sessionTokens !== void 0) {
+    if (typeof sessionTokens !== "number" || !Number.isFinite(sessionTokens) || sessionTokens < 0) {
+      throw new ProfileError(`${where}: effort.sessionTokens must be a number of tokens, 0 turns it off`);
+    }
+    if (sessionTokens !== 0 && sessionTokens < 2e5) {
+      throw new ProfileError(
+        `${where}: effort.sessionTokens is ${sessionTokens}, which is under one 200,000-token window - the first request would be over the ceiling`
+      );
+    }
+  }
   for (const role of Object.keys(p.roles ?? {})) {
     if (!LANE_NAMES.includes(role)) {
       throw new ProfileError(
@@ -1715,10 +1506,10 @@ function worstRetention(ids) {
   return { retention, worst };
 }
 function configDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join6(homedir3(), ".config", "opencode");
+  return process.env.OPENCODE_CONFIG_DIR ?? join4(homedir2(), ".config", "opencode");
 }
 function configFilePath() {
-  return join6(configDir(), "opencode.jsonc");
+  return join4(configDir(), "opencode.jsonc");
 }
 function parseJsonc(text) {
   let out = "";
@@ -1793,9 +1584,9 @@ function profileIdFromConfig() {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv) return fromEnv.trim() || null;
   const file = configFilePath();
-  if (!existsSync4(file)) return null;
+  if (!existsSync3(file)) return null;
   try {
-    const parsed = parseJsonc(readFileSync2(file, "utf8"));
+    const parsed = parseJsonc(readFileSync(file, "utf8"));
     const harness = parsed?.harness;
     const id = harness && typeof harness === "object" ? (
       /** @type {{profile?: unknown}} */
@@ -1807,18 +1598,374 @@ function profileIdFromConfig() {
   }
 }
 
-// src/prune.ts
-import { readFileSync as readFileSync3, existsSync as existsSync5 } from "node:fs";
-import { join as join7 } from "node:path";
-function activeProfileId(worktree) {
+// src/budget.ts
+var WARN_SHARE = 0.7;
+function billableTokens(usage) {
+  const n = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+  return n(usage?.input) + n(usage?.cacheRead) + n(usage?.output);
+}
+var SessionBudget = class {
+  /** The ceiling every session in this project gets. */
+  cap;
+  /** Tokens spent, by session id. */
+  spent = /* @__PURE__ */ new Map();
+  /** Sessions already warned, so the warning is one refusal and not one per call. */
+  warned = /* @__PURE__ */ new Set();
+  /**
+   * @param cap the session ceiling in tokens; 0 or less turns the budget off
+   */
+  constructor(cap) {
+    this.cap = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+  }
+  /** Whether this budget has a ceiling at all. */
+  get enabled() {
+    return this.cap > 0;
+  }
+  /**
+   * Add one message's usage to a session.
+   *
+   * @param session the session id; an empty string is a session with no id
+   * @param usage the message's token counts
+   * @returns the session's standing after the addition
+   */
+  add(session, usage) {
+    if (!this.enabled) return { spent: 0, cap: 0, share: 0, state: "ok" };
+    const key = session || "-";
+    const spent = (this.spent.get(key) ?? 0) + billableTokens(usage);
+    this.spent.set(key, spent);
+    return this.stand(key, spent);
+  }
+  /**
+   * Where a session stands, without changing it.
+   *
+   * @param session the session id
+   */
+  check(session) {
+    if (!this.enabled) return { spent: 0, cap: 0, share: 0, state: "ok" };
+    const key = session || "-";
+    return this.stand(key, this.spent.get(key) ?? 0);
+  }
+  /**
+   * Whether this call is the one that should carry the warning.
+   *
+   * True exactly once per session: the point of the warning is to be read, and
+   * a message repeated on every tool call is a message the model filters out.
+   *
+   * @param session the session id
+   */
+  claimWarning(session) {
+    const key = session || "-";
+    if (this.warned.has(key)) return false;
+    const standing = this.check(session);
+    if (standing.state !== "warn") return false;
+    this.warned.add(key);
+    return true;
+  }
+  /** Forget every session. Used by the tests. */
+  reset() {
+    this.spent.clear();
+    this.warned.clear();
+  }
+  stand(key, spent) {
+    const share = this.cap > 0 ? spent / this.cap : 0;
+    const state = share >= 1 ? "stop" : share >= WARN_SHARE ? "warn" : "ok";
+    void key;
+    return { spent, cap: this.cap, share, state };
+  }
+};
+var budgets = /* @__PURE__ */ new Map();
+function budgetFor(project) {
+  const existing = budgets.get(project);
+  if (existing) return existing;
+  const budget = new SessionBudget(ceilingFor(project) ?? 0);
+  budgets.set(project, budget);
+  return budget;
+}
+function ceilingFor(project) {
+  const id = activeProfileId(project);
+  if (!id) return null;
+  try {
+    const profile = loadProfile(id);
+    const cap = profile?.effort?.sessionTokens;
+    return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap : null;
+  } catch {
+    return null;
+  }
+}
+function activeProfileId(project) {
   const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  const candidates = [join7(worktree, ".space", "active")];
+  try {
+    const path = join5(project, ".space", "active");
+    if (!existsSync4(path)) return null;
+    const v = readFileSync2(path, "utf8").trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+function budgetMessage(spend) {
+  const k = (v) => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v.toLocaleString("en-US");
+  if (spend.state === "stop") {
+    return `token budget spent: ${k(spend.spent)} of ${k(spend.cap)} on this session.
+  Every tool call is refused from here. Report what you have - what changed, what you verified, what is unfinished - and let a human decide whether to continue.`;
+  }
+  return `token budget: ${k(spend.spent)} of ${k(spend.cap)} spent (${Math.round(spend.share * 100)}%).
+  Finish the step you are on, run the one command that verifies it, then report. A task that needs more than this should be split, not pushed through.`;
+}
+
+// src/tool-names.ts
+var SHELL_TOOLS = /* @__PURE__ */ new Set(["bash", "shell"]);
+var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "patch"]);
+
+// src/driver/policy.mjs
+import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, unlinkSync, writeFileSync } from "node:fs";
+import { join as join6 } from "node:path";
+function readPolicy(cwd) {
+  const path = join6(cwd, ".space", "policy.json");
+  if (!existsSync5(path)) return null;
+  try {
+    return JSON.parse(readFileSync3(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function policyDecision(command, policy) {
+  const text = String(command ?? "").trim();
+  if (!policy) return { ok: true, code: null, reason: "", effect: "allow" };
+  const deny2 = Array.isArray(policy.deny) ? policy.deny : [];
+  const allow = Array.isArray(policy.allow) ? policy.allow : [];
+  const ask = Array.isArray(policy.ask) ? policy.ask : [];
+  function matches2(rule) {
+    if (text === rule || text.startsWith(`${rule} `)) return true;
+    try {
+      return new RegExp(rule).test(text);
+    } catch {
+      return false;
+    }
+  }
+  for (
+    const p of
+    /** @type {any[]} */
+    deny2
+  ) {
+    if (matches2(p)) return { ok: false, code: "policy-deny", reason: `policy denies: ${p}`, effect: "deny" };
+  }
+  for (
+    const p of
+    /** @type {any[]} */
+    ask
+  ) {
+    if (matches2(p)) return { ok: false, code: "policy-ask", reason: `policy asks: ${p}`, effect: "ask" };
+  }
+  if (allow.length && !/** @type {any[]} */
+  allow.some((p) => matches2(p))) {
+    return { ok: false, code: "policy-deny", reason: "command not in the allow list", effect: "deny" };
+  }
+  return { ok: true, code: null, reason: "", effect: "allow" };
+}
+
+// src/guard.ts
+var MARKER = "[opencode-harness-kit] blocked";
+function hunkFollows(lines, from) {
+  for (let i = from; i < lines.length; i++) {
+    if (/^@@/.test(lines[i])) return true;
+    if (/^(?:---|\+\+\+)\s/.test(lines[i])) return false;
+  }
+  return false;
+}
+function hunkLineCount(header) {
+  const m = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/.exec(header);
+  if (!m) return 0;
+  const oldCount = m[2] === void 0 ? 1 : Number(m[2]);
+  const newCount = m[4] === void 0 ? 1 : Number(m[4]);
+  return oldCount + newCount;
+}
+function pathsInPatch(text) {
+  const out = [];
+  const push = (p) => {
+    const v = p.split("	")[0].trim();
+    if (!v) return;
+    if (v === "/dev/null") return;
+    if (!out.includes(v)) out.push(v);
+  };
+  const lines = text.split("\n");
+  let seenHunk = false;
+  let hunkRemaining = 0;
+  let applyPatch = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const marker = /^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/.exec(line);
+    if (marker) {
+      applyPatch = true;
+      push(marker[1]);
+      continue;
+    }
+    const move = /^\*\*\*\s+Move to:\s*(.+)$/.exec(line);
+    if (move) {
+      push(move[1]);
+      continue;
+    }
+    if (applyPatch) continue;
+    if (hunkRemaining > 0) {
+      const first = line[0];
+      if (first === " " || first === "-" || first === "+") {
+        hunkRemaining--;
+        continue;
+      }
+      if (first === "\\") continue;
+      hunkRemaining = 0;
+    }
+    if (/^@@/.test(line)) {
+      seenHunk = true;
+      hunkRemaining = hunkLineCount(line);
+      continue;
+    }
+    const minus = /^---\s+(?:a\/)?(.+)$/.exec(line);
+    const next = i + 1 < lines.length ? /^\+\+\+\s+(?:b\/)?(.+)$/.exec(lines[i + 1]) : null;
+    if (minus && next) {
+      if (hunkFollows(lines, i + 2)) {
+        push(minus[1]);
+        push(next[1]);
+      }
+      i++;
+      continue;
+    }
+    const plus = /^\+\+\+\s+(?:b\/)?(.+)$/.exec(line);
+    if (plus && !seenHunk) push(plus[1]);
+  }
+  return out;
+}
+function writeTargets(tool, args) {
+  if (!args || typeof args !== "object") return [];
+  if (tool === "apply_patch" || tool === "patch") {
+    return pathsInPatch(String(args.patchText ?? args.patch ?? ""));
+  }
+  const out = [];
+  const one = (v) => {
+    if (typeof v === "string" && v) out.push(v);
+  };
+  one(args.filePath);
+  one(args.path);
+  for (const c of Array.isArray(args.changes) ? args.changes : []) {
+    one(c?.filePath);
+    one(c?.path);
+  }
+  return out;
+}
+function deny(why, detail) {
+  throw new Error(
+    `${MARKER}: ${why}
+  ${detail}
+  This is enforced in code, not by a prompt. If the command is genuinely safe, run it yourself in a terminal.`
+  );
+}
+function truncate(s, n = 200) {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > n ? `${one.slice(0, n)}...` : one;
+}
+var GuardPlugin = async ({ worktree, directory }) => {
+  const project = projectRoot(directory, worktree);
+  const telemetryDir = join7(project, ".space");
+  const refuse = (tool, rule, why, detail) => {
+    write(telemetryDir, { kind: "guard", tool, rule });
+    deny(why, detail);
+  };
+  const budget = budgetFor(project);
+  return {
+    "tool.execute.before": async (input, output) => {
+      const session = typeof input?.sessionID === "string" ? input.sessionID : "";
+      const standing = budget.check(session);
+      if (standing.state === "stop" || standing.state === "warn" && budget.claimWarning(session)) {
+        write(telemetryDir, {
+          kind: "guard",
+          tool: input?.tool,
+          rule: standing.state === "stop" ? "session budget spent" : "session budget warning"
+        });
+        throw new Error(`opencode-harness-kit: ${budgetMessage(standing)}`);
+      }
+      try {
+        if (SHELL_TOOLS.has(input.tool)) {
+          const raw = output.args?.workdir;
+          if (typeof raw === "string" && raw.trim()) {
+            const target = raw.startsWith("~") ? join7(homedir3(), raw.slice(1)) : resolve3(project, raw);
+            if (!insideRoot(target, project) && !insideRoot(target, tmpdir2())) {
+              refuse(
+                input.tool,
+                "command outside the project",
+                "command runs outside the project",
+                `the working directory is ${truncate(target)}, and this project's files are the ones you were asked to change`
+              );
+            }
+          }
+          const policy = readPolicy(project);
+          const decision = policyDecision(String(output.args?.command ?? ""), policy);
+          if (!decision.ok) {
+            refuse(input.tool, decision.code ?? "policy", decision.reason, decision.reason);
+          }
+          const hit = checkBash(String(output.args?.command ?? ""));
+          if (hit) {
+            refuse(input.tool, hit.name, hit.name, `${hit.why}
+  command: ${truncate(hit.segment)}`);
+          }
+          const command = String(output.args?.command ?? "");
+          const denied = checkDenied(command);
+          if (denied) {
+            refuse(
+              input.tool,
+              `denied command (${denied.pattern})`,
+              "denied command",
+              `this command matches \`${denied.pattern}\`, which the kit never allows.
+  command: ${truncate(denied.segment)}`
+            );
+          }
+          return;
+        }
+        if (WRITE_TOOLS.has(input.tool)) {
+          const targets = writeTargets(input.tool, output.args);
+          if (!targets.length) {
+            refuse(
+              input.tool,
+              "unknown write target",
+              "cannot tell what this write touches",
+              `the ${input.tool} tool's arguments name no file, so the scope of the write is unknown`
+            );
+          }
+          for (const target of targets) {
+            const hit = checkWrite(target, void 0, project);
+            if (hit) {
+              refuse(input.tool, hit.name, hit.name, `${hit.why}
+  file: ${truncate(hit.segment)}`);
+            }
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith(MARKER)) throw err;
+        write(telemetryDir, {
+          kind: "guard",
+          tool: input.tool,
+          rule: "guard failed closed"
+        });
+        throw new Error(
+          `${MARKER} (guard failed closed): ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+  };
+};
+
+// src/prune.ts
+import { readFileSync as readFileSync4, existsSync as existsSync6 } from "node:fs";
+import { join as join8 } from "node:path";
+function activeProfileId2(worktree) {
+  const fromEnv = process.env.OPENCODE_HARNESS_PROFILE;
+  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+  const candidates = [join8(worktree, ".space", "active")];
   for (const f of candidates) {
     if (!f) continue;
     try {
-      if (existsSync5(f)) {
-        const v = readFileSync3(f, "utf8").trim();
+      if (existsSync6(f)) {
+        const v = readFileSync4(f, "utf8").trim();
         if (v) return v;
       }
     } catch {
@@ -1882,7 +2029,7 @@ var PrunePlugin = async ({ worktree, directory }) => {
     if (cached) return cached;
     let profile = null;
     try {
-      const id = activeProfileId(project);
+      const id = activeProfileId2(project);
       if (id) profile = loadProfile(id);
     } catch (err) {
       profile = null;
@@ -2050,13 +2197,13 @@ var PrunePlugin = async ({ worktree, directory }) => {
   };
 };
 async function logPrune(worktree, profileId, stats, maxBytes = MAX_BYTES) {
-  const dir = join7(worktree, ".space");
+  const dir = join8(worktree, ".space");
   try {
     const { mkdir, appendFile } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
-    rotate(join7(dir, "prune.jsonl"), maxBytes);
+    rotate(join8(dir, "prune.jsonl"), maxBytes);
     await appendFile(
-      join7(dir, "prune.jsonl"),
+      join8(dir, "prune.jsonl"),
       JSON.stringify({
         t: (/* @__PURE__ */ new Date()).toISOString(),
         profile: profileId,
@@ -2084,9 +2231,9 @@ function safeStringify(value) {
 }
 
 // src/config.js
-import { join as join8, resolve as resolve4 } from "node:path";
+import { join as join9, resolve as resolve4 } from "node:path";
 import { homedir as homedir4 } from "node:os";
-var DEFAULT_CONFIG_DIR = join8(homedir4(), ".config/opencode");
+var DEFAULT_CONFIG_DIR = join9(homedir4(), ".config/opencode");
 function utilityModel(p) {
   const u = p?.utility;
   if (!u || typeof u.model !== "string" || !u.model) return null;
@@ -2094,8 +2241,8 @@ function utilityModel(p) {
 }
 
 // src/health.js
-import { existsSync as existsSync6, mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join9 } from "node:path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync3, readFileSync as readFileSync5, renameSync as renameSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join10 } from "node:path";
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
@@ -2137,12 +2284,12 @@ function liveUnhealthy(health, now = Date.now()) {
   return out;
 }
 function healthPath(dir) {
-  return join9(dir, ".space", "health.json");
+  return join10(dir, ".space", "health.json");
 }
 function readHealth(dir) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync4(healthPath(dir), "utf8"));
+    parsed = JSON.parse(readFileSync5(healthPath(dir), "utf8"));
   } catch {
     return { unhealthy: {} };
   }
@@ -2157,8 +2304,8 @@ function readHealth(dir) {
 }
 function writeHealth(dir, health) {
   try {
-    const spaceDir = join9(dir, ".space");
-    if (!existsSync6(spaceDir)) mkdirSync3(spaceDir, { recursive: true });
+    const spaceDir = join10(dir, ".space");
+    if (!existsSync7(spaceDir)) mkdirSync3(spaceDir, { recursive: true });
     const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
     const file = healthPath(dir);
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -2425,14 +2572,16 @@ function applySessionModel(cfg, profile, opts = {}) {
 }
 
 // src/telemetry.ts
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 var TelemetryPlugin = async ({ worktree, directory }) => {
-  const dir = join10(projectRoot(directory, worktree), ".space");
+  const dir = join11(projectRoot(directory, worktree), ".space");
   const started = Date.now();
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
   const requests = /* @__PURE__ */ new Map();
   const REQUEST_MEMORY = 500;
+  const budget = budgetFor(projectRoot(directory, worktree));
+  const billed = /* @__PURE__ */ new Map();
   const rememberRequest = (input) => {
     const id = input?.message?.id;
     if (typeof id !== "string") return;
@@ -2459,6 +2608,22 @@ var TelemetryPlugin = async ({ worktree, directory }) => {
         return;
       }
       if (type === "message.updated") {
+        const info = event?.properties?.info ?? event?.properties;
+        const id = info?.id;
+        const session = info?.sessionID;
+        if (id !== void 0 && typeof id === "string" && typeof session === "string" && info?.tokens) {
+          const t = info.tokens;
+          const bill = billableTokens({ input: t?.input, cacheRead: t?.cache?.read, output: t?.output });
+          const before = billed.get(id) ?? 0;
+          if (bill > before) {
+            billed.set(id, bill);
+            budget.add(session, { input: bill - before });
+            if (billed.size > REQUEST_MEMORY) {
+              const oldest = billed.keys().next();
+              if (!oldest.done) billed.delete(oldest.value);
+            }
+          }
+        }
         const lane = laneOf(event, requests);
         if (!lane || !lane.id) return;
         if (lane.ms !== void 0) {
@@ -2613,9 +2778,9 @@ async function createHarnessHooks(ctx, options) {
     } catch {
     }
     try {
-      const dir = join11(project, ".space");
+      const dir = join12(project, ".space");
       mkdirSync4(dir, { recursive: true });
-      const path = join11(dir, "active");
+      const path = join12(dir, "active");
       const tmp = `${path}.${process.pid}.tmp`;
       try {
         writeFileSync3(tmp, `${id}
@@ -2641,12 +2806,12 @@ function projectOf(ctx) {
 }
 function writeActiveMarker(project, id) {
   try {
-    const dir = join12(project, ".space");
+    const dir = join13(project, ".space");
     mkdirSync5(dir, { recursive: true });
-    const tmp = join12(dir, `.active.${process.pid}`);
+    const tmp = join13(dir, `.active.${process.pid}`);
     writeFileSync4(tmp, `${id}
 `);
-    renameSync5(tmp, join12(dir, "active"));
+    renameSync5(tmp, join13(dir, "active"));
   } catch {
   }
 }
@@ -2677,7 +2842,7 @@ async function setupV2(ctx, options) {
               seenMessages.add(key);
               const agent = event?.agent;
               if (agent) {
-                write(join12(project, ".space"), { kind: "lane", agent, sessionID: event?.sessionID, messageID });
+                write(join13(project, ".space"), { kind: "lane", agent, sessionID: event?.sessionID, messageID });
               }
             }
           } catch {
@@ -2741,9 +2906,9 @@ async function setupV2(ctx, options) {
   let profileId = opts?.profile ?? profileIdFromConfig();
   if (!profileId) {
     for (const name of ["opencode.json", "opencode.jsonc"]) {
-      const fp = join12(project, name);
+      const fp = join13(project, name);
       try {
-        const raw = readFileSync5(fp, "utf8");
+        const raw = readFileSync6(fp, "utf8");
         const parsed = JSON.parse(raw);
         const id = parsed?.harness?.profile;
         if (typeof id === "string" && id) {

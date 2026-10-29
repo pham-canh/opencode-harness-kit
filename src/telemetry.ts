@@ -62,6 +62,7 @@ import type { Plugin } from "./plugin.js"
 import { join } from "node:path"
 import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
+import { billableTokens, budgetFor } from "./budget.js"
 import { safeStringify } from "./safe.js"
 import { ASK_GATED } from "./rules.js"
 import { SHELL_TOOLS } from "./tool-names.js"
@@ -96,6 +97,24 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
   // session needs, so the plugin cannot grow without limit.
   const requests = new Map<string, { agent?: string; model?: string; provider?: string }>()
   const REQUEST_MEMORY = 500
+
+  // The session budget, shared with the guard: this hook counts, the guard
+  // enforces. Kept here because `message.updated` is the only place the kit
+  // sees what a finished request actually cost - the guard runs before the
+  // request that will spend it exists.
+  const budget = budgetFor(projectRoot(directory, worktree))
+  // What has already been counted, per message id.
+  //
+  // opencode emits `message.updated` several times for a single assistant
+  // message: once at creation with no tokens, then as the request streams, then
+  // when it completes. Counting each event would charge one request three
+  // times. Counting only the completed event would charge zero when the tokens
+  // arrive on an event the kit never sees.
+  //
+  // So this keeps the LARGEST bill seen for each message and adds only the
+  // difference. A `created` event adds 0, the completed event adds the rest,
+  // and a repeated completed event adds nothing.
+  const billed = new Map<string, number>()
 
   /**
    * Remember which lane a request was made from.
@@ -146,6 +165,28 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
       // on which model, and how long it took. That record is what makes "cut
       // the lanes nobody uses" a measurement instead of a guess.
       if (type === "message.updated") {
+        // The bill, counted before anything that can return early. A message
+        // with no agent (a title, a summary) still cost tokens, and the
+        // measurement this ceiling came from counted every request.
+        const info = (event as any)?.properties?.info ?? (event as any)?.properties
+        const id = info?.id
+        const session = info?.sessionID
+        if (id !== undefined && typeof id === "string" && typeof session === "string" && info?.tokens) {
+          const t = info.tokens
+          const bill = billableTokens({ input: t?.input, cacheRead: t?.cache?.read, output: t?.output })
+          const before = billed.get(id) ?? 0
+          if (bill > before) {
+            billed.set(id, bill)
+            // Only the delta: `bill - before`, expressed as prompt tokens, is
+            // the same number `billableTokens` would return for it.
+            budget.add(session, { input: bill - before })
+            if (billed.size > REQUEST_MEMORY) {
+              const oldest = billed.keys().next()
+              if (!oldest.done) billed.delete(oldest.value)
+            }
+          }
+        }
+
         const lane = laneOf(event, requests)
         if (!lane || !lane.id) return
         if (lane.ms !== undefined) {

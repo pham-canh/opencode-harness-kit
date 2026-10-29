@@ -17,8 +17,15 @@ Five upgrades change what a user has to do. The most recent one first.
 
 # Migrating from 0.8.x to 0.9.x
 
-One default changed, and two new commands replace what used to be done by
-hand.
+One default changed, two new commands replace what used to be done by hand, and
+`fleet-safe` now puts a ceiling on a session.
+
+```bash
+# after upgrading, the fleet-safe profile stops a session at 6M tokens
+# (warn at 70%, every tool call refused at 100%). Turn it off with:
+#   "effort": { "sessionTokens": 0 }
+# in profiles/fleet-safe.json, or set your own number (at least 200,000).
+```
 
 ```bash
 # before: a bare work run on a dirty tree

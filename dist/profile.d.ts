@@ -47,6 +47,7 @@ export type Profile = {
         levels?: string[];
         default?: string | null;
         reserveShare?: number;
+        sessionTokens?: number;
     };
     roles?: Record<string, EffortRequest>;
     roleModels?: Record<string, RoleModel>;
@@ -85,7 +86,7 @@ export type RetentionRecord = {
  * @property {{ context: number, input?: number, output: number }} limits
  * @property {{ reasoning?: boolean, temperature?: boolean, toolCall?: boolean,
  *             structuredOutput?: boolean, attachment?: boolean }} [supports]
- * @property {{ levels?: string[], default?: string | null, reserveShare?: number }} [effort]
+ * @property {{ levels?: string[], default?: string | null, reserveShare?: number, sessionTokens?: number }} [effort]
  * @property {Record<string, EffortRequest>} [roles]
  * @property {Record<string, RoleModel>} [roleModels]
  * @property {{ enabled?: boolean, keepRecentToolCalls?: number,

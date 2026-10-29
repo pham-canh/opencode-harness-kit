@@ -203,6 +203,23 @@ const prune = query(`
     (select coalesce(max(length(json_extract(data,'$.state.output'))),0) from part
       where time_created >= ${since} and json_extract(data,'$.type')='tool') as tool_biggest`)[0] ?? {}
 
+// The one result worth naming: which tool produced the largest single result,
+// and how big it was.
+//
+// `tool_output.max_bytes` (51,200, src/config.js) is what opencode applies to
+// tool output before it enters the request. The measured install had a 57,941
+// character result from `read` - past that cap - because `read` truncates by
+// LINES (`--limit 1500`), not by bytes. So a result over the cap is a fact worth
+// a warning that names the tool: it tells the next reader to read by range
+// instead of guessing which path blew the window.
+const biggestToolRow = query(`
+  select json_extract(data,'$.tool') as tool,
+    length(coalesce(json_extract(data,'$.state.output'),'')) as bytes
+  from part
+  where time_created >= ${since} and json_extract(data,'$.type')='tool'
+  order by bytes desc
+  limit 1`)[0]
+
 const perDay = query(`
   select date(time_created/1000,'unixepoch','localtime') as day,
     count(*) as calls,
@@ -234,6 +251,7 @@ const pruned = n(prune.pruned)
 const toolBytes = n(prune.tool_bytes)
 const toolBig = n(prune.tool_big)
 const toolBiggest = n(prune.tool_biggest)
+const biggestTool = typeof biggestToolRow?.tool === "string" ? biggestToolRow.tool : null
 const gatedCalls = n(gated.calls)
 const gatedWorst = n(gated.worst)
 
@@ -278,6 +296,15 @@ const wasteShare = pctOf(refusalTokens, prompt)
 if (maxWaste != null && wasteShare !== null && wasteShare > maxWaste) {
   failures.push(
     `refusals re-sent ${tokens(refusalTokens)} tokens, ${wasteShare.toFixed(1)}% of the window's prompt tokens, over the ${maxWaste}% ceiling`,
+  )
+}
+// The cap opencode applies to a tool result before it enters a request. Kept as
+// a literal here because this script must run on an install where the kit's
+// source is not next to it; src/config.js is the place it is set.
+const MAX_TOOL_OUTPUT = 51_200
+if (biggestTool && toolBiggest > MAX_TOOL_OUTPUT) {
+  warnings.push(
+    `the largest tool result is ${commas(toolBiggest)} characters from ${biggestTool}, over the ${commas(MAX_TOOL_OUTPUT)}-byte tool_output.max_bytes that opencode applies - ${biggestTool} is not honouring the cap (read truncates by lines, so \`--limit\` sets the size); page it by range instead`,
   )
 }
 if (toolParts > 0 && toolBiggest > cap * 4) {
@@ -327,6 +354,7 @@ if (wantJson) {
         tool_output_bytes: toolBytes,
         tool_output_over_8k: toolBig,
         largest_tool_output: toolBiggest,
+        largest_tool_output_tool: biggestTool,
         resumed_parts: pruned,
         per_day: perDay.map((r) => ({
           day: r.day,

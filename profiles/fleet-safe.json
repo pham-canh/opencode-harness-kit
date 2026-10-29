@@ -27,7 +27,8 @@
       "max"
     ],
     "default": "max",
-    "reserveShare": 0.35
+    "reserveShare": 0.35,
+    "sessionTokens": 6000000
   },
   "roles": {
     "plan": "max",

@@ -72,7 +72,7 @@ export const ROOT = findRoot(resolve(HERE, ".."))
  * @property {{ context: number, input?: number, output: number }} limits
  * @property {{ reasoning?: boolean, temperature?: boolean, toolCall?: boolean,
  *             structuredOutput?: boolean, attachment?: boolean }} [supports]
- * @property {{ levels?: string[], default?: string | null, reserveShare?: number }} [effort]
+ * @property {{ levels?: string[], default?: string | null, reserveShare?: number, sessionTokens?: number }} [effort]
  * @property {Record<string, EffortRequest>} [roles]
  * @property {Record<string, RoleModel>} [roleModels]
  * @property {{ enabled?: boolean, keepRecentToolCalls?: number,
@@ -206,6 +206,11 @@ export function normalize(p) {
       levels: p.effort?.levels ?? [],
       default: p.effort?.default ?? null,
       reserveShare: p.effort?.reserveShare ?? 0.12,
+      // 0 is "no ceiling", which is what every install had before this
+      // existed. Carried through normalize because the budget reads the
+      // PROFILE, not the generated config: the config schema has no field for
+      // it and opencode would drop an unknown key.
+      sessionTokens: p.effort?.sessionTokens ?? 0,
     },
     maxRetention: p.maxRetention ?? p.retention,
     prune: {
@@ -700,6 +705,20 @@ export function validate(p, path = "<memory>") {
     throw new ProfileError(
       `${where}: effort.reserveShare must be between 0 and 0.5`,
     )
+  }
+  // A session ceiling below one request's window cannot be honoured: the first
+  // request would already be over it, so the guard would stop a session before
+  // it did anything. 200,000 is the widest window the fleet runs on.
+  const sessionTokens = p.effort?.sessionTokens
+  if (sessionTokens !== undefined) {
+    if (typeof sessionTokens !== "number" || !Number.isFinite(sessionTokens) || sessionTokens < 0) {
+      throw new ProfileError(`${where}: effort.sessionTokens must be a number of tokens, 0 turns it off`)
+    }
+    if (sessionTokens !== 0 && sessionTokens < 200_000) {
+      throw new ProfileError(
+        `${where}: effort.sessionTokens is ${sessionTokens}, which is under one 200,000-token window - the first request would be over the ceiling`,
+      )
+    }
   }
   for (const role of Object.keys(p.roles ?? {})) {
     if (!LANE_NAMES.includes(role)) {

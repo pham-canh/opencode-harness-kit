@@ -12,6 +12,7 @@ import { join, resolve } from "node:path"
 import { checkBash, checkDenied, checkWrite, insideRoot } from "./rules.js"
 import { write } from "./telemetry-store.js"
 import { projectRoot } from "./project.js"
+import { budgetFor, budgetMessage } from "./budget.js"
 import { SHELL_TOOLS, WRITE_TOOLS } from "./tool-names.js"
 import { policyDecision, readPolicy } from "./driver/policy.mjs"
 
@@ -250,8 +251,31 @@ export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
     deny(why, detail)
   }
 
+  // The session ceiling, shared with the telemetry hook: that one counts what
+  // each finished request cost, this one stops the next one when the money is
+  // gone. Per session, because a session that runs four tasks has spent all
+  // four.
+  const budget = budgetFor(project)
+
   return {
     "tool.execute.before": async (input: any, output: any) => {
+      // Before anything else: a call that spends more of a budget that is
+      // already spent is the one thing worth refusing regardless of the tool.
+      //
+      // No `rules` here on purpose. opencode turns a thrown hook error into a
+      // permission-shaped refusal that echoes any rule map it is given, and the
+      // measured map was 11,041 characters. This message is three lines of
+      // prose, thrown once at 70% and on every call at 100%.
+      const session = typeof input?.sessionID === "string" ? input.sessionID : ""
+      const standing = budget.check(session)
+      if (standing.state === "stop" || (standing.state === "warn" && budget.claimWarning(session))) {
+        write(telemetryDir, {
+          kind: "guard",
+          tool: input?.tool,
+          rule: standing.state === "stop" ? "session budget spent" : "session budget warning",
+        })
+        throw new Error(`opencode-harness-kit: ${budgetMessage(standing)}`)
+      }
       try {
         if (SHELL_TOOLS.has(input.tool)) {
           // The bash tool takes a `workdir`, and it becomes the command's
