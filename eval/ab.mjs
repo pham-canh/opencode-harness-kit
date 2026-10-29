@@ -31,6 +31,7 @@ import { join } from "node:path"
 
 import { elapsedSeconds, median } from "./metrics.js"
 import { countFlag, numberFlag } from "./flags.mjs"
+import { classifyRun, nextStreak } from "./run-outcome.mjs"
 import { gradeAnswer, gradeMutation, gradeMutationMany } from "./verify.mjs"
 import { checkPremises } from "./premises.mjs"
 import { parseJsonc, configDir } from "../src/profile.js"
@@ -727,6 +728,23 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
     /** @type {NodeJS.Timeout | undefined} */
     let timer
 
+    // `close` means the process is gone. It does NOT mean its pipes have
+    // delivered everything they hold.
+    //
+    // A run that writes its last bytes and exits is the common case, and under
+    // load the child's `close` can be handled before the final `data` event on
+    // its stdout. The quota test caught it: the kit-on arm printed the
+    // provider's "Free usage limit reached" and exited, the event was read as
+    // an EMPTY run with no quota, the kit-off arm then ran and was the one that
+    // reported the quota - two streams where the fix promises one, and a
+    // spent free route billed one extra run every time it happened.
+    //
+    // So the run is over when the process is gone AND both pipes have ended.
+    let processClosed = false
+    let stdoutEnded = false
+    let stderrEnded = false
+    let closedCode = null
+
     const finish = (code) => {
       if (settled) return
       settled = true
@@ -745,6 +763,14 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
       })
     }
 
+    // Settle only when there is nothing left to read. `error` short-circuits:
+    // a child that never spawned has no pipes to drain.
+    const settleIfDrained = (force = false) => {
+      if (settled) return
+      if (force) return finish(closedCode)
+      if (processClosed && stdoutEnded && stderrEnded) finish(closedCode)
+    }
+
     child.stdout?.setEncoding("utf8")
     child.stdout?.on("data", (d) => {
       stdout += d
@@ -753,11 +779,33 @@ function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
     child.stderr?.on("data", (d) => {
       stderr += d
     })
+    child.stdout?.on("end", () => {
+      stdoutEnded = true
+      settleIfDrained()
+    })
+    child.stderr?.on("end", () => {
+      stderrEnded = true
+      settleIfDrained()
+    })
     child.on("error", (err) => {
       stderr += `\n${errorMessage(err)}`
-      finish(null)
+      // No pipes will ever end for a child that never started.
+      stdoutEnded = true
+      stderrEnded = true
+      processClosed = true
+      settleIfDrained(true)
     })
-    child.on("close", (code) => finish(code))
+    child.on("close", (code) => {
+      processClosed = true
+      closedCode = code
+      // A helper the agent left behind can hold the pipe open after the
+      // leader is gone. Waiting for the drain is right; waiting for it
+      // forever is not, so a short grace period settles the run with what
+      // arrived.
+      const drained = setTimeout(() => finish(closedCode), 2_000)
+      drained.unref?.()
+      settleIfDrained()
+    })
 
     timer = setTimeout(() => {
       timedOut = true
@@ -1107,7 +1155,18 @@ if (rescoreDir) {
       }
       const runReal = realpathSync(runDir)
       const m = parseStream(r.out, runReal)
-      if (m.steps === 0 && m.text.trim() === "") {
+      // One classification for both branches, from numbers: see
+      // eval/run-outcome.mjs. The decision used to be inline here, which meant
+      // the only way to test it was to spend real seconds in a child process.
+      const outcome = classifyRun({
+        timedOut: r.timedOut,
+        steps: m.steps,
+        text: m.text,
+        lastEventS: m.seconds,
+        wallS: r.wall,
+        runTimeoutMs,
+      })
+      if (outcome.kind === "empty") {
         // An error the installation can state is not a dead route to wait out:
         // it will fail every run the same way, and --fail-fast would need two
         // of them per task. Stop now and show the message.
@@ -1121,7 +1180,7 @@ if (rescoreDir) {
           console.error(`  raw stream kept: ${r.out}`)
           process.exit(2)
         }
-        deadStreak++
+        deadStreak = nextStreak(deadStreak, outcome.kind)
         if (deadStreak >= failFast) {
           stopDeadRoute(deadStreak, "produced no tool calls and no text", job, arm, i)
         }
@@ -1131,15 +1190,9 @@ if (rescoreDir) {
         // answering after one step - the 10-rep run had four of those at
         // 58-164s against a 180s ceiling, and resetting the streak on each
         // one measured the rest of the suite at 180s per run.
-        const quietS = m.seconds === null ? r.wall : r.wall - m.seconds
-        const stalled = r.timedOut && quietS >= Math.min(60, runTimeoutMs / 2000)
-        if (stalled) {
-          deadStreak++
-          if (deadStreak >= failFast) {
-            stopDeadRoute(deadStreak, "stalled before the ceiling", job, arm, i)
-          }
-        } else if (!r.timedOut) {
-          deadStreak = 0
+        deadStreak = nextStreak(deadStreak, outcome.kind)
+        if (outcome.kind === "stalled" && deadStreak >= failFast) {
+          stopDeadRoute(deadStreak, "stalled before the ceiling", job, arm, i)
         }
       }
       // Grade against the repository, not against a string I typed. The

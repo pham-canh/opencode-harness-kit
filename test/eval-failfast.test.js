@@ -7,7 +7,7 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -50,50 +50,16 @@ test("a route that answers nothing stops the suite instead of being timed out", 
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("a run that stalls before the ceiling counts as a dead route, not a slow task", () => {
-  // The 10-rep run's four timeouts emitted one step and then went quiet at
-  // 58-164s against a 180s ceiling. Each one reset the dead streak, so the
-  // suite paid 180s for every remaining run instead of stopping.
-  const dir = mkdtempSync(join(tmpdir(), "ab-stall-"))
-  const bin = join(dir, "bin")
-  const target = join(dir, "subject")
-  const calls = join(dir, "calls")
-  mkdirSync(bin, { recursive: true })
-  mkdirSync(target, { recursive: true })
-
-  const fake = join(bin, "opencode")
-  writeFileSync(
-    fake,
-    `#!/bin/sh
-echo run >> "${calls}"
-printf '{"type":"step_finish","timestamp":1,"part":{"tokens":{"input":10}}}\\n'
-sleep 5
-`,
-  )
-  chmodSync(fake, 0o755)
-
-  const r = spawnSync(
-    process.execPath,
-    // --timeout 5, not 2. The fake emits one step and then goes quiet, and the
-    // property under test needs the step to have ARRIVED before the ceiling:
-    // at 2s a loaded machine killed the child before its shell had run, the
-    // stream file was empty, and the run was correctly classified as "produced
-    // no tool calls and no text" instead of a stall. 5s gives the spawn that
-    // headroom and the quiet-time check still sees 5s of silence against its
-    // 2.5s threshold.
-    [AB, "--target", target, "--task", "say something", "--reps", "5", "--timeout", "5", "--fail-fast", "2", "--no-preflight"],
-    { encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
-  )
-
-  assert.equal(r.status, 2, r.stdout + r.stderr)
-  assert.match(r.stderr, /the model route is not answering/)
-  assert.match(r.stderr, /2 runs in a row stalled before the ceiling/)
-  // Two runs, not five: the second stall is the signal, the third would only
-  // be another 2s timeout.
-  assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 2)
-
-  rmSync(dir, { recursive: true, force: true })
-})
+// There is no integration test for "a timeout that went quiet is a stall".
+//
+// There used to be, and it cost ten real seconds and still flaked: it asserted
+// that a child had emitted a step before a one-to-five second ceiling arrived,
+// which a loaded machine cannot promise - eight concurrent runs of this file
+// classified the child as "produced no tool calls and no text" instead, because
+// it had not started yet. The decision itself is arithmetic on three numbers
+// and lives in eval/run-outcome.mjs, tested exhaustively in
+// test/run-outcome.test.js with no clock involved. What is left here is the six
+// lines in ab.mjs that call it.
 
 test("--fail-fast is a whole number of at least one", () => {
   const dir = mkdtempSync(join(tmpdir(), "ab-failfast-bad-"))
@@ -199,7 +165,7 @@ exit 0
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("a run killed by the ceiling takes its process group with it", async () => {
+test("the run that is killed takes its process group with it", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ab-kill-"))
   const bin = join(dir, "bin")
   const target = join(dir, "subject")
@@ -213,22 +179,50 @@ test("a run killed by the ceiling takes its process group with it", async () => 
   writeFileSync(fake, '#!/bin/sh\necho $$ > "$PIDFILE"\nsleep 60\n')
   chmodSync(fake, 0o755)
 
-  const r = spawnSync(
+  // The kill is triggered by a SIGNAL, not by a ceiling.
+  //
+  // The ceiling version of this test gave the child 1-5 seconds to start and
+  // then read the pid file it had written; under eight concurrent runs the
+  // child was killed before its shell had run and the test died on ENOENT with
+  // the kill working exactly as designed. Time is not what this test is about -
+  // whether Ctrl-C takes the agent's helpers with it is - so the test waits for
+  // the child to be up and then sends the signal the handler is registered for.
+  const child = spawn(
     process.execPath,
-    // --timeout 5, not 1. The fake records its pid as its first action, and at
-    // a 1s ceiling a loaded machine killed the process group before that shell
-    // line ran: the pid file was never written and the test died on ENOENT
-    // with the kill itself working. 5s is headroom for the spawn, and the fake
-    // sleeps 60s, so the ceiling is still what ends the run.
-    [AB, "--target", target, "--task", "hang", "--reps", "1", "--timeout", "5", "--fail-fast", "5", "--no-preflight"],
+    [AB, "--target", target, "--task", "hang", "--reps", "1", "--timeout", "60", "--fail-fast", "5", "--no-preflight"],
     {
-      encoding: "utf8",
-      timeout: 60_000,
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PIDFILE: pidFile },
+      stdio: ["ignore", "pipe", "pipe"],
     },
   )
-  assert.equal(r.status, 0, r.stderr)
-  assert.match(r.stdout, /TIMED OUT/)
+  let stdout = ""
+  let stderr = ""
+  child.stdout.setEncoding("utf8")
+  child.stdout.on("data", (d) => {
+    stdout += d
+  })
+  child.stderr.setEncoding("utf8")
+  child.stderr.on("data", (d) => {
+    stderr += d
+  })
+
+  // Poll for readiness rather than waiting a guessed number of seconds: the
+  // fake writes the pid as its first action, so the file appearing IS the
+  // signal that the agent started. 30s is a ceiling on the wait, not a delay.
+  const waitFor = async (predicate, ms = 30_000) => {
+    const deadline = Date.now() + ms
+    while (Date.now() < deadline) {
+      if (predicate()) return true
+      await new Promise((res) => setTimeout(res, 25))
+    }
+    return false
+  }
+  const up = await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim() !== "")
+  assert.ok(up, `the agent never started:\n${stdout}\n${stderr}`)
+
+  child.kill("SIGTERM")
+  const code = await new Promise((res) => child.on("close", res))
+  assert.equal(code, 143, `ab exits 143 on SIGTERM, got ${code}\n${stderr}`)
 
   const pid = Number(readFileSync(pidFile, "utf8").trim())
   assert.ok(Number.isInteger(pid) && pid > 0, `no pid recorded: ${pid}`)
@@ -243,7 +237,7 @@ test("a run killed by the ceiling takes its process group with it", async () => 
   // SIGKILL is immediate, but a killed child stays a zombie until the parent
   // reaps it. Give the OS a moment before calling it a leak.
   for (let i = 0; i < 40 && alive(); i++) await new Promise((res) => setTimeout(res, 25))
-  assert.equal(alive(), false, `pid ${pid} survived the timeout`)
+  assert.equal(alive(), false, `pid ${pid} survived SIGTERM to ab`)
 
   rmSync(dir, { recursive: true, force: true })
 })
