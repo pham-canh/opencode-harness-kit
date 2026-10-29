@@ -304,7 +304,7 @@ if (maxWaste != null && wasteShare !== null && wasteShare > maxWaste) {
 const MAX_TOOL_OUTPUT = 51_200
 if (biggestTool && toolBiggest > MAX_TOOL_OUTPUT) {
   warnings.push(
-    `the largest tool result is ${commas(toolBiggest)} characters from ${biggestTool}, over the ${commas(MAX_TOOL_OUTPUT)}-byte tool_output.max_bytes that opencode applies - ${biggestTool} is not honouring the cap (read truncates by lines, so \`--limit\` sets the size); page it by range instead`,
+    `the largest tool result is ${commas(toolBiggest)} characters from ${biggestTool}, over the ${commas(MAX_TOOL_OUTPUT)}-byte tool_output.max_bytes that opencode applies - max_bytes is not honoured the same way by every tool (read truncates by lines, grep by matches), so the call's own limit is what sets the size; ask for a narrower range or fewer matches`,
   )
 }
 if (toolParts > 0 && toolBiggest > cap * 4) {

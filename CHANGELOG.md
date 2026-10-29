@@ -38,9 +38,10 @@ blind.
   are over 8k characters, the largest one and which tool produced it) and treats
   a marker as evidence of a resumed session. A result past
   `tool_output.max_bytes` (51,200) is a warning that names the tool: the
-  measured install had 57,941 characters from `read --limit 1500`, because
-  `read` truncates by lines and not by bytes, so `--limit` is what sets its
-  size.
+  measured install had 57,941 characters from `read --limit 1500` and the Linux
+  one 72,101 from `grep`, because `max_bytes` is not honoured the same way by
+  every tool: `read` truncates by lines, `grep` by matches, so the call's own
+  limit is what sets the size.
 
 ### Added
 

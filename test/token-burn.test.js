@@ -425,10 +425,13 @@ test("the audit names the tool whose result got past the output cap", (t) => {
     // A warning, not a failure: one big result is a real cost but the request
     // gate is what decides pass/fail, and this request is under it.
     assert.equal(report.ok, true)
-    assert.match(
-      report.warnings.join(" "),
-      /57,941 characters from read, over the 51,200-byte tool_output\.max_bytes/,
-    )
+    const warning = report.warnings.join(" ")
+    assert.match(warning, /57,941 characters from read, over the 51,200-byte tool_output\.max_bytes/)
+    // The Linux install's biggest result was 72,101 characters from `grep`, so
+    // the advice must not be read-specific: `read` truncates by lines, `grep` by
+    // matches, and both got past max_bytes.
+    assert.match(warning, /read truncates by lines, grep by matches/)
+    assert.match(warning, /narrower range or fewer matches/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
