@@ -224,10 +224,30 @@ async function cmdWork() {
   const request = positionalRequest()
   const planOnly = flag("--plan-only")
   const dryRun = flag("--dry-run")
-  const { workRequest } = await import("../driver/work.mjs")
+  const { workRequest, strictProblem } = await import("../driver/work.mjs")
+  const { isGitRepo } = await import("../driver/git.mjs")
   const finalVerify = opt("--final-verify") ?? null
+  const strict = flag("--no-strict") ? false : true
+  const loopOptions = loopFlags()
 
-  if (!dryRun) {
+  // The strict contract is a refusal about the command, not about the
+  // install. Ask it before `opencode --version`, or a missing binary turns
+  // "you did not pass --review" into "opencode is not on PATH" - the wrong
+  // error, with exit 1 instead of the harness refusal's exit 2.
+  const strictFailure =
+    !dryRun && strict
+      ? strictProblem({
+          strict: true,
+          review: loopOptions.review === true,
+          finalVerify: loopOptions.finalVerify ?? null,
+          finalReview: loopOptions.finalReview === true,
+          worktree: flag("--worktree"),
+          commit: flag("--commit"),
+          isRepo: isGitRepo(process.cwd()),
+        })
+      : null
+
+  if (!dryRun && !strictFailure) {
     // A previous crash leaves a stale lock and a record that still says
     // `running`. Clearing it here is what lets the next `work` start without
     // the human having to find and delete a file first.
@@ -245,7 +265,7 @@ async function cmdWork() {
     cwd: process.cwd(),
     request,
     force: flag("--force") || flag("--replan"),
-    strict: flag("--no-strict") ? false : true,
+    strict,
     planOnly,
     dryRun,
     runId,
@@ -256,7 +276,7 @@ async function cmdWork() {
     log: wantJson ? (line) => console.error(line) : undefined,
     loop: {
       role: opt("--role") ?? "build",
-      ...loopFlags(),
+      ...loopOptions,
     },
   }
 

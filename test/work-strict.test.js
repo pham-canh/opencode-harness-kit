@@ -84,6 +84,22 @@ test("the CLI exits 2 on --strict without the gate", () => {
   assert.match(body.reason, /--strict requires/)
 })
 
+test("a missing opencode does not hide the strict refusal", () => {
+  const dir = scratch()
+  const result = spawnSync(process.execPath, [join(ROOT, "bin", "oc-harness.mjs"), "work", "--json"], {
+    cwd: dir,
+    encoding: "utf8",
+    // A CI matrix that installs a different opencode major can leave the
+    // binary off PATH. The contract refusal must still win, because that is
+    // the question the command asked.
+    env: { ...process.env, PATH: join(dir, "no-bin") },
+  })
+  assert.equal(result.status, 2, result.stderr)
+  const body = JSON.parse(result.stdout)
+  assert.equal(body.code, 2)
+  assert.match(body.reason, /--strict requires/)
+})
+
 test("work is strict by default and --no-strict is the way back", () => {
   const dir = scratch()
   const strict = spawnSync("node", [join(ROOT, "bin", "oc-harness.mjs"), "work", "--json"], {
