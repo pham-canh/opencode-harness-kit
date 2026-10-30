@@ -26,7 +26,7 @@
 
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
@@ -310,7 +310,12 @@ test("the audit gates the worst request, and the gate can fail", (t) => {
         "2026-01-01T00:00:00Z",
         ...flags,
       ],
-      { encoding: "utf8" },
+      {
+        encoding: "utf8",
+        // The audit reads the ceiling from whatever profile the config names,
+        // so the fixture has to say which one rather than inherit the machine's.
+        env: { ...process.env, OPENCODE_CONFIG_DIR: dir },
+      },
     )
     assert.equal(out.stderr, "", "the audit says nothing on stderr when it succeeds")
     return { code: out.status, report: JSON.parse(out.stdout) }
@@ -378,6 +383,73 @@ test("the audit gates the worst request, and the gate can fail", (t) => {
     assert.equal(nothing.code, 0)
     assert.equal(nothing.report.gated_calls, 0)
     assert.match(nothing.report.warnings.join(" "), /gate was not evaluated/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("the audit gates on the profile the config names, not on fleet-safe", (t) => {
+  if (!hasPythonSqlite()) {
+    t.skip("python3 has no sqlite3 module, so the fixture database cannot be built")
+    return
+  }
+  // The ceiling used to be read from `fleet-safe` whatever was installed.
+  // Install a profile with a wider window and the audit kept failing sessions
+  // against a number the config no longer used; install a tighter one and it
+  // waved them through. One request at 150,000 tokens separates the two.
+  const dir = mkdtempSync(join(tmpdir(), "ock-token-burn-profile-"))
+  const db = join(dir, "opencode.db")
+  const at = Date.parse("2026-01-02T03:04:05Z")
+  const script = [
+    "import json, sqlite3",
+    `con = sqlite3.connect(${JSON.stringify(db)})`,
+    'con.execute("create table if not exists message (id text primary key, time_created integer, data text)")',
+    'con.execute("create table if not exists part (id text primary key, time_created integer, data text)")',
+    `con.execute("insert into message (id, time_created, data) values (?, ?, ?)", ("m1", ${at}, ${JSON.stringify(
+      JSON.stringify({
+        role: "assistant",
+        tokens: { input: 150_000, cache: { read: 0 }, output: 10 },
+      }),
+    )}))`,
+    "con.commit()",
+  ].join("\n")
+  execFileSync("python3", ["-c", script])
+
+  try {
+    const report = () => {
+      const out = spawnSync(
+        process.execPath,
+        [
+          join(REPO, "eval", "token-burn.mjs"),
+          "--json",
+          "--since",
+          "2026-01-01T00:00:00Z",
+          "--db",
+          db,
+          "--gate-since",
+          "2026-01-01T00:00:00Z",
+        ],
+        { encoding: "utf8", env: { ...process.env, OPENCODE_CONFIG_DIR: dir } },
+      )
+      return { code: out.status, report: JSON.parse(out.stdout) }
+    }
+
+    // No config: the fallback is fleet-safe, 130,000 + slack, so 150,000 fails.
+    const fallback = report()
+    assert.equal(fallback.code, 1, "150,000 tokens is over fleet-safe's ceiling")
+    assert.equal(fallback.report.ceiling, 145_000)
+    assert.match(fallback.report.cap_source, /fleet-safe compacts at this size \(no profile recorded/)
+
+    // The same request on a profile that compacts at 176,000 passes, and the
+    // report says whose number it used.
+    writeFileSync(
+      join(dir, "opencode.jsonc"),
+      JSON.stringify({ harness: { profile: "mimo-v2.6-flash-free" } }),
+    )
+    const wider = report()
+    assert.equal(wider.code, 0, "150,000 tokens is under mimo's 191,000 ceiling")
+    assert.equal(wider.report.ceiling, 191_000)
+    assert.match(wider.report.cap_source, /mimo-v2\.6-flash-free compacts at this size \(the profile in the config\)/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

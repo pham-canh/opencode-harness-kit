@@ -568,6 +568,101 @@ whether the last change helped.
 It reports but never gates on `thin_sample`, so it cannot fail a run for being
 small - only the floor is enforced.
 
+## Free-tier exhaustion
+
+Everything below was printed by a command on 2026-10-30 against the real install
+on this machine. The commands are named beside each number; nothing is estimated.
+
+### `node eval/token-burn.mjs --days 30`
+
+```
+window            since 2026-09-30
+gate              145,000 tokens per request (130,000 + 15,000 slack; fleet-safe compacts at this size)
+judging           requests since 2026-10-29 08:58 (opencode.jsonc was last written then)
+
+requests              44,031
+prompt tokens             7.05B   input 391.65M + cache read 6.66B
+output tokens            14.35M   reasoning 11.21M
+billed to you           406.00M   input + output
+prompt per request    160,197
+worst request         967,758 at 2026-10-20 17:34:41
+worst after gate      129,658 at 2026-10-29 09:10:49
+refusals              341   4,337,954 bytes ~ 1.08M tokens re-sent (0.0%)
+tool output           33.42M tokens stored over 54,083 results, 3,814 over 8k chars, largest 72,101
+resumed from pruned   90 part(s) carry a prune marker
+```
+
+The verdict was PASS on the gate and one WARN: the largest tool result (72,101
+characters, from `grep`) is over the 51,200-byte `tool_output.max_bytes`, because
+`grep` bounds by matches and `read` by lines, so the call's own limit sets the
+size. That is a real ceiling on what a config key can promise, not a regression.
+
+What the numbers say, in the order they cost money:
+
+- **The billed number is 406M, not 7.05B.** 6.66B of the prompt tokens were
+  cache reads and 391.65M were uncached input. The free tier did not charge for
+  the cache, and the account still ran out - so the limit that matters is
+  requests and context, not billed tokens.
+- **160,197 prompt tokens per request, averaged over 44,031 requests.** That is
+  the whole bill: requests x context. The worst day (2026-10-21) was 7,414
+  requests at 866.59M prompt tokens.
+- **341 refusals re-sent 4.34MB of rule text, about 1.08M tokens (0.0%).** Fixed
+  by the denial rule in `docs/ROUTING.md`; it is not where the limit goes.
+- **The gate holds after the install.** Worst request since 2026-10-29 08:58 is
+  129,658, under the 145,000 ceiling. The 967,758 peak is from 2026-10-20, before
+  the config that is running now existed - which is why the gate judges only
+  requests after the config's mtime.
+- **The ceiling now comes from the installed profile**, not from `fleet-safe`
+  hardcoded. Install a profile with a wider window and the audit used to keep
+  failing it against a number the config no longer used; `--cap` still overrides
+  and the report names the source.
+
+### `node eval/models.mjs --free --check`
+
+```
+MEASURED ON THE LIVE TIER  2026-10-30
+  3 request(s) per model, one-line prompt, whole-process wall time
+
+  model                               reqs    avg ms    median       max reasoning    output
+  opencode/flint-40b-free                3      5906      6011      6034         0       104
+  opencode/flint-40b-free @low  no request for the low variant succeeded
+  opencode/nemotron-3.5-lightning-free   3      5368      5426      5570        48         3
+  opencode/big-pickle                    3      6484      6313      7756        48         3
+  opencode/beam-free                     3      5267      5194      5507        25         6
+  opencode/beam-free @low       no request for the low variant succeeded
+  opencode/glm-5.3-flash-free            3      8923      9030      9902        24         3
+  opencode/glm-5.3-flash-free @low  no request for the low variant succeeded
+  opencode/nemotron-3.5-super-vl-free    3      5467      5472      5539        17         3
+  opencode/nemotron-3.5-super-vl-free @low  no request for the low variant succeeded
+  opencode/deepseek-v4.1-flash-free      3      5822      5950      6044         0         2
+  opencode/deepseek-v4.1-flash-free @low  no request for the low variant succeeded
+  opencode/mimo-v2.6-flash-free          3     10848      6996     18944        16         3
+```
+
+Two findings that a catalogue-only view would have missed:
+
+- **`@low` failed for five of eight models.** The effort levels are declared per
+  model in the profile, so a chain that assumes `@low` works has, in practice,
+  one rung fewer than it looks like it has on five routes.
+- **`mimo-v2.6-flash-free` is the one route that is slow rather than broken**:
+  6,996 ms median but 18,944 ms max, twice the median of anything else. Its
+  average (10,848) is dragged by one outlier, which is why the table prints both.
+
+### `src/lane-usage.js` over `~/.space/telemetry.jsonl`
+
+```
+lane         requests    avg ms  avg ctx   models
+build            1728     63243    71018   big-pickle, deepseek-v4.1-flash-free, beam-free
+plan              307     21648    66489   deepseek-v4.1-flash-free, beam-free, big-pickle
+compaction          7     51321    93462   deepseek-v4.1-flash-free, big-pickle
+```
+
+`build` is 85% of the requests and carries the highest average wall clock; the
+`compaction` lane has run only seven times and averages 93,462 tokens of context,
+which is the pruner firing at the size it was tuned for. The lane split is
+`big-pickle`, `deepseek-v4.1-flash-free` and `beam-free` rotating across the same
+three lanes - the rotation this release replaces with a recorded resolution.
+
 ## Not measured here
 
 - Whether the agent's *answers* got better in general. Six tasks, 120 runs,

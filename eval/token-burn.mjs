@@ -31,6 +31,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 import { numberFlag, stringFlag } from "./flags.mjs"
+import { configFilePath } from "../src/profile.js"
 import { canQuerySqlite, query as queryDb, sqliteMissingMessage } from "../src/sqlite.js"
 
 const args = process.argv.slice(2)
@@ -79,7 +80,7 @@ if (Number.isNaN(since)) die("--since takes an ISO timestamp, e.g. 2026-10-28T00
 // The boundary is the config file's mtime - the same edge `measure-install.mjs`
 // uses for the install - and it is printed, so the report says which requests
 // it is judging. `--gate-since` overrides it.
-const CONFIG = join(homedir(), ".config/opencode/opencode.jsonc")
+const CONFIG = configFilePath()
 const configStamp = existsSync(CONFIG) ? statSync(CONFIG).mtimeMs : null
 const gateSinceArg = stringFlag("--gate-since")
 const gateSince = gateSinceArg ? Date.parse(gateSinceArg) : configStamp ?? since
@@ -90,19 +91,29 @@ const gateSource = gateSinceArg
     ? `${CONFIG} was last written then`
     : "no config file found, so the whole window is gated"
 
-// The ceiling to gate on is the fleet's own compaction threshold, read from the
-// profile rather than repeated here: a gate that carries its own copy of the
-// number stops matching the config the moment the config is tuned.
+// The ceiling to gate on is the INSTALLED profile's compaction threshold, read
+// from the profile file rather than repeated here.
+//
+// It used to read `fleet-safe` unconditionally, which was wrong in the quiet
+// way: install a profile with a tighter window and the gate kept judging the
+// session against a number the config no longer used. A gate that disagrees
+// with the config it gates is a green light with a note attached.
+const DEFAULT_PROFILE = "fleet-safe"
 let cap = capArg
 let capSource = "given by --cap"
 if (cap == null) {
+  const { loadProfile, profileIdFromConfig, pruneThreshold } = await import("../src/profile.js")
+  const active = profileIdFromConfig()
+  const id = active ?? DEFAULT_PROFILE
   try {
-    const { loadProfile, pruneThreshold } = await import("../src/profile.js")
-    cap = pruneThreshold(loadProfile("fleet-safe"))
-    capSource = "fleet-safe compacts at this size"
+    cap = pruneThreshold(loadProfile(id))
+    capSource =
+      active != null
+        ? `${id} compacts at this size (the profile in the config)`
+        : `${id} compacts at this size (no profile recorded in the config)`
   } catch (err) {
     cap = 130_000
-    capSource = `fleet-safe profile unreadable (${errorMessage(err)}), using the last measured threshold`
+    capSource = `${id} profile unreadable (${errorMessage(err)}), using the last measured threshold`
   }
 }
 
