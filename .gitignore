@@ -16,6 +16,14 @@ baseline-*.txt
 coverage/
 .space/
 
+# `.space/` is scratch state, with two exceptions that are data the tests read:
+# the worked examples, and the template golden snapshots. Without these the
+# suite passes locally and fails on a fresh clone.
+!examples/*/.space/
+!examples/*/.space/**
+!test/fixtures/templates/golden/*/files/.space/
+!test/fixtures/templates/golden/*/files/.space/**
+
 # Runtime state written by the plugin
 .health.json
 

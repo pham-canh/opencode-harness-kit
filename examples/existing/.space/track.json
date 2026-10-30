@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "template": {
+    "id": "existing",
+    "version": "1.0.0",
+    "source": "builtin",
+    "dir": "templates/existing"
+  },
+  "vars": {
+    "project_name": "stock-service",
+    "test_command": "python3 -m pytest -q",
+    "detected_stack": "python"
+  },
+  "acceptance": "python3 -m pytest -q",
+  "required_sections": ["Goal", "Scope", "Constraints", "Ready"],
+  "trace_required": false,
+  "readiness": {
+    "charter_ready": true,
+    "research_ready": true,
+    "design_ready": true,
+    "plan_ready": true
+  },
+  "detected_from": ["pyproject.toml"],
+  "needs_human": false,
+  "reasons": [],
+  "created_at": "2026-01-01T08:00:00.000Z",
+  "updated_at": "2026-01-01T09:00:00.000Z"
+}

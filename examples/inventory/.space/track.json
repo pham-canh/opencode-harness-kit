@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "template": {
+    "id": "inventory",
+    "version": "1.0.0",
+    "source": "builtin",
+    "dir": "templates/inventory"
+  },
+  "vars": {
+    "project_name": "Kho Hà Nội",
+    "test_command": "npm test",
+    "build_command": "npm run build"
+  },
+  "acceptance": "npm test",
+  "required_sections": ["Goal", "Scope", "Requirements", "Constraints", "Ready"],
+  "trace_required": true,
+  "readiness": {
+    "charter_ready": true,
+    "research_ready": true,
+    "design_ready": true,
+    "plan_ready": true
+  },
+  "detected_from": [],
+  "needs_human": false,
+  "reasons": [],
+  "created_at": "2026-01-01T08:00:00.000Z",
+  "updated_at": "2026-01-01T09:00:00.000Z"
+}
