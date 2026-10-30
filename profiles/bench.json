@@ -1,0 +1,64 @@
+{
+  "$comment": "A measurement profile, not a daily one. One model, one rung per lane, pruning off, so a benchmark run measures the model and the prompt and nothing else. A rotating fleet is the right shape for working - it survives a withdrawal - and the wrong shape for comparing two arms, because the arm that happens to draw the faster route wins for a reason that has nothing to do with the change being measured. Never make this the default.",
+  "id": "bench",
+  "title": "One model, no rotation, no pruning - for measurement",
+  "provider": "opencode",
+  "model": "deepseek-v4.1-flash-free",
+  "family": "deepseek",
+  "verified": "2026-10-30",
+  "retention": "zero-retention",
+  "maxRetention": "zero-retention",
+  "notes": "Every lane runs deepseek-v4.1-flash-free and nothing else: one rung, so a spent route is a failed run rather than a quiet move to a different model. Pruning is off, so the context a run carries is the context the harness sent, not what survived a pruning pass - otherwise a benchmark would be measuring the pruner and the model at once and could not attribute either. Use it with `oc-harness use bench --yes` before a run and `fleet-safe` after; the lanes are the same ten, at the same effort levels, as the default fleet.",
+  "limits": {
+    "context": 200000,
+    "output": 32000
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": true,
+    "attachment": true
+  },
+  "effort": {
+    "levels": [
+      "low",
+      "high",
+      "max"
+    ],
+    "default": "max",
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low",
+    "vision": null,
+    "doc": null,
+    "schema": "max",
+    "sweep": "low",
+    "longform": null
+  },
+  "utility": {
+    "model": "deepseek-v4.1-flash-free",
+    "why": "The only model in the profile, so an auxiliary call cannot measure a route the lanes are not using."
+  },
+  "roleModels": {
+    "plan": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "build": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "reviewer": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "locate": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "verify": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "vision": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "doc": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "schema": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "sweep": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] },
+    "longform": { "model": "deepseek-v4.1-flash-free", "chain": ["deepseek-v4.1-flash-free"] }
+  },
+  "prune": {
+    "enabled": false
+  },
+  "fallback": ["deepseek-v4.1-flash-free"]
+}

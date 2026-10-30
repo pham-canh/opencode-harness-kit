@@ -241,6 +241,7 @@ it. One file covers ten jobs either way.
 | `fleet-safe` (default) | 10 | 200,000 | `max` | zero-retention |
 | `fleet-all` | 10 | 160,000 | `max` | **may train** |
 | `big-pickle-auto` | 10 | 160,000 | — | **may train** |
+| `bench` | 10 | 200,000 | `max` | zero-retention |
 | `flint-40b-free` | 5 | 262,144 | `max` | **may train** |
 | `beam-free` | 5 | 1,048,576 | `max` | retained |
 | `deepseek-v4.1-flash-free` | 5 | 200,000 | `max` | zero-retention |

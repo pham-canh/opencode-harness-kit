@@ -47,6 +47,17 @@
       "note": "Ten lanes derived from the free catalogue at `use` time, with Big Pickle as base and last rung. Survives a withdrawal without an edit, and may train on your prompts, so it is opt-in."
     },
     {
+      "id": "bench",
+      "file": "profiles/bench.json",
+      "title": "One model, no rotation, no pruning - for measurement",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "For benchmarks, not for working. One rung per lane and pruning off, so a run measures the model and the prompt rather than which route the rotation happened to draw."
+    },
+    {
       "id": "deepseek-v4.1-flash-free",
       "file": "profiles/deepseek-v4.1-flash-free.json",
       "title": "DeepSeek V4.1 Flash Free",

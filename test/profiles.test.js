@@ -1352,3 +1352,44 @@ test("the free fleet compacts early and caps one task's calls", () => {
   assert.ok(c.compaction.reserved >= 60_000, "free profiles compact before 140k")
   assert.equal(c.agent.build.steps, 40, "one task is capped at 40 model calls")
 })
+
+// A benchmark profile is a different thing from a working one, and the rules it
+// has to keep are the opposite of the fleet's.
+//
+// The fleet rotates on purpose: a withdrawn model costs a lane its first rung,
+// not the session. For measurement that property is a bug - the arm that draws
+// the faster route wins for a reason unrelated to the experiment. So `bench`
+// must have exactly one rung per lane, no catalogue resolution underneath it,
+// and pruning off, because a run whose context was pruned measures the pruner.
+test("bench pins one model per lane, with no rotation and no pruning", () => {
+  const p = loadProfile("bench")
+  assert.doesNotThrow(() => validate(p))
+
+  const lanes = Object.entries(p.roleModels ?? {})
+  assert.equal(lanes.length, 10, `bench covers ${lanes.length} lanes`)
+  for (const [lane, entry] of lanes) {
+    assert.deepEqual(
+      entry.chain,
+      [p.model],
+      `lane ${lane} can rotate: ${JSON.stringify(entry.chain)}`,
+    )
+    assert.equal(entry.model, p.model, `lane ${lane} does not run the profile's model`)
+  }
+
+  // Either source of models would defeat the point: `resolve` would pick
+  // different models per lane at install time.
+  // `normalize` fills the absent block with null, so "no resolution" is null here.
+  assert.equal(p.resolve, null, "bench must not resolve from the catalogue")
+  assert.equal(p.prune?.enabled, false, "bench must not prune: it would measure the pruner")
+  assert.equal(p.utility?.model, p.model, "the utility route must be the measured model")
+})
+
+test("bench is listed but never the default", () => {
+  const index = JSON.parse(readFileSync(join(ROOT, "profiles", "index.json"), "utf8"))
+  const entry = index.profiles.find((e) => e.id === "bench")
+  assert.ok(entry, "bench is missing from profiles/index.json")
+  assert.equal(entry.default, false)
+  assert.equal(entry.retention, "zero-retention", "a benchmark should not train on the prompts")
+  assert.match(entry.note, /not for working|benchmark/i)
+  assert.notEqual(index.default, "bench")
+})
