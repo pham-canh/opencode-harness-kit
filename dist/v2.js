@@ -1046,7 +1046,15 @@ function normalize(p) {
       // budget. A number is a ceiling in characters.
       keepDistinctBudgetChars: p.prune?.keepDistinctBudgetChars ?? null
     },
-    fallback: p.fallback ?? []
+    fallback: p.fallback ?? [],
+    // null is the old behaviour and the default: the chains are in the file.
+    // Only a profile that opts in derives them, and the defaults are written
+    // here so `resolve: {from: "catalogue"}` is a complete declaration.
+    resolve: p.resolve ? {
+      from: p.resolve.from ?? "catalogue",
+      free: p.resolve.free ?? true,
+      chainDepth: p.resolve.chainDepth ?? 3
+    } : null
   };
 }
 var laneCache = null;
@@ -1191,7 +1199,7 @@ function resolveLaneChain(p, role) {
 }
 function resolveLaneModel(p, role, opts = {}) {
   const model = laneModelId(p, role, opts);
-  return { model, levels: levelsOfModel(model) };
+  return { model, levels: model ? levelsOfModel(model) : [] };
 }
 function laneModelId(p, role, opts = {}) {
   const unhealthy = opts.unhealthy ?? /* @__PURE__ */ new Set();
@@ -1207,7 +1215,9 @@ function laneModelId(p, role, opts = {}) {
   if (p.model && !unhealthy.has(p.model) && retentionAllowed(p.model, ceiling)) {
     return p.model;
   }
-  return resolveLaneChain(p, role)[0] ?? p.model;
+  const first = resolveLaneChain(p, role)[0];
+  if (first && retentionAllowed(first, ceiling)) return first;
+  return null;
 }
 function levelsOfModel(model) {
   try {
@@ -1362,6 +1372,27 @@ function validate(p, path = "<memory>") {
       throw new ProfileError(`${where}: prune.enabled must be a boolean`);
     }
   }
+  if (p.resolve) {
+    if (p.resolve.from !== "catalogue") {
+      throw new ProfileError(
+        `${where}: resolve.from is "${p.resolve.from}", the only source implemented is "catalogue"`
+      );
+    }
+    if (p.resolve.free !== void 0 && typeof p.resolve.free !== "boolean") {
+      throw new ProfileError(`${where}: resolve.free must be a boolean`);
+    }
+    const depth = p.resolve.chainDepth;
+    if (depth !== void 0 && (!Number.isInteger(depth) || depth < 1 || depth > 4)) {
+      throw new ProfileError(`${where}: resolve.chainDepth must be an integer from 1 to 4`);
+    }
+    for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
+      if (rm?.chain !== void 0) {
+        throw new ProfileError(
+          `${where}: roleModels.${role} has both a hand-written chain and resolve.from "catalogue" - a lane has one source of models, not two`
+        );
+      }
+    }
+  }
   for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
     if (!LANE_NAMES.includes(role)) {
       throw new ProfileError(
@@ -1477,7 +1508,7 @@ function laneModelsInPlay(p, opts = {}) {
   const out = [p.model];
   for (const role of Object.keys(p.roleModels ?? {})) {
     const model = laneModelId(p, role, opts);
-    if (!out.includes(model)) out.push(model);
+    if (model && !out.includes(model)) out.push(model);
   }
   return out;
 }
@@ -1485,10 +1516,12 @@ function roleSplitModels(p, opts = {}) {
   return Object.entries(p.roleModels ?? {}).map(([role]) => {
     const resolved = resolveLaneModel(p, role, opts);
     let limits = null;
-    try {
-      limits = loadProfile(resolved.model)?.limits ?? null;
-    } catch {
-      limits = null;
+    if (resolved.model) {
+      try {
+        limits = loadProfile(resolved.model)?.limits ?? null;
+      } catch {
+        limits = null;
+      }
     }
     return { role, model: resolved.model, levels: resolved.levels, limits };
   });
@@ -2477,6 +2510,7 @@ var RouterPlugin = async ({ worktree, directory }) => {
           const agent = cfg.agent?.[lane];
           if (!agent) continue;
           const resolved = resolveLaneModel(profile, lane, { unhealthy });
+          if (!resolved.model) continue;
           if (resolved.model === profile.model && !profile.roleModels?.[lane]) continue;
           const wantModel = routeKey(profile.provider, resolved.model);
           if (agent.model !== wantModel) {
@@ -2965,6 +2999,7 @@ async function setupV2(ctx, options) {
               const agent = typeof editor?.get === "function" ? editor.get(lane) : null;
               if (!agent) continue;
               const resolved = resolveLaneModel(profile, lane, { unhealthy });
+              if (!resolved.model) continue;
               const wantModel = routeKey(profile.provider, resolved.model);
               const currentKey = agent.model && typeof agent.model === "object" ? routeKey(profile.provider, agent.model.id) : routeKey(profile.provider, String(agent.model ?? "").split("/").pop() ?? "");
               if (currentKey === wantModel) continue;

@@ -212,7 +212,8 @@ attributable measurement carries the gate.
 | Code | Meaning |
 |---|---|
 | 0 | The install is in place, or the change was confirmed. Something may have been left alone - a file that was already there, a prompt that was not answered - and the reason is printed. |
-| 1 | The install was refused, or a step failed. |
+| 1 | A step failed for a reason outside the request: an unreadable profile file, a backup that could not be written, a permissions problem in the config directory. Nothing was installed. |
+| 2 | `use` said no. The profile does not exist, its retention is unrecorded, it would put you behind a may-train model and `--yes` was not given, `--target` is not a dialect, `--offline` was given with no resolution to replay or with one recorded for a different profile, or the catalogue can serve no lane. The reason is printed and nothing was written. |
 
 A target that was left alone is NOT counted as installed: the install says
 so in place of its tick, and `verify` reports the file that is not the kit's
@@ -220,6 +221,19 @@ so in place of its tick, and `verify` reports the file that is not the kit's
 not being loaded, and a tick next to that is a claim the installer cannot
 make. A link that could not be created is a step that failed, and the
 install exits 1.
+
+`use` refused with code 1 for a profile that did not exist until 0.8.0, which
+made a typo look like a broken install to any script reading the code. Every
+refusal is 2 now; 1 is reserved for a step that failed rather than a request
+that cannot be met.
+
+A profile with a `resolve` block has no chains in its file: they are drawn
+from the catalogue when `use` runs, and recorded in
+`<config dir>/lane-resolve.json`. That record is what `--offline` replays, so
+`--offline` is reproducible only for the profile and the models the lock
+names - a different profile, or no lock at all, is refused rather than
+resolved from the profile file, which carries no chains to resolve from.
+
 
 `doctor` also exits 1 when there is no config, or no profile recorded in
 it: a kit that is installed but points at nothing is a broken install, and

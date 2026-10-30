@@ -6,6 +6,11 @@ export type RoleModel = {
     levels?: string[];
     chain?: string[];
 };
+export type LaneResolve = {
+    from?: string;
+    free?: boolean;
+    chainDepth?: number;
+};
 export type Lane = {
     description: string;
     mode?: string;
@@ -51,6 +56,7 @@ export type Profile = {
     };
     roles?: Record<string, EffortRequest>;
     roleModels?: Record<string, RoleModel>;
+    resolve?: LaneResolve | null;
     prune?: {
         enabled?: boolean;
         keepRecentToolCalls?: number;
@@ -71,6 +77,10 @@ export type RetentionRecord = {
  * @typedef {"zero-retention" | "retained" | "may-train" | "unknown"} Retention
  * @typedef {string | null} EffortRequest
  * @typedef {{ model: string, levels?: string[], chain?: string[] }} RoleModel
+ * `resolve` is either absent (the chains are written in the file) or a
+ * declaration that the chains come from the catalogue. `normalize` fills the
+ * defaults in, so a profile that opts in carries a complete object.
+ * @typedef {{ from?: string, free?: boolean, chainDepth?: number }} LaneResolve
  * @typedef {{ description: string, mode?: string, steps?: number, permission?: Record<string, any>, prompt: string, skills?: boolean }} Lane
  * @typedef {object} Profile
  * @property {string} id
@@ -89,6 +99,7 @@ export type RetentionRecord = {
  * @property {{ levels?: string[], default?: string | null, reserveShare?: number, sessionTokens?: number }} [effort]
  * @property {Record<string, EffortRequest>} [roles]
  * @property {Record<string, RoleModel>} [roleModels]
+ * @property {LaneResolve | null} [resolve]
  * @property {{ enabled?: boolean, keepRecentToolCalls?: number,
  *             keepRecentTurns?: number, keepUserMessages?: boolean,
  *             keepDistinctOutputs?: boolean, keepDistinctBudgetChars?: number | null }} [prune]
@@ -216,15 +227,19 @@ export declare function resolveLaneChain(p: Profile, role: string): string[];
  * the profile's base model, so a lane is never left without a model - and a
  * base model that is itself spent is the last resort rather than the first.
  *
+ * A model of `null` means the profile has no route for this lane that its own
+ * retention ceiling allows. That is a policy answer, not a health answer, and
+ * the caller must refuse rather than compile it: see `generateConfig`.
+ *
  * @param {Profile} p
  * @param {string} role
  * @param {{ unhealthy?: Set<string> }} [opts]
- * @returns {{ model: string, levels: string[] }}
+ * @returns {{ model: string | null, levels: string[] }}
  */
 export declare function resolveLaneModel(p: Profile, role: string, opts?: {
     unhealthy?: Set<string>;
 }): {
-    model: string;
+    model: string | null;
     levels: string[];
 };
 /**
@@ -241,12 +256,12 @@ export declare function levelsOfModel(model: string): string[];
  * @param {Profile} p
  * @param {string} role
  * @param {{ unhealthy?: Set<string> }} [opts]
- * @returns {{ model: string, levels: string[] } | null}
+ * @returns {{ model: string | null, levels: string[] } | null}
  */
 export declare function resolveRoleModel(p: Profile, role: string, opts?: {
     unhealthy?: Set<string>;
 }): {
-    model: string;
+    model: string | null;
     levels: string[];
 } | null;
 /**
@@ -358,13 +373,13 @@ export declare function laneModelsInPlay(p: Profile, opts?: {
  *
  * @param {Profile} p
  * @param {{ unhealthy?: Set<string> }} [opts]
- * @returns {{ role: string, model: string, levels: string[], limits: Profile["limits"] | null }[]}
+ * @returns {{ role: string, model: string | null, levels: string[], limits: Profile["limits"] | null }[]}
  */
 export declare function roleSplitModels(p: Profile, opts?: {
     unhealthy?: Set<string>;
 }): {
     role: string;
-    model: string;
+    model: string | null;
     levels: string[];
     limits: Profile["limits"] | null;
 }[];

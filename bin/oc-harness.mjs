@@ -57,6 +57,10 @@ import { createLoopCommands } from "../src/cli/loop.mjs"
 const CONFIG_DIR =
   process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config/opencode")
 const CONFIG_FILE = join(CONFIG_DIR, "opencode.jsonc")
+// Where a profile whose lanes are resolved from the catalogue records what it
+// chose. Next to the config, so a backup of one travels with the other, and
+// readable by hand when a run does not behave like the lock says it should.
+const RESOLVE_LOCK = join(CONFIG_DIR, "lane-resolve.json")
 const ROOT = import.meta.dirname ? join(import.meta.dirname, "..") : process.cwd()
 
 // A git CHECKOUT is the kit's own source of truth and is expected to stay
@@ -1664,7 +1668,10 @@ async function cmdUse(id, catalog = null, sink = {}) {
       sink.report.problems.push(msg)
       return false
     }
-    fail(msg, wantJson)
+    // The harness said no: code 2, the same as every other refusal. `use`
+    // predated the contract and said no with 1, which made a typo and a broken
+    // install indistinguishable to a script.
+    fail(msg, wantJson, 2)
   }
   if (!id) fail("usage: oc-harness use <profile> [--print] [--yes] [--no-skills]")
   let p = null
@@ -1679,9 +1686,62 @@ async function cmdUse(id, catalog = null, sink = {}) {
       fail(
         `retention for the models in ${id} is not recorded in retention.yml.\n` +
           `Add an entry with retention: zero-retention | may-train before installing it.`,
+        wantJson,
+        2,
       )
     }
-    fail(message)
+    fail(message, wantJson, 2)
+  }
+
+  // A profile with a `resolve` block does not carry its lanes: they are drawn
+  // from the catalogue at install time. This has to happen BEFORE the
+  // retention gate below, because the gate is about the models that will
+  // actually run, and before `generateConfig` for the same reason. The profile
+  // file keeps `resolve`; what gets compiled is the resolved copy.
+  let resolved = null
+  if (p.resolve) {
+    if (flag("--offline")) {
+      const lock = readResolveLock()
+      if (!lock) {
+        if (!refuse(
+          `profile ${id} derives its lane models from the catalogue, and --offline was given with no earlier resolution to reuse.\n` +
+            `Run \`oc-harness use ${id}\` once with a network, or pick a profile whose lanes are written in the file.`,
+        )) return "refused"
+      }
+      if (lock.profile !== id) {
+        if (!refuse(
+          `--offline reuses the last resolution, and that was for ${lock.profile}, not ${id}.\n` +
+            `Run \`oc-harness use ${id}\` with a network once, or use --print to see what it would install.`,
+        )) return "refused"
+      }
+      const ageDays = Math.floor((Date.now() - Date.parse(lock.at)) / 86_400_000)
+      if (!Number.isFinite(ageDays) || ageDays > 14) {
+        console.error(
+          yellow(
+            `  the reused resolution is ${Number.isFinite(ageDays) ? `${ageDays} days` : "of unknown age"} old; the catalogue may have moved since. \`oc-harness use ${id}\` refreshes it.`,
+          ),
+        )
+      }
+      resolved = { roleModels: lock.roleModels, warnings: [], lock }
+      p = { ...p, roleModels: lock.roleModels, resolve: null }
+    } else {
+      let catalogue = catalog
+      if (!catalogue) {
+        catalogue = await fetchCatalog()
+        catalog = catalogue
+      }
+      const { resolveChains } = await import("../src/catalogue-resolve.mjs")
+      const result = resolveChains(p, catalogue)
+      for (const w of result.warnings) console.error(yellow(`  ${w.reason}`))
+      if (!Object.keys(result.roleModels).length) {
+        if (!refuse(
+          `profile ${id}: the catalogue has no free model that can serve any lane at or below ${p.maxRetention ?? p.retention}.\n` +
+            `Nothing was installed. Check the catalogue, or pick a profile whose lanes are written in the file.`,
+        )) return "refused"
+      }
+      resolved = { ...result, lock: null }
+      p = { ...p, roleModels: result.roleModels, resolve: null }
+    }
   }
 
   // A split profile puts the user behind every model in play, not just the base
@@ -1700,6 +1760,8 @@ async function cmdUse(id, catalog = null, sink = {}) {
     fail(
       `retention for ${unrecorded.join(", ")} is not recorded in retention.yml.\n` +
         `Add an entry with retention: zero-retention | may-train before installing it.`,
+      wantJson,
+      2,
     )
   }
   if (eff.retention === "may-train" && !flag("--yes")) {
@@ -1712,7 +1774,7 @@ async function cmdUse(id, catalog = null, sink = {}) {
       `  ${retentionFor(eff.worst)?.note ?? ""}\n`
     if (process.stdin.isTTY && !flag("--print")) {
       // On a terminal the run stops here, so the way forward is to accept it.
-      fail(msg + "  Re-run with --yes to accept.\n")
+      fail(msg + "  Re-run with --yes to accept.\n", wantJson, 2)
     }
     // Without a terminal there is nobody to ask, so the run continues and the
     // config is written. Telling the user to re-run with --yes at that point
@@ -1814,7 +1876,7 @@ async function cmdUse(id, catalog = null, sink = {}) {
   /** @type {"v1" | "v2" | "auto"} */
   const target = /** @type {any} */ (opt("--target") ?? "v1")
   if (!["v1", "v2", "auto"].includes(target)) {
-    fail(`--target must be v1, v2 or auto, not "${target}"`)
+    fail(`--target must be v1, v2 or auto, not "${target}"`, wantJson, 2)
   }
   const out = generateConfig(p, {
     base: effectiveBase,
@@ -1844,7 +1906,7 @@ async function cmdUse(id, catalog = null, sink = {}) {
     // backup on `--yes` meant the one path that overwrites without asking was
     // also the one path with nothing to fall back to.
     if (!flag("--yes") && interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a dated backup is kept in backups/)`))) {
-      fail("left the existing config alone")
+      fail("left the existing config alone", wantJson, 2)
     }
     const kept = keepBackup(readFileSync(CONFIG_FILE, "utf8"))
     if (!kept) {
@@ -1868,6 +1930,34 @@ async function cmdUse(id, catalog = null, sink = {}) {
   } catch (err) {
     try { unlinkSync(tmp) } catch {}
     throw err
+  }
+  // The resolution is provenance, so it is written only when the config it
+  // describes is written. `--print` shows the future, it does not record one.
+  // The chains recorded are `p`'s, not `resolved`'s: the live-catalogue prune
+  // above may have moved a lane after the resolver ran, and a lock that
+  // disagrees with the config it sits beside is worse than no lock.
+  if (resolved && !resolved.lock) {
+    const previous = readResolveLock()
+    const changed =
+      previous?.profile === id
+        ? Object.keys(p.roleModels ?? {}).filter(
+            (lane) => previous.roleModels?.[lane]?.chain?.[0] !== p.roleModels[lane]?.chain?.[0],
+          )
+        : []
+    writeResolveLock({
+      at: new Date().toISOString(),
+      profile: id,
+      catalogue: process.env.OPENCODE_HARNESS_CATALOG_URL ?? "models.dev",
+      roleModels: p.roleModels ?? {},
+      warnings: resolved.warnings,
+      changed,
+    })
+    console.log(
+      `  ${stamp(`lane models resolved and recorded in ${RESOLVE_LOCK}`)}`,
+    )
+    if (changed.length) {
+      console.log(`  ${stamp(`moved since the last resolution: ${changed.join(", ")}`)}`)
+    }
   }
   console.log(`\n  ${green("✓")} wrote ${CONFIG_FILE}`)
   try {
@@ -1906,6 +1996,35 @@ function summary(p) {
  * `oc-harness use` merge onto an empty base and write the user's own settings
  * back out deleted, with no message. Refusing is the only safe answer here.
  */
+/**
+ * Read the lane resolution recorded by the last `use` of a resolved profile.
+ *
+ * @returns {{ at: string, profile: string, catalogue: string, roleModels: Record<string, { model: string, chain: string[] }>, warnings: { lane: string, reason: string }[], changed?: string[] } | null}
+ */
+function readResolveLock() {
+  try {
+    if (!existsSync(RESOLVE_LOCK)) return null
+    const lock = JSON.parse(readFileSync(RESOLVE_LOCK, "utf8"))
+    if (!lock || typeof lock !== "object" || !lock.roleModels || !lock.profile) return null
+    return lock
+  } catch {
+    // A corrupt lock is not a resolution. `--offline` will say there is none
+    // rather than install chains nobody can trace.
+    return null
+  }
+}
+
+/**
+ * Record which models the resolver chose, so a later `--offline` install and a
+ * later `verify` can both ask what actually ran.
+ *
+ * @param {{ at: string, profile: string, catalogue: string, roleModels: Record<string, { model: string, chain: string[] }>, warnings: { lane: string, reason: string }[], changed?: string[] }} lock
+ */
+function writeResolveLock(lock) {
+  mkdirSync(dirname(RESOLVE_LOCK), { recursive: true })
+  writeFileSync(RESOLVE_LOCK, `${JSON.stringify(lock, null, 2)}\n`)
+}
+
 function readConfigJson() {
   if (!existsSync(CONFIG_FILE)) return {}
   const parsed = parseJsonc(readFileSync(CONFIG_FILE, "utf8"))
@@ -3363,6 +3482,35 @@ function doctorExit() {
  * model reads on every turn and a free model doing nothing, so it is the first
  * thing to cut.
  */
+/**
+ * Where the models in the `lanes` table came from.
+ *
+ * This is not decoration. A profile with a `resolve` block has no chains in its
+ * file, so the table's model column is a copy of a lock written by an earlier
+ * `oc-harness use`. A reader who assumes the file is the source will go looking
+ * for a chain that is not there, and a reader who assumes the lock is current
+ * will believe a resolution the catalogue has since outgrown.
+ */
+function laneSource(profile, id, lock) {
+  if (!profile.resolve) {
+    const file = (index().profiles ?? []).find((e) => e.id === id)?.file ?? `profiles/${id}.json`
+    return `lane models are written in ${file}`
+  }
+  if (!lock || lock.profile !== id) {
+    const other = lock && lock.profile !== id ? ` (the recorded one is for ${lock.profile})` : ""
+    return `lane models come from the catalogue; no resolution is recorded for ${id} yet${other} - run oc-harness use ${id}`
+  }
+  const ms = Date.now() - Date.parse(lock.at)
+  const age = !Number.isFinite(ms)
+    ? "of unknown age"
+    : ms < 3_600_000
+      ? `${Math.max(0, Math.round(ms / 60_000))} minute(s) ago`
+      : ms < 86_400_000
+        ? `${Math.round(ms / 3_600_000)} hour(s) ago`
+        : `${Math.round(ms / 86_400_000)} day(s) ago`
+  return `lane models resolved from the catalogue, recorded ${age} in ${RESOLVE_LOCK}`
+}
+
 function cmdLanes() {
   const activeId = profileIdFromConfig() ?? index().default
   let profile = null
@@ -3430,14 +3578,42 @@ function cmdLanes() {
     "avg ms".padStart(9),
     "avg ctx".padStart(10),
     "model".padEnd(30),
+    "free".padStart(5),
+    "retention".padEnd(14),
   ].join("  ")
   console.log(head)
-  console.log("  " + "-".repeat(70))
+  console.log("  " + "-".repeat(94))
+
+  // What each lane would run on now, with the two properties a reader actually
+  // has to weigh: whether the route costs money and whether it trains on the
+  // prompts. Both come from the index entry for the model, the one place that
+  // records them for the profile and for a lane model alike.
+  const entries = new Map((index().profiles ?? []).map((e) => [e.id, e]))
+  // A resolved profile has no chains of its own: `loadProfile` fills every lane
+  // with the base model, which is NOT what the installed config runs. The lock
+  // is the only record of what was installed, so it wins.
+  let lock = null
+  try {
+    lock = profile.resolve ? readResolveLock() : null
+  } catch {
+    lock = null
+  }
+  const recorded = lock && lock.profile === activeId ? lock.roleModels : null
+  const meta = (lane) => {
+    const model = recorded?.[lane]?.model ?? resolveLaneModel(profile, lane).model
+    const entry = model ? entries.get(model) : null
+    return {
+      model,
+      free: entry ? (entry.free ? "yes" : "no") : "-",
+      retention: entry?.retention ?? "-",
+    }
+  }
 
   let unused = 0
   for (const lane of lanes) {
     const s = stats[lane]
-    const model = resolveLaneModel(profile, lane).model
+    const { model, free, retention } = meta(lane)
+    const tail = [free.padStart(5), retention.padEnd(14)]
     if (!s) {
       unused++
       console.log(
@@ -3447,6 +3623,7 @@ function cmdLanes() {
           "-".padStart(9),
           "-".padStart(10),
           (model ?? "-").padEnd(30),
+          ...tail,
         ].join("  ") + yellow("  never used"),
       )
       continue
@@ -3460,11 +3637,17 @@ function cmdLanes() {
         String(avg ?? "-").padStart(9),
         String(ctx ?? "-").padStart(10),
         ([...s.models].join(", ") || model || "-").padEnd(30),
+        ...tail,
       ].join("  "),
     )
   }
 
   console.log("")
+
+  // Provenance for the model column: a lane model that came from the catalogue
+  // has no line in the profile file to read it from, so the reader has to know
+  // which of the two it is looking at - and, if it is the lock, how old.
+  console.log(`  ${stamp(laneSource(profile, activeId, lock))}`)
   if (unused) {
     console.log(
       `  ${yellow(`${unused} lane(s) were never used`)} ${stamp("cut candidates, not defects")}`,

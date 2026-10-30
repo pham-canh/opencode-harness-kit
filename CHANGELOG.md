@@ -19,7 +19,43 @@ leaves evidence, an event log and a record a script can read; a worktree run
 can be found after the terminal closes; and a route that died is not retried
 blind.
 
+### Added
+
+- **`resolve`: lane models drawn from the catalogue instead of written down.**
+  A profile may declare `"resolve": { "from": "catalogue", "free": true,
+  "chainDepth": 3 }` and carry no `roleModels` at all. At `use` time the kit
+  keeps the models that are free, at or below the profile's retention ceiling,
+  and able to serve the lane — `vision` needs images, `schema` needs structured
+  output — and records the result in `<config dir>/lane-resolve.json`.
+  `--offline` replays that lock and refuses when there is none or when it
+  belongs to a different profile, so an offline install is reproducible rather
+  than freshly guessed. A lane with both a hand-written chain and a `resolve`
+  block is refused: one lane, one source of models.
+- **`big-pickle-auto`**, the first profile built on `resolve`. Ten lanes, base
+  model `big-pickle`, `may-train`, refreshed at install time. Opt-in, and not
+  the default.
+- **`oc-harness lanes`** now answers the two questions a reader had to open the
+  profile index for: whether a lane costs money (`free`) and who trains on it
+  (`retention`). A footer names where the models came from — the profile file,
+  or a lock and how old it is.
+
 ### Fixed
+
+- **A lane could be given a model above the profile's retention ceiling.** The
+  last resort in `laneModelId` returned `chain[0]` without asking
+  `retentionAllowed`, so a zero-retention profile whose whole chain was
+  `may-train` installed a `may-train` router. It now resolves to `null`, and
+  `generateConfig` refuses the install instead of pinning a model the profile
+  promised not to use.
+- **`oc-harness lanes` reported the base model for every lane of a resolved
+  profile.** `loadProfile` fills a missing lane with the base model, which is
+  what the profile *declares*, not what the install *runs*; the lock is now
+  read first.
+- **`oc-harness use` refused with exit 1.** `docs/EXIT-CODES.md` has said exit 2
+  means "the harness said no" since `spec` shipped, and every other refusal
+  already used it. A typo in a profile name looked like a broken install to a
+  script reading the code. `use` now exits 2 for a refusal and 1 only for a
+  step that failed.
 
 - **Three latency assumptions in `test/eval-failfast.test.js`.** Under eight
   concurrent runs of the file, 16 of 16 runs failed at least one test; alone it

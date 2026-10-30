@@ -1,0 +1,57 @@
+{
+  "$comment": "Lane models are NOT written in this file. `resolve` tells `oc-harness use` to derive the chains from the live catalogue, inside this profile's retention ceiling, and record which models it chose in the lock file next to opencode.jsonc. Re-resolve with `oc-harness use big-pickle-auto --yes`; run offline against the existing lock with `--offline`. The base model is Big Pickle, so a lane the catalogue cannot fill runs on it rather than failing.",
+  "id": "big-pickle-auto",
+  "title": "Big Pickle, lanes resolved from the live catalogue",
+  "provider": "opencode",
+  "model": "big-pickle",
+  "family": "big-pickle",
+  "verified": "2026-10-19",
+  "retention": "may-train",
+  "maxRetention": "may-train",
+  "notes": "Big Pickle as the base model and the last rung of every lane, with the other lanes derived from whatever free models the catalogue lists today. The point is that a withdrawn model stops being a broken chain: the next `use` picks a replacement from the catalogue instead of falling back to one model doing ten jobs. Everything here is may-train, which is why this is a choice you make, not the default.",
+  "limits": {
+    "context": 200000,
+    "input": 160000,
+    "output": 32000
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": true,
+    "attachment": false
+  },
+  "effort": {
+    "levels": [],
+    "default": null,
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": "max",
+    "build": "max",
+    "reviewer": "max",
+    "locate": "low",
+    "verify": "low",
+    "vision": null,
+    "doc": null,
+    "schema": "max",
+    "sweep": "low",
+    "longform": null
+  },
+  "roleModels": {},
+  "resolve": {
+    "from": "catalogue",
+    "free": true,
+    "chainDepth": 3
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": [
+    "nemotron-3.5-lightning-free",
+    "deepseek-v4.1-flash-free"
+  ]
+}

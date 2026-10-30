@@ -6,6 +6,16 @@ human who never switches a model by hand.
 This page records what the lanes are, which model serves each one, and the
 measurements behind those choices.
 
+**The model column below is an artifact, not a preference.** A profile that
+declares `resolve` has no chains in its file: the lanes are drawn from the
+catalogue when `oc-harness use` runs and recorded in
+`<config dir>/lane-resolve.json`. The tables here were produced from that lock
+on the date in the heading. Re-run `oc-harness use <profile> --print` to see
+what the catalogue would choose today, and `oc-harness lanes` to see what the
+install is actually running — both read the same lock, so a disagreement
+between this page and your install means one of them is old, and the lock
+timestamp says which.
+
 There are **two** sets of numbers here, and they measure different things:
 
 - The **install tables** are the telemetry of a real install: `oc-harness

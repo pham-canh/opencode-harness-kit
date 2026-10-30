@@ -305,3 +305,59 @@ test("every npx reference in the README names this package", () => {
     )
   }
 })
+
+// The lock is the one part of the model-control story a reader will get wrong.
+//
+// A profile with `resolve` has no chains in its file, so the README's claim
+// that `--offline` "replays the lock" is the whole contract: if it instead
+// re-resolved, or fell back to the profile file, an offline install would pick
+// models nobody recorded. These tests pin the three sentences that make that
+// contract legible, and the escape hatch that must not be presented as a way
+// to steer the lanes.
+test("the README documents the resolve block and where the lock lives", () => {
+  assert.match(README, /"resolve":\s*\{\s*"from":\s*"catalogue"/, "no resolve example")
+  assert.ok(README.includes("lane-resolve.json"), "the README does not name the lock")
+  assert.match(README, /--offline/, "the README does not document --offline")
+  assert.match(README, /--print/, "the README does not document --print")
+  // `--offline` reads the lock; it does not resolve. A README that says
+  // otherwise sends a reader to an install that cannot work without a network.
+  assert.match(
+    README,
+    /`--offline` never resolves anything/,
+    "the README must say that --offline does not resolve",
+  )
+})
+
+test("the README presents OC_HARNESS_MODEL as an escape hatch, not a control", () => {
+  assert.ok(README.includes("OC_HARNESS_MODEL"), "the escape hatch is undocumented")
+  assert.match(
+    README,
+    /one-run escape hatch/i,
+    "OC_HARNESS_MODEL must be described as a one-run escape hatch",
+  )
+})
+
+test("the CHANGELOG records the resolve work under Unreleased", () => {
+  const changelog = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8")
+  const unreleased = changelog.slice(
+    changelog.indexOf("## [Unreleased]"),
+    changelog.indexOf("## [", changelog.indexOf("## [Unreleased]") + 1),
+  )
+  assert.ok(unreleased.length > 0, "CHANGELOG.md has no [Unreleased] section")
+  for (const needle of ["resolve", "big-pickle-auto", "laneModelId", "retention ceiling"]) {
+    assert.ok(
+      unreleased.includes(needle),
+      `[Unreleased] does not mention ${needle}`,
+    )
+  }
+})
+
+test("docs/ROUTING.md says its tables are an artifact of the lock", () => {
+  const routing = readFileSync(join(ROOT, "docs", "ROUTING.md"), "utf8")
+  assert.ok(routing.includes("lane-resolve.json"), "ROUTING.md does not name the lock")
+  assert.match(
+    routing,
+    /artifact, not a preference/,
+    "ROUTING.md must say the tables are an artifact",
+  )
+})

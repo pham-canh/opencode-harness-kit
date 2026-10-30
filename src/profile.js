@@ -57,6 +57,10 @@ export const ROOT = findRoot(resolve(HERE, ".."))
  * @typedef {"zero-retention" | "retained" | "may-train" | "unknown"} Retention
  * @typedef {string | null} EffortRequest
  * @typedef {{ model: string, levels?: string[], chain?: string[] }} RoleModel
+ * `resolve` is either absent (the chains are written in the file) or a
+ * declaration that the chains come from the catalogue. `normalize` fills the
+ * defaults in, so a profile that opts in carries a complete object.
+ * @typedef {{ from?: string, free?: boolean, chainDepth?: number }} LaneResolve
  * @typedef {{ description: string, mode?: string, steps?: number, permission?: Record<string, any>, prompt: string, skills?: boolean }} Lane
  * @typedef {object} Profile
  * @property {string} id
@@ -75,6 +79,7 @@ export const ROOT = findRoot(resolve(HERE, ".."))
  * @property {{ levels?: string[], default?: string | null, reserveShare?: number, sessionTokens?: number }} [effort]
  * @property {Record<string, EffortRequest>} [roles]
  * @property {Record<string, RoleModel>} [roleModels]
+ * @property {LaneResolve | null} [resolve]
  * @property {{ enabled?: boolean, keepRecentToolCalls?: number,
  *             keepRecentTurns?: number, keepUserMessages?: boolean,
  *             keepDistinctOutputs?: boolean, keepDistinctBudgetChars?: number | null }} [prune]
@@ -224,6 +229,16 @@ export function normalize(p) {
       keepDistinctBudgetChars: p.prune?.keepDistinctBudgetChars ?? null,
     },
     fallback: p.fallback ?? [],
+    // null is the old behaviour and the default: the chains are in the file.
+    // Only a profile that opts in derives them, and the defaults are written
+    // here so `resolve: {from: "catalogue"}` is a complete declaration.
+    resolve: p.resolve
+      ? {
+          from: p.resolve.from ?? "catalogue",
+          free: p.resolve.free ?? true,
+          chainDepth: p.resolve.chainDepth ?? 3,
+        }
+      : null,
   }
 }
 
@@ -475,14 +490,18 @@ export function resolveLaneChain(p, role) {
  * the profile's base model, so a lane is never left without a model - and a
  * base model that is itself spent is the last resort rather than the first.
  *
+ * A model of `null` means the profile has no route for this lane that its own
+ * retention ceiling allows. That is a policy answer, not a health answer, and
+ * the caller must refuse rather than compile it: see `generateConfig`.
+ *
  * @param {Profile} p
  * @param {string} role
  * @param {{ unhealthy?: Set<string> }} [opts]
- * @returns {{ model: string, levels: string[] }}
+ * @returns {{ model: string | null, levels: string[] }}
  */
 export function resolveLaneModel(p, role, opts = {}) {
   const model = laneModelId(p, role, opts)
-  return { model, levels: levelsOfModel(model) }
+  return { model, levels: model ? levelsOfModel(model) : [] }
 }
 
 /**
@@ -497,7 +516,7 @@ export function resolveLaneModel(p, role, opts = {}) {
  * @param {Profile} p
  * @param {string} role
  * @param {{ unhealthy?: Set<string> }} [opts]
- * @returns {string}
+ * @returns {string | null}
  */
 function laneModelId(p, role, opts = {}) {
   const unhealthy = opts.unhealthy ?? new Set()
@@ -514,10 +533,17 @@ function laneModelId(p, role, opts = {}) {
   if (p.model && !unhealthy.has(p.model) && retentionAllowed(p.model, ceiling)) {
     return p.model
   }
-  // Last resort: the first rung anyway rather than leaving the lane without a
-  // model, and let the config header say what the effective retention turned
-  // out to be.
-  return resolveLaneChain(p, role)[0] ?? p.model
+  // Last resort: a rung the CEILING allows but the router marked spent. Health
+  // entries expire, and the config header records what the lane actually got,
+  // so running it is a reversible bet on a route that is already policy-legal.
+  //
+  // A rung the ceiling FORBIDS is not a last resort. Returning it handed a
+  // `zero-retention` profile a `may-train` route with only a comment to say
+  // so - a privacy downgrade nobody chose. The lane has no model instead, and
+  // `generateConfig` refuses with the lane and the ceiling in the message.
+  const first = resolveLaneChain(p, role)[0]
+  if (first && retentionAllowed(first, ceiling)) return first
+  return null
 }
 
 /**
@@ -541,7 +567,7 @@ export function levelsOfModel(model) {
  * @param {Profile} p
  * @param {string} role
  * @param {{ unhealthy?: Set<string> }} [opts]
- * @returns {{ model: string, levels: string[] } | null}
+ * @returns {{ model: string | null, levels: string[] } | null}
  */
 export function resolveRoleModel(p, role, opts = {}) {
   const rm = p.roleModels?.[role]
@@ -772,6 +798,33 @@ export function validate(p, path = "<memory>") {
     }
     if (prune.enabled !== undefined && typeof prune.enabled !== "boolean") {
       throw new ProfileError(`${where}: prune.enabled must be a boolean`)
+    }
+  }
+  // A profile's lane models come from exactly one place. `resolve` derives
+  // them from the catalogue; a hand-written `chain` states them. Both together
+  // is not two opinions, it is an ambiguous file: whichever one the code
+  // happens to prefer, the other is silently ignored and the profile lies
+  // about what runs. Refuse, and name the lane.
+  if (p.resolve) {
+    if (p.resolve.from !== "catalogue") {
+      throw new ProfileError(
+        `${where}: resolve.from is "${p.resolve.from}", the only source implemented is "catalogue"`,
+      )
+    }
+    if (p.resolve.free !== undefined && typeof p.resolve.free !== "boolean") {
+      throw new ProfileError(`${where}: resolve.free must be a boolean`)
+    }
+    const depth = p.resolve.chainDepth
+    if (depth !== undefined && (!Number.isInteger(depth) || depth < 1 || depth > 4)) {
+      throw new ProfileError(`${where}: resolve.chainDepth must be an integer from 1 to 4`)
+    }
+    for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
+      if (rm?.chain !== undefined) {
+        throw new ProfileError(
+          `${where}: roleModels.${role} has both a hand-written chain and resolve.from "catalogue" - ` +
+            `a lane has one source of models, not two`,
+        )
+      }
     }
   }
   for (const [role, rm] of Object.entries(p.roleModels ?? {})) {
@@ -1035,7 +1088,7 @@ export function laneModelsInPlay(p, opts = {}) {
   const out = [p.model]
   for (const role of Object.keys(p.roleModels ?? {})) {
     const model = laneModelId(p, role, opts)
-    if (!out.includes(model)) out.push(model)
+    if (model && !out.includes(model)) out.push(model)
   }
   return out
 }
@@ -1048,16 +1101,18 @@ export function laneModelsInPlay(p, opts = {}) {
  *
  * @param {Profile} p
  * @param {{ unhealthy?: Set<string> }} [opts]
- * @returns {{ role: string, model: string, levels: string[], limits: Profile["limits"] | null }[]}
+ * @returns {{ role: string, model: string | null, levels: string[], limits: Profile["limits"] | null }[]}
  */
 export function roleSplitModels(p, opts = {}) {
   return Object.entries(p.roleModels ?? {}).map(([role]) => {
     const resolved = resolveLaneModel(p, role, opts)
     let limits = null
-    try {
-      limits = loadProfile(resolved.model)?.limits ?? null
-    } catch {
-      limits = null
+    if (resolved.model) {
+      try {
+        limits = loadProfile(resolved.model)?.limits ?? null
+      } catch {
+        limits = null
+      }
     }
     return { role, model: resolved.model, levels: resolved.levels, limits }
   })

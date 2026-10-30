@@ -36,6 +36,17 @@
       "note": "Every lane gets the model built for it. Five of the ten providers may use the data to improve the model, so the whole profile is may-train."
     },
     {
+      "id": "big-pickle-auto",
+      "file": "profiles/big-pickle-auto.json",
+      "title": "Big Pickle base, lanes resolved from the live catalogue",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "Ten lanes derived from the free catalogue at `use` time, with Big Pickle as base and last rung. Survives a withdrawal without an edit, and may train on your prompts, so it is opt-in."
+    },
+    {
       "id": "deepseek-v4.1-flash-free",
       "file": "profiles/deepseek-v4.1-flash-free.json",
       "title": "DeepSeek V4.1 Flash Free",

@@ -492,6 +492,18 @@ export function generateConfig(p, opts = {}) {
     // of the file claimed the profile's zero-retention one: the compiler was
     // asked to re-run over a hand-edited config and kept the hand-edit.
     const rm = resolveRoleModel(p, role, { unhealthy })
+    // A lane the profile gives a chain to must resolve to a model its own
+    // retention ceiling allows. `null` means no rung and not even the base
+    // model qualifies, and compiling that would pin the lane to a route the
+    // user ruled out - or silently run it on the base model and call it a
+    // chain. Refuse and say which lane, so the fix is a chain edit.
+    if (rm && rm.model === null) {
+      throw new Error(
+        `lane ${role} in profile ${p.id} has no model at or below its retention ceiling ` +
+          `(${p.maxRetention ?? p.retention}).\n` +
+          `Add a model at that ceiling to the lane's chain, or raise maxRetention deliberately.`,
+      )
+    }
     existing.model = rm ? `${p.provider}/${rm.model}` : model
 
     if (level === null) delete existing.variant

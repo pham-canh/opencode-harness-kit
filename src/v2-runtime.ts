@@ -251,6 +251,7 @@ export async function setupV2(ctx?: V2Context, options?: Record<string, any>): P
               const agent = typeof editor?.get === "function" ? editor.get(lane) : null
               if (!agent) continue
               const resolved = resolveLaneModel(profile, lane, { unhealthy })
+              if (!resolved.model) continue
               const wantModel = routeKey(profile.provider, resolved.model)
               const currentKey =
                 agent.model && typeof agent.model === "object"

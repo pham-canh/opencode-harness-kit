@@ -350,6 +350,10 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
           const agent = cfg.agent?.[lane]
           if (!agent) continue
           const resolved = resolveLaneModel(profile, lane, { unhealthy })
+          // A null model means the profile has no route for this lane inside
+          // its own retention ceiling. There is nothing policy-legal to move
+          // the lane onto, so leave the compiled config alone.
+          if (!resolved.model) continue
           if (resolved.model === profile.model && !profile.roleModels?.[lane]) continue
           // The lane's model is written with the PROFILE's provider, the
           // same way the config compiler writes it. The hardcoded "opencode/"

@@ -316,6 +316,79 @@ test("a lane whose whole chain is spent falls back to the base model", () => {
   assert.ok(last.model, "a lane is never left without a model")
 })
 
+test("a lane never runs above its profile's retention ceiling, even as a last resort", () => {
+  // The last-resort branch used to return the first rung regardless of the
+  // ceiling, so a `zero-retention` profile could run a lane on a `may-train`
+  // model with only a comment saying so. Health is a reversible bet; policy is
+  // not. The lane has no model instead, and compiling refuses and names it.
+  const base = loadProfile("fleet-safe")
+  const p = {
+    ...base,
+    id: "ceiling-test",
+    model: "big-pickle",
+    retention: "may-train",
+    maxRetention: "zero-retention",
+    roles: { plan: base.roles.plan },
+    roleModels: { plan: { model: "big-pickle", chain: ["big-pickle"] } },
+  }
+  assert.equal(
+    retentionAllowed("big-pickle", "zero-retention"),
+    false,
+    "the premise: big-pickle sits above a zero-retention ceiling",
+  )
+  assert.equal(resolveLaneModel(p, "plan").model, null)
+  assert.throws(
+    () => generateConfig(p),
+    (err) => {
+      assert.match(err.message, /lane plan/)
+      assert.match(err.message, /zero-retention/)
+      return true
+    },
+    "a profile with no legal route for a lane must not compile",
+  )
+})
+
+test("resolve is a complete declaration after normalize, and null when absent", () => {
+  const p = normalize({ ...loadProfile("fleet-safe"), resolve: { from: "catalogue" } })
+  assert.deepEqual(p.resolve, { from: "catalogue", free: true, chainDepth: 3 })
+  assert.equal(normalize(loadProfile("fleet-safe")).resolve, null, "old profiles are untouched")
+})
+
+test("a lane has one source of models: resolve and a written chain are refused together", () => {
+  const base = loadProfile("fleet-safe")
+  const twoSources = {
+    ...base,
+    id: "two-sources",
+    roles: { plan: base.roles.plan },
+    roleModels: { plan: { model: base.model, chain: [base.model] } },
+    resolve: { from: "catalogue" },
+  }
+  assert.throws(
+    () => validate(twoSources),
+    /roleModels\.plan has both a hand-written chain and resolve/,
+    "the refusal names the lane, not just the file",
+  )
+  // Only the conflict is refused. The same profile without chains validates,
+  // because resolve is the source and it has nothing to contradict yet.
+  assert.doesNotThrow(() => validate({ ...twoSources, roleModels: {} }))
+})
+
+test("a resolve block with a source or depth the code cannot honour is refused", () => {
+  const base = { ...loadProfile("fleet-safe"), roleModels: {}, roles: { plan: "max" } }
+  assert.throws(
+    () => validate({ ...base, resolve: { from: "guesswork" } }),
+    /resolve\.from is "guesswork"/,
+  )
+  assert.throws(
+    () => validate({ ...base, resolve: { from: "catalogue", chainDepth: 0 } }),
+    /resolve\.chainDepth must be an integer from 1 to 4/,
+  )
+  assert.throws(
+    () => validate({ ...base, resolve: { from: "catalogue", free: "yes" } }),
+    /resolve\.free must be a boolean/,
+  )
+})
+
 test("the plan reports an effort request that was dropped entirely", () => {
   // A lane whose model publishes no such level gets no variant at all. That
   // is the one adjustment that has to be reported, because it is the one

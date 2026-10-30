@@ -8,7 +8,7 @@ export type EffortResult = {
     model: string;
     defaultVariant: string | null;
     roles: Record<string, string | null>;
-    laneModels: Record<string, string>;
+    laneModels: Record<string, string | null>;
     notes: string[];
 };
 /**
@@ -21,7 +21,7 @@ export type EffortResult = {
  * @property {string} model
  * @property {string|null} defaultVariant
  * @property {Record<string, string|null>} roles
- * @property {Record<string, string>} laneModels
+ * @property {Record<string, string | null>} laneModels
  * @property {string[]} notes
  */
 /**

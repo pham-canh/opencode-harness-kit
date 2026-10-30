@@ -240,6 +240,7 @@ it. One file covers ten jobs either way.
 |---|---|---|---|---|
 | `fleet-safe` (default) | 10 | 200,000 | `max` | zero-retention |
 | `fleet-all` | 10 | 160,000 | `max` | **may train** |
+| `big-pickle-auto` | 10 | 160,000 | — | **may train** |
 | `flint-40b-free` | 5 | 262,144 | `max` | **may train** |
 | `beam-free` | 5 | 1,048,576 | `max` | retained |
 | `deepseek-v4.1-flash-free` | 5 | 200,000 | `max` | zero-retention |
@@ -252,6 +253,43 @@ it. One file covers ten jobs either way.
 
 The five-lane profiles run everything on one model, which is the right shape
 when you want one route and want to know exactly which one.
+
+## The model changes, the profile does not
+
+Free models come and go weekly. A profile with ten hand-written chains is a
+snapshot of one afternoon, and the afternoon it goes stale is the afternoon
+every lane falls back to the same dead rung.
+
+`big-pickle-auto` declares where its lanes come from instead of listing them:
+
+```json
+"resolve": { "from": "catalogue", "free": true, "chainDepth": 3 }
+```
+
+At `oc-harness use` time the kit reads the live catalogue, keeps the models that
+are free, at or below the profile's retention ceiling, and able to serve the
+lane they are being considered for — `vision` needs a model that takes images,
+`schema` needs structured output — and writes the result to
+`~/.config/opencode/lane-resolve.json`. A lane's chain is only recorded once it
+is known to exist; a profile that lists a chain by hand and declares `resolve`
+is refused, because a lane with two sources of models has none you can trust.
+
+```bash
+oc-harness use big-pickle-auto --yes      # resolve now, install, record the lock
+oc-harness use big-pickle-auto --print    # show what it would install, write nothing
+oc-harness use big-pickle-auto --offline  # replay the lock, no network at all
+```
+
+`--offline` never resolves anything. It replays the last recorded resolution for
+that same profile and refuses when there is none, or when the lock belongs to a
+different profile — an offline install that silently picked models nobody can
+trace would be the bug it is trying to avoid. A lock older than fourteen days
+still replays, with a warning that the catalogue has probably moved.
+
+`OC_HARNESS_MODEL` is a one-run escape hatch for `work`: it overrides the model
+for that invocation without touching the profile or the lock, and it is
+deliberately not a flag, because a model you pin by hand stops the chains from
+doing their job.
 
 ## Free models are perishable, so check them
 

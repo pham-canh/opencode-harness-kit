@@ -284,6 +284,37 @@
         }
       }
     },
+    "resolve": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "description": "Derive `roleModels.<lane>.chain` from the live model catalogue instead of writing it by hand. A profile has ONE source of lane models: `resolve`, or hand-written chains, never both. Resolution happens at `oc-harness use` time and is recorded in a lock file, so two sessions on the same lock run the same models.",
+      "required": [
+        "from"
+      ],
+      "properties": {
+        "from": {
+          "enum": [
+            "catalogue"
+          ],
+          "description": "The only source implemented: models.dev plus retention.yml, filtered by this profile's maxRetention ceiling."
+        },
+        "free": {
+          "type": "boolean",
+          "default": true,
+          "description": "Only consider models the catalogue prices at zero. A paid model is never picked by the resolver, however good it looks."
+        },
+        "chainDepth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 3,
+          "description": "How many rungs to keep per lane, best first. The profile's base model is the effective last rung either way, so depth 1 means best model plus base model."
+        }
+      }
+    },
     "fallback": {
       "type": "array",
       "description": "Ordered profile ids to fall back to. Selection happens at session start, not mid-session: no opencode plugin hook can change a live session's model.",

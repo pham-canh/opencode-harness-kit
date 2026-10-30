@@ -24,7 +24,7 @@ import { unhealthyModels } from "./health.js"
  * @property {string} model
  * @property {string|null} defaultVariant
  * @property {Record<string, string|null>} roles
- * @property {Record<string, string>} laneModels
+ * @property {Record<string, string | null>} laneModels
  * @property {string[]} notes
  */
 
@@ -86,7 +86,7 @@ export function planEffort(profileId, opts = {}) {
     }
   }
 
-  /** @type {Record<string, string>} */
+  /** @type {Record<string, string | null>} */
   const laneModels = {}
   for (const role of Object.keys(p.roles ?? {})) {
     laneModels[role] = resolveLaneModel(p, role, scoped).model

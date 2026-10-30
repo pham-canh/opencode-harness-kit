@@ -3,51 +3,107 @@
     "models": {
       "beam-free": {
         "limit": {
-          "context": 200000,
-          "output": 32000
-        }
+          "context": 1048576,
+          "output": 131072
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "tool_call": true,
+        "attachment": false,
+        "structured_output": true
       },
       "big-pickle": {
         "limit": {
           "context": 200000,
           "output": 32000
-        }
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "tool_call": true,
+        "attachment": false,
+        "structured_output": true
       },
       "deepseek-v4.1-flash-free": {
         "limit": {
           "context": 200000,
           "output": 32000
-        }
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "tool_call": true,
+        "attachment": true,
+        "structured_output": true
       },
       "flint-40b-free": {
         "limit": {
           "context": 262144,
           "output": 65536
-        }
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "tool_call": true,
+        "attachment": false,
+        "structured_output": true
       },
       "glm-5.3-flash-free": {
         "limit": {
           "context": 200000,
           "output": 32000
-        }
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "tool_call": true,
+        "attachment": true,
+        "structured_output": true
       },
       "nemotron-3.5-lightning-free": {
         "limit": {
           "context": 262144,
           "output": 262144
-        }
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "tool_call": true,
+        "attachment": false,
+        "structured_output": true
       },
       "mimo-v2.6-flash-free": {
         "limit": {
           "context": 200000,
           "output": 32000
-        }
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "tool_call": true,
+        "attachment": true,
+        "structured_output": false
       },
       "nemotron-3.5-super-vl-free": {
         "limit": {
           "context": 1048576,
           "output": 131072
-        }
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "tool_call": true,
+        "attachment": true,
+        "structured_output": false
       }
     }
   },
@@ -57,7 +113,14 @@
         "limit": {
           "context": 262144,
           "output": 32768
-        }
+        },
+        "cost": {
+          "input": 0.9,
+          "output": 0.9
+        },
+        "tool_call": true,
+        "attachment": false,
+        "structured_output": false
       }
     }
   }
