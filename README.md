@@ -596,6 +596,11 @@ oc-harness refresh --all   re-derive every shipped profile against the live cata
 oc-harness upgrade    check for a newer kit, refresh the profiles, rewrite the config
 oc-harness backups   the configs that were replaced, newest first
 oc-harness uninstall remove the plugin, prompts, skills and GLOBAL.md again
+oc-harness spec list   the templates that ship with the kit, and whether each is valid
+oc-harness spec init --template inventory   write a track's charter, milestones and docs (no model)
+oc-harness spec check  tick the charter's ## Ready, then earn charter_ready
+oc-harness spec research / design / decompose   one model call each, then .space/tasks.md
+oc-harness work --project   run that validated plan, refusing unless plan_ready is true
 oc-harness cost      what the kit is doing on this project, in numbers
 oc-harness restore <file>  put one back
 oc-harness baseline   measure the current install

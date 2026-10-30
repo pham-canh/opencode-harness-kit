@@ -45,6 +45,31 @@ blind.
 
 ### Added
 
+- **The `spec` workflow: a validated plan before the loop starts.** `oc-harness
+  spec init` lays a track down from a template (`inventory`, `billing`,
+  `existing`, or `blank`), `spec check` proves the charter still has its locked
+  sections and a ticked `## Ready`, and `spec research`, `spec design` and
+  `spec decompose` make **exactly one** model call each and write what it
+  returns into `.space/`. Each step is budget-checked before the call and
+  size-checked after it, is refused rather than retried when the model is
+  offline, times out or returns junk, and cannot be re-run without `--force`;
+  `--print` and `--dry-run` never reach the model at all, so a template is data
+  and the data commands cost nothing. Readiness lives in `.space/track.json`
+  (`charter_ready` → `research_ready` → `design_ready` → `plan_ready`) and
+  setting a key clears every later one, so a plan cannot stay "ready" after the
+  design it was built on changed. `spec decompose` runs the generated
+  `tasks.md` through the same parser `work` uses, and refuses a plan whose task
+  has no `verify`, whose `[REQ-NNN]` tag is not in the charter, or whose verify
+  command is not runnable. Every refusal is exit `2` with a JSON body on
+  stderr and an empty stdout, listed in `docs/EXIT-CODES.md`.
+- **`oc-harness work --project`: run a planned track and nothing else.** It
+  takes no positional request — the request is `.space/tasks.md` — and refuses
+  before it looks for `opencode` when the directory has no track or
+  `plan_ready` is not `true`. `--strict` is forced off, because strict mode
+  exists to make an under-specified request fail and a planned track is the
+  output of the steps that remove that ambiguity. The refusal prints to stdout
+  with exit `2`, matching plain `work --json`, and `--dry-run` runs the same
+  preflight without writing a run record.
 - **A ceiling on what one session may spend (`effort.sessionTokens`).** The kit
   bounded one request (compaction at 130k) and one task (40 calls for a build),
   and neither bounds a session: the measured one made 769 requests, every one

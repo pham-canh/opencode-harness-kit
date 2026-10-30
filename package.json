@@ -38,6 +38,7 @@
       "types": "./dist/rules.d.ts",
       "import": "./src/rules.js"
     },
+    "./templates/schema.json": "./templates/schema.json",
     "./v2": {
       "types": "./dist/v2.d.ts",
       "import": "./dist/v2.js"
@@ -52,6 +53,7 @@
     "src/",
     "profiles/",
     "prompts/",
+    "templates/",
     "skills/",
     "docs/*.md",
     "retention.yml",

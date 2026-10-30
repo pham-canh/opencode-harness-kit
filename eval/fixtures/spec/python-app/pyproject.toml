@@ -1,0 +1,8 @@
+[project]
+name = "stock-service"
+version = "0.1.0"
+description = "A minimal existing repository for the spec workflow acceptance run."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

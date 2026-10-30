@@ -125,6 +125,67 @@ into a parser gets JSON, and a failure is a JSON object with an `error` in
 it, not a parse error. `--json` and `--watch` do not combine: the watch
 prints what changed, in prose, as it happens.
 
+## `oc-harness spec`
+
+| Code | Meaning |
+|---|---|
+| 0 | The command did what it said: a template listed or rendered, a readiness key earned, a prompt printed, a plan written. |
+| 2 | The harness refused. Nothing was written, and the reason names the file and the fix. |
+| 1 | The kit itself failed - a bug, or a disk error that is not a refusal. |
+
+Exit `2` is the harness refusing, not the model disagreeing. `list`, `show`,
+`validate`, `init`, `diff`, `upgrade` and `check` call **zero** models, so
+their `2` is always about the repository: an unknown template, a variable the
+template requires that was not passed, a destination the template may not
+write, a track that does not exist, a locked section missing from the charter,
+or a `## Ready` item still unticked.
+
+The refusal codes, by the part of the track they are about:
+
+| Code | Meaning |
+|---|---|
+| `track-missing` | No `.space/track.json`; run `spec init` first. |
+| `spec-missing-file` | A file the step reads is not there: the charter, a note, the ADR, the contract. |
+| `spec-readiness` | The key named is not one of the four readiness keys. |
+| `spec-design-notes` | `spec design` with no note in `.space/research/notes`. A design with no research is a guess. |
+| `spec-decompose-input` | `spec decompose` when design wrote no ADR or no contract, so there is nothing to plan. |
+| `spec-init-exists` | The destination already holds files init would replace; `--force` replaces them. |
+| `init-destination` | The destination cannot be inspected, or does not exist. |
+| `init-detect` | `existing` found no test command. Pass `--var test_command=...` once you have run it. |
+| `init-plan` | The template cannot be written to the destination: a path outside it, a reserved file, a reserved variable. |
+| `template-reserved` | The template writes a file the kit reserves, or uses a reserved variable name. |
+| `template-variables` | A variable the template requires is missing or empty. |
+| `spec-argument` | A flag is missing its value, or `show` was given no template name. |
+| `spec-command` | `spec` was given a subcommand it does not have. |
+| `spec-prompt` | The step instruction file is missing from the installed kit - a broken install, not a bad repository. |
+
+`research`, `design` and `decompose` call **exactly one** model each, and
+every way that call can fail is a `2`, never a retry:
+
+| Code | Meaning |
+|---|---|
+| `spec-offline` | `--offline` was given, and the step needs a model. |
+| `spec-prompt-size` | The prompt passed 200 KB. Split the step. |
+| `spec-prompt-budget` | The prompt is larger than the lane's own budget allows. |
+| `spec-agent-timeout` | The call did not answer within `--timeout` (default 900s). |
+| `spec-agent` | The agent exited non-zero; its status and message are in the refusal. |
+| `spec-agent-empty` | The agent answered nothing, so there is nothing to write. |
+| `spec-agent-output` | The answer passed 200 KB. That is a runaway, not a note. |
+| `spec-not-ready` | An earlier readiness key is false, so the order is wrong. |
+| `spec-check` | The charter is missing a locked section, or `## Ready` is empty or unticked. |
+| `spec-design-shape` | The design answer lacks `=== adr ===` or `=== contract ===`, or one is empty. |
+| `spec-decompose` | The plan does not parse, or a task has no runnable `verify`, no `accept`, or a trace tag that does not exist. |
+| `spec-tasks-exists` | `.space/tasks.md` is already there; `--force` replaces it. |
+
+`--print` and `--dry-run` never reach the model: they exit `0` with the prompt
+or the paths a real run would write. `--offline` is the flag for a CI job that
+wants the refusals and none of the spend.
+
+`work --project` reads `.space/track.json` before it reads anything else. A
+missing track, or `plan_ready` that is not `true`, exits `2` - the loop does
+not run a plan that `decompose` has not validated. A positional request
+combined with `--project` is also a `2`: the plan already exists.
+
 ## The measurement gates
 
 `npm run measure:check` runs two measurements and both have to pass.
