@@ -1,0 +1,57 @@
+{
+  "id": "billing",
+  "version": "1.0.0",
+  "description": "Billing: subscriptions, invoices, payments, idempotency, webhook replay, refunds and audit. A charter, requirements, milestones, an ADR, a threat model, a contract and sample tasks.",
+  "variables": {
+    "project_name": {
+      "type": "string",
+      "required": true,
+      "description": "The name used in the charter heading."
+    },
+    "test_command": {
+      "type": "string",
+      "default": "npm test",
+      "description": "The unit and integration test command."
+    },
+    "build_command": {
+      "type": "string",
+      "default": "npm run build",
+      "description": "The build command."
+    },
+    "e2e_command": {
+      "type": "string",
+      "default": "npm run test:e2e",
+      "description": "The end-to-end command."
+    },
+    "migration_command": {
+      "type": "string",
+      "default": "npm run migrate",
+      "description": "The forward migration command."
+    },
+    "rollback_command": {
+      "type": "string",
+      "default": "npm run rollback",
+      "description": "The rollback command; rehearse it before the security gate."
+    }
+  },
+  "writes": ["space"],
+  "files": [
+    { "from": "charter.md", "to": ".space/charter.md" },
+    { "from": "research/questions.md", "to": ".space/research/questions.md" },
+    { "from": "architecture/overview.md", "to": ".space/architecture/overview.md" },
+    { "from": "architecture/adr/0001-idempotent-payments.md", "to": ".space/architecture/adr/0001-idempotent-payments.md" },
+    { "from": "architecture/threat-model.md", "to": ".space/architecture/threat-model.md" },
+    { "from": "contracts/billing-api.md", "to": ".space/contracts/billing-api.md" },
+    { "from": "plan/milestones.md", "to": ".space/plan/milestones.md" },
+    { "from": "plan/tasks.sample.md", "to": ".space/plan/tasks.sample.md" }
+  ],
+  "acceptance": "{{test_command}}",
+  "required_sections": ["Goal", "Scope", "Requirements", "Constraints", "Ready"],
+  "trace_required": true,
+  "post_init": [
+    "Read .space/charter.md and tick every item under ## Ready.",
+    "Run oc-harness spec check, then research, design and decompose.",
+    "Do not put a live payment key in the repository; the tests use a fake provider.",
+    "Rehearse migration and rollback against a scratch database."
+  ]
+}

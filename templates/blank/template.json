@@ -1,0 +1,32 @@
+{
+  "id": "blank",
+  "version": "1.0.0",
+  "description": "A blank track: a charter, research questions, an architecture note and milestones. No domain, no task file.",
+  "variables": {
+    "project_name": {
+      "type": "string",
+      "required": true,
+      "description": "The name used in the charter heading."
+    },
+    "test_command": {
+      "type": "string",
+      "default": "npm test",
+      "description": "The one command that proves the project still works."
+    }
+  },
+  "writes": ["space"],
+  "files": [
+    { "from": "charter.md", "to": ".space/charter.md" },
+    { "from": "research/questions.md", "to": ".space/research/questions.md" },
+    { "from": "architecture/overview.md", "to": ".space/architecture/overview.md" },
+    { "from": "plan/milestones.md", "to": ".space/plan/milestones.md" }
+  ],
+  "acceptance": "{{test_command}}",
+  "required_sections": ["Goal", "Scope", "Constraints", "Ready"],
+  "trace_required": false,
+  "post_init": [
+    "Read .space/charter.md and tick every item under ## Ready.",
+    "Run oc-harness spec check before asking for research.",
+    "Run oc-harness spec decompose to write .space/tasks.md; init does not write one."
+  ]
+}

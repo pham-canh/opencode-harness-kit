@@ -1,0 +1,188 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://opencode-harness-kit.dev/templates/schema.json",
+  "title": "oc-harness template",
+  "description": "A template is data: it declares variables, files to render into .space/ or docs/, acceptance, and required charter sections. It never contains source code or commands that run at init time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "version",
+    "variables",
+    "writes",
+    "files",
+    "acceptance",
+    "required_sections",
+    "trace_required"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "maxLength": 64
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "variables": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/definitions/variable"
+      }
+    },
+    "writes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["space", "docs"]
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/file"
+      }
+    },
+    "acceptance": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "required_sections": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "pattern": "^[^\\r\\n]+$"
+      }
+    },
+    "trace_required": {
+      "type": "boolean"
+    },
+    "post_init": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    }
+  },
+  "definitions": {
+    "variable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "enum": ["string", "boolean", "enum"]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "default": {},
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "anyOf": [
+            { "required": ["default"] },
+            { "properties": { "required": { "const": true } }, "required": ["required"] }
+          ]
+        },
+        {
+          "not": {
+            "required": ["default", "required"],
+            "properties": { "required": { "const": true } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "enum" } },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["values"]
+          },
+          "else": {
+            "not": {
+              "required": ["values"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "string" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": { "default": { "type": "string" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "boolean" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": { "default": { "type": "boolean" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "enum" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": { "default": { "type": "string" } }
+          }
+        }
+      ]
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*\\.\\.(?:/|$))(?!.*\\\\).+$"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?:\\.space|docs)/(?!.*\\.\\.(?:/|$)).+$"
+        },
+        "optional": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

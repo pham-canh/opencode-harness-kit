@@ -1,0 +1,20 @@
+{
+  "id": "demo",
+  "version": "1.0.0",
+  "description": "A template used by the resolver and renderer tests.",
+  "variables": {
+    "project_name": { "type": "string", "required": true },
+    "test_command": { "type": "string", "default": "npm test" },
+    "strict": { "type": "boolean", "default": false },
+    "mode": { "type": "enum", "values": ["fast", "full"], "default": "fast" }
+  },
+  "writes": ["space"],
+  "files": [
+    { "from": "charter.md", "to": ".space/charter.md" },
+    { "from": "notes.md", "to": ".space/notes.md" }
+  ],
+  "acceptance": "{{test_command}}",
+  "required_sections": ["Goals"],
+  "trace_required": false,
+  "post_init": ["Run spec check for {{project_name}}."]
+}

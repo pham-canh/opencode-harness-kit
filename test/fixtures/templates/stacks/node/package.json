@@ -1,0 +1,13 @@
+{
+  "name": "fixture-node",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "build": "node build.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "node e2e.mjs",
+    "migrate": "node migrate.mjs",
+    "rollback": "node rollback.mjs"
+  }
+}

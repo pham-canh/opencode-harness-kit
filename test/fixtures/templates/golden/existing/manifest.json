@@ -1,0 +1,21 @@
+{
+  "id": "existing",
+  "version": "1.0.0",
+  "vars": {
+    "project_name": "Golden Existing",
+    "test_command": "node --test",
+    "build_command": "",
+    "lint_command": "",
+    "typecheck_command": "",
+    "e2e_command": "",
+    "migration_command": "",
+    "rollback_command": "",
+    "detected_stack": ""
+  },
+  "acceptance": "node --test",
+  "post_init": [
+    "Init did not change any source file.",
+    "Read .space/charter.md and tick every item under ## Ready.",
+    "Run the detected test command once before the first task, so the baseline is known."
+  ]
+}

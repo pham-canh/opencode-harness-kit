@@ -1,0 +1,67 @@
+{
+  "id": "existing",
+  "version": "1.0.0",
+  "description": "An existing repository: detect the stack and the commands that prove it, then write a charter and plan around the code that is already there. Init does not modify source.",
+  "variables": {
+    "project_name": {
+      "type": "string",
+      "required": true,
+      "description": "The name used in the charter heading."
+    },
+    "test_command": {
+      "type": "string",
+      "required": true,
+      "description": "The one command that proves the existing project still works."
+    },
+    "build_command": {
+      "type": "string",
+      "default": "",
+      "description": "Detected build command, empty when none was found."
+    },
+    "lint_command": {
+      "type": "string",
+      "default": "",
+      "description": "Detected lint command, empty when none was found."
+    },
+    "typecheck_command": {
+      "type": "string",
+      "default": "",
+      "description": "Detected typecheck command, empty when none was found."
+    },
+    "e2e_command": {
+      "type": "string",
+      "default": "",
+      "description": "Detected end-to-end command, empty when none was found."
+    },
+    "migration_command": {
+      "type": "string",
+      "default": "",
+      "description": "Detected migration command, empty when none was found."
+    },
+    "rollback_command": {
+      "type": "string",
+      "default": "",
+      "description": "Detected rollback command, empty when none was found."
+    },
+    "detected_stack": {
+      "type": "string",
+      "default": "",
+      "description": "The primary stack the detector found."
+    }
+  },
+  "writes": ["space"],
+  "files": [
+    { "from": "charter.md", "to": ".space/charter.md" },
+    { "from": "research/questions.md", "to": ".space/research/questions.md" },
+    { "from": "architecture/overview.md", "to": ".space/architecture/overview.md" },
+    { "from": "plan/milestones.md", "to": ".space/plan/milestones.md" }
+  ],
+  "acceptance": "{{test_command}}",
+  "required_sections": ["Goal", "Scope", "Constraints", "Ready"],
+  "trace_required": false,
+  "post_init": [
+    "Init did not change any source file.",
+    "Read .space/charter.md and tick every item under ## Ready.",
+    "Run the detected test command once before the first task, so the baseline is known."
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "blank",
+  "version": "1.0.0",
+  "vars": {
+    "project_name": "Golden",
+    "test_command": "node --test"
+  },
+  "acceptance": "node --test",
+  "post_init": [
+    "Read .space/charter.md and tick every item under ## Ready.",
+    "Run oc-harness spec check before asking for research.",
+    "Run oc-harness spec decompose to write .space/tasks.md; init does not write one."
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "minimal",
+  "version": "1.0.0",
+  "description": "The smallest valid template.",
+  "variables": {},
+  "writes": ["space"],
+  "files": [
+    { "from": "charter.md", "to": ".space/charter.md" }
+  ],
+  "acceptance": "node --test",
+  "required_sections": [],
+  "trace_required": false
+}

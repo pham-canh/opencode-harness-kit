@@ -1,0 +1,19 @@
+{
+  "id": "billing",
+  "version": "1.0.0",
+  "vars": {
+    "project_name": "Golden Billing",
+    "test_command": "npm test",
+    "build_command": "npm run build",
+    "e2e_command": "npm run test:e2e",
+    "migration_command": "npm run migrate",
+    "rollback_command": "npm run rollback"
+  },
+  "acceptance": "npm test",
+  "post_init": [
+    "Read .space/charter.md and tick every item under ## Ready.",
+    "Run oc-harness spec check, then research, design and decompose.",
+    "Do not put a live payment key in the repository; the tests use a fake provider.",
+    "Rehearse migration and rollback against a scratch database."
+  ]
+}
