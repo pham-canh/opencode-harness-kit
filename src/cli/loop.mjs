@@ -222,12 +222,29 @@ async function cmdWork() {
     return
   }
   const request = positionalRequest()
+  const project = flag("--project")
   const planOnly = flag("--plan-only")
   const dryRun = flag("--dry-run")
   const { workRequest, strictProblem } = await import("../driver/work.mjs")
   const { isGitRepo } = await import("../driver/git.mjs")
   const finalVerify = opt("--final-verify") ?? null
-  const strict = flag("--no-strict") ? false : true
+  // `--project` runs the plan `spec decompose` wrote. It never plans, so the
+  // strict planning contract does not apply, and a request is a contradiction:
+  // the whole point is that the plan already exists.
+  if (project) {
+    if (request) {
+      fail("--project runs the existing .space/tasks.md; drop the request, or run work without --project to replan", wantJson, 2)
+    }
+    const { readTrack, TRACK_FILE } = await import("../driver/track.mjs")
+    const track = readTrack(process.cwd())
+    if (!track) {
+      fail(`no ${TRACK_FILE}; run oc-harness spec init and spec decompose first`, wantJson, 2)
+    }
+    if (track.readiness?.plan_ready !== true) {
+      fail("the plan is not ready: spec decompose has not passed, so .space/tasks.md is not trusted", wantJson, 2)
+    }
+  }
+  const strict = project ? false : flag("--no-strict") ? false : true
   const loopOptions = loopFlags()
 
   // The strict contract is a refusal about the command, not about the
@@ -264,7 +281,7 @@ async function cmdWork() {
   const common = {
     cwd: process.cwd(),
     request,
-    force: flag("--force") || flag("--replan"),
+    force: project ? false : flag("--force") || flag("--replan"),
     strict,
     planOnly,
     dryRun,

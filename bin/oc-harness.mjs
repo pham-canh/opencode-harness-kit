@@ -8,6 +8,7 @@
 //   oc-harness show <id>           show the resolved effort plan
 //   oc-harness doctor              re-check profiles against live metadata
 //   oc-harness baseline            measure the current install
+//   oc-harness spec <command>      templates, track readiness and the plan loop
 //
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
@@ -3731,6 +3732,11 @@ try {
     case "work":
       await loopCommands.work()
       break
+    case "spec": {
+      const { cmdSpec } = await import("../src/cli/spec.mjs")
+      process.exitCode = await cmdSpec(args)
+      break
+    }
     case "goal":
       await loopCommands.goal()
       break
@@ -3792,7 +3798,11 @@ try {
     run       build and verify .space/tasks.md one task at a time
     plan <request>  turn a request into .space/tasks.md, refusing a plan the
               loop cannot run
+    spec <sub>    the steps before the loop, from a template: init, check,
+              research, design, decompose, and validate/list/show/diff/upgrade
     work <request>  plan when needed, then build/verify/review/finish
+    work --project  run the .space/tasks.md that spec decompose validated,
+              without planning; refuses unless plan_ready is true
     resume    continue the run in .space/run.json after a stop or crash
     status    what the last run did, from .space/run.json
     report    the last run as numbers: phases, tokens, verifies, failures
