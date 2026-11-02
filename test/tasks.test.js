@@ -235,3 +235,19 @@ test("an empty task file parses to nothing rather than throwing", () => {
   assert.deepEqual(parsed.tasks, [])
   assert.equal(nextPending(parsed), null)
 })
+test("an explicitly empty output clears the previous one", () => {
+  const doc = `# g
+
+## Tasks
+- [ ] task one
+  - files: a.js
+  - verify: npm test
+  - output: old failure text
+    still old
+`
+  const out = markTask(doc, parseTasks(doc).tasks[0], { status: "done", verifyOutput: "" })
+  const after = parseTasks(out)
+  assert.equal(after.tasks[0].status, "done")
+  assert.equal(after.tasks[0].output, "", `the stale output survived:\n${out}`)
+  assert.doesNotMatch(out, /old failure text/)
+})

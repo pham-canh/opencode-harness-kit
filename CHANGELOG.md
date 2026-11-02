@@ -56,6 +56,32 @@ blind.
 
 ### Fixed
 
+- **`spec research` and `spec design` spent a model call on flags they ignored.**
+  `--milestone` is only meaningful to `decompose` and `--question` only to
+  `research`; both are now refused as argument errors before any model call.
+- **A failed planner spawn was reported as a timeout.** `runSpecStep` treated
+  any null status with an error string as a timeout, so `ENOENT` and a bad
+  command produced the wrong diagnosis. A spawn failure is now a `spec-agent`
+  failure; only a signal or an actual timeout error is a timeout.
+- **A planner could persist a credential in `.space/tasks.md`.** The plan was
+  validated, then written with a hand-rolled temp-file rename that never passed
+  through `redact` or refused a symlink. It now uses `writeTextAtomic`, the same
+  path as the other `.space/` writes.
+- **`oc-harness report` lost when a run finished and invented its minutes.** The
+  `run@2` record stores `endedAt` and `seconds`, but the report read the v1
+  `finishedAt` alias and a nonexistent `budget.spentMinutes`; the JSON now
+  exposes `finishedAt` with the `endedAt` fallback and `seconds`, and the text
+  derives minutes from `seconds`.
+- **A compound verify could hide an unfailable segment.** With
+  `--allow-compound-verify`, `npm test || true` and `npm test; echo ok` were
+  accepted even though neither can fail. Vacuous segments are now rejected
+  before the compound escape hatch is considered; real chains such as
+  `npm test && npm run lint` still pass.
+- **Clearing a task's verify output did not clear it.** `markTask` treated an
+  explicit empty string as "leave the previous output alone"; `""` now removes
+  the stale block, while an omitted value still preserves it.
+- **`autopilot` derived the project name by splitting on `/`.** That returns a
+  drive letter on Windows; it now uses `path.basename`.
 - **`spec decompose` erased the milestone it was not asked about.** A plain
   decompose wrote `milestone: null` over the track's recorded milestone; it
   now preserves it. The `--milestone` path validates the selected gate with

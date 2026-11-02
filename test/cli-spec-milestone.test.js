@@ -153,3 +153,17 @@ test("plain decompose preserves the recorded milestone", () => {
   assert.equal(second.status, 0, second.stderr)
   assert.equal(readTrack(dir).milestone, "M1")
 })
+
+test("--milestone is refused outside decompose", () => {
+  const dir = plannedProject()
+  const result = runBin(["spec", "research", "--milestone", "M1", "--json"], dir, EXEC_ENV)
+  assert.equal(result.status, 2, result.stderr)
+  assert.match(result.stderr, /only valid for spec decompose/)
+})
+
+test("--question is refused outside research", () => {
+  const dir = plannedProject()
+  const result = runBin(["spec", "design", "--question", "why", "--json"], dir, EXEC_ENV)
+  assert.equal(result.status, 2, result.stderr)
+  assert.match(result.stderr, /only valid for spec research/)
+})

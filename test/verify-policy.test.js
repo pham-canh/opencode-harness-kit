@@ -50,7 +50,9 @@ test("a compound command is rejected unless the caller accepts it", () => {
   assert.match(inspectVerify(command).reason, /--allow-compound-verify/)
   assert.equal(inspectVerify(command, { allowCompound: true }).ok, true)
   assert.equal(inspectVerify("npm test | tail -20").code, "compound")
-  assert.equal(inspectVerify("npm test; echo done").code, "compound")
+  assert.equal(inspectVerify("npm test; npm run lint").code, "compound")
+  // `echo done` after `;` cannot fail, so it is vacuous even before compound.
+  assert.equal(inspectVerify("npm test; echo done", { allowCompound: true }).code, "vacuous")
   assert.equal(inspectVerify("echo $(cat version)").code, "compound")
 })
 
@@ -86,4 +88,15 @@ test("work refuses before planning or building when a verify command has an outs
   assert.equal(result.phase, "preflight")
   assert.match(result.reason, /verify policy rejected/)
   assert.equal(built, 0)
+})
+
+test("allow-compound does not accept a gate that cannot fail", () => {
+  for (const command of ["npm test || true", "npm test; echo ok", "true || npm test", "exit 0; npm test", ": && echo ok"]) {
+    const verdict = inspectVerify(command, { allowCompound: true })
+    assert.equal(verdict.code, "vacuous", command)
+  }
+  assert.equal(inspectVerify("npm test && echo ok", { allowCompound: true }).ok, true)
+  assert.equal(inspectVerify("echo ok; npm test", { allowCompound: true }).ok, true)
+  // `exit 0` after `&&` only runs on success, so it is redundant, not vacuous.
+  assert.equal(inspectVerify("npm test && exit 0", { allowCompound: true }).ok, true)
 })

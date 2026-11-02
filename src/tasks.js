@@ -268,7 +268,10 @@ export function markTask(text, task, { status, verifyOutput }) {
   // it, so those leftovers were folded into the status - and the status read
   // back as "done old line 2 old line 3" instead of "done". The task was not
   // done; it was done with a story attached.
-  if (verifyOutput) {
+  // `undefined` means "leave the recorded output alone"; `""` means the
+  // command produced nothing and the old output is now stale. Conflating the
+  // two left a previous failure's text under a task that had just passed.
+  if (verifyOutput !== undefined) {
     const previous = outputBlock(lines, range)
     if (previous) {
       const removed = previous.end - previous.start + 1

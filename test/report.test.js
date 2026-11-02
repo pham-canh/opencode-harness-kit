@@ -29,6 +29,8 @@ test("buildReport aggregates the run, its events and its evidence", async () => 
   run.status = "done"
   run.terminal = "done"
   run.reason = "all tasks passed"
+  run.endedAt = "2026-01-02T03:04:05.000Z"
+  run.seconds = 125
   writeRun(dir, run)
 
   appendEvent(dir, { runId: "run-report", event: "phase", phase: "build", route: "m1", tokens: 100, ms: 40 })
@@ -45,6 +47,8 @@ test("buildReport aggregates the run, its events and its evidence", async () => 
   const report = await buildReport(dir)
   assert.equal(report.run.id, "run-report")
   assert.equal(report.budget.spentTokens, 120)
+  assert.equal(report.run.finishedAt, "2026-01-02T03:04:05.000Z", "a v2 record ends at endedAt")
+  assert.equal(report.run.seconds, 125)
   assert.equal(report.tasks.done, 1)
   assert.equal(report.verifies.count, 2)
   assert.equal(report.verifies.failures, 1)
@@ -67,6 +71,7 @@ test("cmdReport prints a text summary and returns 0 for a run", async () => {
   run.status = "done"
   run.phase = "finish"
   run.reason = "all tasks passed"
+  run.seconds = 125
   writeRun(dir, run)
 
   const lines = []
@@ -79,6 +84,7 @@ test("cmdReport prints a text summary and returns 0 for a run", async () => {
   }
   assert.match(lines.join("\n"), /run run-text\s+finish -> done/)
   assert.match(lines.join("\n"), /all tasks passed/)
+  assert.match(lines.join("\n"), /minutes 2/)
   rmSync(dir, { recursive: true, force: true })
 })
 

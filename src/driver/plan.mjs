@@ -7,11 +7,12 @@
 // parser reads. A plan that fails those checks is returned as text, not saved -
 // overwriting a good plan with a bad one is the failure mode this prevents.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 
 import { parseTasks, validatePlan } from "../tasks.js"
 import { agentText, invokeAgent } from "./run.mjs"
+import { writeTextAtomic } from "./track.mjs"
 
 export const TASKS_PATH = ".space/tasks.md"
 
@@ -116,9 +117,10 @@ export function planRequest(options) {
   if (options.print) return { ok: true, path: null, text, tasks: parsed.tasks.length }
 
   try {
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(`${path}.tmp`, text.endsWith("\n") ? text : `${text}\n`)
-    renameSync(`${path}.tmp`, path)
+    // `tasks.md` is a `.space/` file like any other: it must be written
+    // atomically, redacted, and must refuse a symlink. The old manual write
+    // skipped the redaction and could persist a token the planner echoed back.
+    writeTextAtomic(cwd, TASKS_PATH, text.endsWith("\n") ? text : `${text}\n`)
   } catch (err) {
     return { ok: false, code: 2, reason: `cannot write ${path}: ${err instanceof Error ? err.message : String(err)}` }
   }

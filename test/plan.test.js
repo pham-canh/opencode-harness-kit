@@ -37,6 +37,17 @@ test("a valid plan is written and parses back", () => {
   assert.equal(parsed.tasks[0].verify, "node --test test/a.test.js")
 })
 
+test("a plan echoed back with a credential is written redacted", () => {
+  const dir = scratch()
+  const secret = `ghp_${"a".repeat(36)}`
+  const leaky = good.replace("# Ship the thing", `# Ship ${secret}`)
+  const r = planRequest({ cwd: dir, request: "ship it", runAgent: () => ({ ok: true, output: leaky }) })
+  assert.equal(r.ok, true)
+  const text = readFileSync(join(dir, ".space", "tasks.md"), "utf8")
+  assert.equal(text.includes(secret), false, "the token must not reach tasks.md")
+  assert.match(text, /\[redacted\]/)
+})
+
 test("an invalid plan is never written over a good one", () => {
   const dir = scratch()
   const target = join(dir, ".space", "tasks.md")

@@ -168,3 +168,22 @@ test("the opencode adapter reads the event stream, the exec adapter reads stdout
   })
   assert.match(viaExec.text, /"type":"text"/, "an exec answer is taken literally, event stream or not")
 })
+
+test("a spawn failure is reported as a failure, not as a timeout", () => {
+  assert.throws(
+    () =>
+      runSpecStep({
+        role: "research",
+        prompt: "hi",
+        cwd,
+        runAgent: () => ({ ok: false, status: null, signal: null, error: "spawn missing-agent ENOENT", stdout: "", stderr: "" }),
+      }),
+    (err) => {
+      assert.ok(err instanceof TrackError)
+      assert.equal(err.code, "spec-agent")
+      assert.match(err.message, /spawn missing-agent ENOENT/)
+      assert.doesNotMatch(err.message, /did not answer within/)
+      return true
+    },
+  )
+})

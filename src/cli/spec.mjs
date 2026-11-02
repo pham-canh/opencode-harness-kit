@@ -759,6 +759,16 @@ function parseStepArgs(args, command) {
       ])
     }
   }
+  if (opts.milestone !== null && command !== "decompose") {
+    throw new TemplateError("spec-argument", "--milestone is only valid for spec decompose", [
+      { path: "--milestone", fix: "drop the flag, or run oc-harness spec decompose --milestone <id>" },
+    ])
+  }
+  if (opts.question !== null && command !== "research") {
+    throw new TemplateError("spec-argument", "--question is only valid for spec research", [
+      { path: "--question", fix: "drop the flag, or run oc-harness spec research --question <text>" },
+    ])
+  }
   return opts
 }
 

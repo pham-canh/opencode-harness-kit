@@ -30,6 +30,53 @@ const DANGEROUS = [
   { pattern: /\bchmod\s+0?777\b/, why: "chmod 777 widens permissions the run was not given" },
 ]
 
+/** A single segment that always succeeds and proves nothing.
+ * @param {unknown} segment
+ * @returns {boolean}
+ */
+function isVacuousSegment(segment) {
+  const normalized = String(segment ?? "")
+    .trim()
+    .replace(/^\((.*)\)$/, "$1")
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+  return VACUOUS.has(normalized)
+}
+
+/**
+ * Whether a compound command hides a vacuous segment where it guarantees the
+ * whole line exits 0.
+ *
+ * `allowCompound` is an escape hatch for real chains (`npm test && npm run
+ * lint`), not for making the gate unfailable. `npm test || true` and
+ * `npm test; echo ok` still prove nothing, and a milestone that advances on
+ * them would be advancing on a lie.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+function hasVacuousCompound(text) {
+  const parts = text.split(/(\|\||&&|;)/)
+  const segments = parts.filter((_, i) => i % 2 === 0).map((part) => part.trim())
+  const operators = parts.filter((_, i) => i % 2 === 1)
+  // A chain of only vacuous commands cannot become meaningful by joining it.
+  if (segments.filter(Boolean).length > 1 && segments.filter(Boolean).every(isVacuousSegment)) return true
+  for (let i = 0; i < segments.length; i += 1) {
+    if (!isVacuousSegment(segments[i])) continue
+    const previous = i > 0 ? operators[i - 1] : null
+    const next = i < operators.length ? operators[i] : null
+    // `exit 0` ends the shell. Anything to its right never runs, and a
+    // trailing `exit 0` after `;` or `||` always turns the line green. A
+    // trailing `exit 0` after `&&` only runs when the command before it
+    // succeeded, so it does not make the gate unfailable.
+    if (segments[i].trim().replace(/\s+/g, " ").toLowerCase() === "exit 0") {
+      if (next !== null || previous === ";" || previous === "||") return true
+    }
+    if (previous === ";" || previous === "||" || next === "||") return true
+  }
+  return false
+}
+
 const COMPOUND = [
   { pattern: /(^|[^&])&&([^&]|$)/, why: "&& chains a second command" },
   { pattern: /\|\|/, why: "|| hides a failure behind a fallback" },
@@ -51,8 +98,11 @@ export function inspectVerify(command, { allowCompound = false } = {}) {
   if (!text) return { ok: false, code: "empty", reason: "the verify command is empty" }
 
   const normalized = text.replace(/\s+/g, " ")
-  if (VACUOUS.has(normalized.toLowerCase())) {
+  if (isVacuousSegment(normalized)) {
     return { ok: false, code: "vacuous", reason: `"${normalized}" always exits 0 and proves nothing` }
+  }
+  if (hasVacuousCompound(text)) {
+    return { ok: false, code: "vacuous", reason: "a compound command hides a segment that always exits 0" }
   }
 
   for (const { pattern, why } of DANGEROUS) {

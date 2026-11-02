@@ -8,7 +8,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { createInterface } from "node:readline/promises"
 
 import { parseTasks, summarize } from "../tasks.js"
@@ -452,7 +452,7 @@ async function cmdAutopilot() {
       process.exitCode = 2
       return
     }
-    const r = runStep(["spec", "init", "--template", "blank", "--var", `project_name=${process.cwd().split("/").pop()}`, "--var", "test_command=npm test"])
+    const r = runStep(["spec", "init", "--template", "blank", "--var", `project_name=${basename(process.cwd()) || "project"}`, "--var", "test_command=npm test"])
     if (r.status !== 0) { process.exitCode = r.status ?? 1; return }
   }
 

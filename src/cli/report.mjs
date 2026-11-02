@@ -54,7 +54,11 @@ export async function buildReport(cwd) {
           terminal: run.terminal,
           reason: run.reason,
           startedAt: run.startedAt,
-          finishedAt: run.finishedAt,
+          // v2 writes `endedAt`; `finishedAt` is the v1 alias. Reading only
+          // the alias made every v2 report drop the time the run actually
+          // stopped, even though the record held it.
+          finishedAt: run.finishedAt ?? run.endedAt ?? null,
+          seconds: run.seconds ?? 0,
           resumeCount: run.resumeCount ?? 0,
           rounds: run.rounds ?? 0,
         }
@@ -95,6 +99,7 @@ export async function cmdReport(argv = [], opts = {}) {
   }
 
   const run = report.run
+  const spentMinutes = Math.round((run.seconds ?? 0) / 60)
   console.log(`\n  run ${run.id}  ${run.phase ?? run.status}${run.terminal ? ` -> ${run.terminal}` : ""}`)
   console.log(`  ${run.reason ?? "(no reason recorded)"}`)
   console.log(`  started ${run.startedAt ?? "?"}  resumed ${run.resumeCount}x  rounds ${run.rounds}`)
@@ -102,7 +107,7 @@ export async function cmdReport(argv = [], opts = {}) {
     const b = report.budget
     console.log(
       `  tokens ${b.spentTokens ?? 0}${b.maxTokens ? `/${b.maxTokens}` : ""}` +
-        `  cache ${b.spentCacheTokens ?? 0}  minutes ${b.spentMinutes ?? 0}${b.maxMinutes ? `/${b.maxMinutes}` : ""}`,
+        `  cache ${b.spentCacheTokens ?? 0}  minutes ${spentMinutes}${b.maxMinutes ? `/${b.maxMinutes}` : ""}`,
     )
   }
   if (report.tasks.length) {

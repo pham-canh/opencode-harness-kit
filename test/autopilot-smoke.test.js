@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 
 import { readTrack } from "../src/driver/track.mjs"
 import { runBin } from "./spec-helpers.mjs"
@@ -24,6 +24,7 @@ test("autopilot --dry-run drives init through work preflight", () => {
   )
   assert.equal(result.status, 0, result.stderr || result.stdout)
   assert.equal(readTrack(dir).readiness.plan_ready, true)
+  assert.equal(readTrack(dir).vars.project_name, basename(dir))
 })
 
 test("autopilot refuses to overwrite an existing .space without a track", () => {

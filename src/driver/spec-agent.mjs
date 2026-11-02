@@ -110,10 +110,12 @@ export function runSpecStep(options) {
     command: options.command ?? null,
   })
 
+  // A null status is also what a failed spawn returns (`ENOENT`, a bad
+  // command). Only a terminating signal or a timeout error is evidence that
+  // the agent was slow; an error string on its own is a failure to start.
   const timedOut =
     agent?.signal === "SIGTERM" ||
-    /ETIMEDOUT|timed? ?out/i.test(String(agent?.error ?? "")) ||
-    agent?.status === null && Boolean(agent?.error)
+    /ETIMEDOUT|timed? ?out/i.test(String(agent?.error ?? ""))
   if (!agent?.ok) {
     const detail = agent?.error || agent?.output || "no output"
     throw new TrackError(
