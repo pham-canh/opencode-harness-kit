@@ -54,6 +54,7 @@ export const SPEC_USAGE = `oc-harness spec <command>
   --offline            refuse a model step instead of calling one
   --timeout <seconds>  how long one model call may take (default: 900)
   --role <name>        the lane the model call uses (default: the step's own)
+  --milestone <id>     decompose tasks for one milestone only (decompose only)
   --adapter <name>     opencode (default) or exec
   --agent-command <c>  the command the exec adapter runs
   --json               print the machine-readable form only
@@ -687,6 +688,7 @@ function parseStepArgs(args, command) {
     role: null,
     adapter: "opencode",
     command: null,
+    milestone: null,
     help: false,
   }
   /** @param {string} value @param {string} flag @returns {string} */
@@ -729,7 +731,9 @@ function parseStepArgs(args, command) {
         throw new TemplateError("spec-argument", `unknown adapter "${name}"`, [{ path: "--adapter", fix: "use opencode or exec" }])
       }
       opts.adapter = name
-    } else if (arg === "--timeout") {
+    } else if (arg === "--milestone") opts.milestone = need(value(), "--milestone")
+    else if (arg.startsWith("--milestone=")) opts.milestone = need(arg.slice("--milestone=".length), "--milestone")
+    else if (arg === "--timeout") {
       const text = need(value(), "--timeout")
       const seconds = Number(text)
       if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -816,7 +820,7 @@ function commandStep(step, args, where, flags) {
     force: opts.force,
   }
   const run = step === "research" ? specResearch : step === "design" ? specDesign : specDecompose
-  const result = run({ ...common, question: opts.question })
+  const result = run({ ...common, question: opts.question, milestone: step === "decompose" ? opts.milestone : undefined })
 
   if (opts.print) {
     process.stdout.write(result.prompt.endsWith("\n") ? result.prompt : `${result.prompt}\n`)
@@ -834,6 +838,7 @@ function commandStep(step, args, where, flags) {
           wrote: result.wrote ?? null,
           would_write: result.would_write,
           ...(result.tasks === undefined ? {} : { tasks: result.tasks }),
+          ...(result.milestone === undefined ? {} : { milestone: result.milestone }),
           readiness: result.readiness,
         },
         null,

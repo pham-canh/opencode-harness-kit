@@ -541,6 +541,6 @@ export async function logPrune(
   }
 }
 
-export const pruneMeta = { note: "opt-in via profile prune.enabled" }
+
 
 export default PrunePlugin

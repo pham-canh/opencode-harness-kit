@@ -30,3 +30,9 @@ REQ must be one that appears in the charter. Do not invent a requirement number.
 ## Report
 
 The markdown file only. No preamble, no explanation before the first `# ` line.
+
+## Milestone mode
+
+If the prompt includes a `## This milestone` section, write tasks for that
+milestone only. The gate named there is the command that must pass before the
+next milestone may be decomposed; every task's `verify:` should support it.

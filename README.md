@@ -626,6 +626,7 @@ oc-harness install    symlink the plugin, prompts, skills and GLOBAL.md into the
 oc-harness link       just the plugin, no prompts or skills
 oc-harness verify     check the install against the profile; non-zero on drift
 oc-harness agents     report agents the effort tiering does not reach
+oc-harness finish     task completion gate, final verify, install check, publish boundary
 oc-harness lanes      report which lanes the fleet actually used
 oc-harness lanes --json   the same report, for a script
 oc-harness trust      set up npm trusted publishing for this package
@@ -652,15 +653,24 @@ oc-harness health     routes recorded as spent; --probe asks every route once
 oc-harness mcp        read-only MCP server over stdio for editors
 oc-harness plan "<request>"  turn a request into .space/tasks.md, and refuse a plan the loop cannot run
 oc-harness work "<request>"  plan when needed, then build, verify, review and finish
+oc-harness autopilot "<goal>"  from an empty project: init, research, design, decompose, then work
 ```
 
 `oc-harness mcp` answers `harness_status`, `harness_report`, `harness_evidence`,
 `harness_events`, `harness_health` and `harness_tasks` over stdio. Every tool is
 a read: the plan, the run record and the evidence, never resume or work.
 
-`work` is strict by default: it wants `--review`, `--final-verify`,
-`--final-review`, `--worktree` and `--commit` (and a git repository). For a
-quick local run on a dirty tree, pass `--no-strict`.
+`autopilot` is the same sequence from an empty directory: it initialises a
+blank track, ticks the charter, runs research/design/decompose, then calls
+`work --project`. It refuses to overwrite an existing `.space` that has no
+`track.json`; move that aside or run `spec init` yourself. `--dry-run` still
+runs the model-backed spec steps and only makes the final `work` step a
+preflight.
+
+`work` is strict by default: it wants `--review`, `--final-verify` (or the
+track acceptance / `npm test` fallback), `--final-review`, `--worktree` and
+`--commit` (and a git repository). For a quick local run on a dirty tree, pass
+`--no-strict`.
 
 Two flags change where the work happens rather than what it does:
 `--sandbox container` runs verify commands in a Docker container with the
@@ -1277,8 +1287,10 @@ whole suite, not one task's slice. `--verify-repeats <n>` runs every task
 verify, and the final verify, up to `n` times and stops at the first failure;
 each execution gets its own evidence entry with `repeat` and `repeats`, so a
 flaky second run is visible instead of averaged away. The default is 1.
-`--final-review` reviews the whole diff from the commit the run started at, not
-just the last task. `--json` prints one
+When `--final-verify` is absent, `work` and `resume` use the track's
+`acceptance` command, or the project's `test` script when there is no track.
+`--no-final-gate` opts out of that fallback. `--final-review` reviews the whole
+diff from the commit the run started at, not just the last task. `--json` prints one
 machine-readable report on stdout and sends human progress to stderr;
 `oc-harness status` answers "what did the last run do" from the record.
 

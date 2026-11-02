@@ -84,6 +84,9 @@ export function validateTrack(track) {
   if (typeof track.trace_required !== "boolean") {
     problems.push({ path: "trace_required", message: "trace_required must be true or false", fix: "restore the track or run spec init --force" })
   }
+  if (track.milestone !== undefined && track.milestone !== null && typeof track.milestone !== "string") {
+    problems.push({ path: "milestone", message: "milestone must be a string or null", fix: "restore the track or run spec init --force" })
+  }
   if (!track.readiness || typeof track.readiness !== "object") {
     problems.push({ path: "readiness", message: "readiness is required", fix: "restore the track or run spec init --force" })
   } else {

@@ -2,6 +2,8 @@
 
 ## M1 - Subscription, invoice and one payment
 
+- gate: {{test_command}}
+
 REQ-001, REQ-002, REQ-003.
 
 - A subscription has a state machine and a transition log.
@@ -9,6 +11,8 @@ REQ-001, REQ-002, REQ-003.
 - A payment attempt has an idempotency key and a stored result.
 
 ## M2 - Webhooks, refunds and proration
+
+- gate: {{test_command}}
 
 REQ-004, REQ-005, REQ-006.
 

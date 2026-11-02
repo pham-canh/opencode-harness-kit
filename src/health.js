@@ -208,9 +208,11 @@ export function writeHealth(dir, health) {
       try { unlinkSync(tmp) } catch {}
       throw err
     }
-  } catch {
+  } catch (err) {
     // Best effort. A health file that cannot be written means no failover,
-    // and failing to write it must not break the session.
+    // and failing to write it must not break the session. Surface the failure
+    // so a broken disk does not look like a healthy fleet.
+    console.error("[harness] health write failed:", err instanceof Error ? err.message : String(err))
   }
 }
 

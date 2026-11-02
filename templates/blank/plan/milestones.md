@@ -2,10 +2,14 @@
 
 ## M1 - Prove the premise
 
+- gate: {{test_command}}
+
 The smallest change that makes one failing check pass. Stop when the check
 passes and the rest of the system is untouched.
 
 ## M2 - Make it usable
+
+- gate: {{test_command}}
 
 The feature works end to end for one real case, with its own test.
 

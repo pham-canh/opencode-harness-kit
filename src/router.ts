@@ -370,8 +370,10 @@ export const RouterPlugin: Plugin = async ({ worktree, directory }) => {
             else agent.variant = next
           }
         }
-      } catch {
-        // Startup must not fail because of the router.
+      } catch (err) {
+        // Startup must not fail because of the router, but a silent failure
+        // hides a broken profile. Log it once so it is visible.
+        console.error("[harness] router config hook failed:", err instanceof Error ? err.message : String(err))
       }
     },
 

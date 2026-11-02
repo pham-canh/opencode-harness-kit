@@ -116,6 +116,31 @@ export function readJson(dir, relative) {
  * @param {string} [template]
  * @returns {string}
  */
+
+export function gatedMilestones() {
+  return [
+    "## M1 - Foundation",
+    "- gate: npm test",
+    "",
+    "## M2 - Reporting",
+    "",
+    "## M3 - End to end",
+    "- gate: npm run test:e2e",
+  ].join("\n")
+}
+
+export function milestoneProject() {
+  const dir = plannedProject()
+  writeFileSync(join(dir, ".space", "plan", "milestones.md"), gatedMilestones())
+  const result = runBin(
+    ["spec", "decompose", "--milestone", "M1", "--force", "--json", "--adapter", "exec", "--agent-command", fakeCommand("decompose")],
+    dir,
+    EXEC_ENV,
+  )
+  if (result.status !== 0) throw new Error(`spec decompose --milestone failed: ${result.stderr}`)
+  return dir
+}
+
 export function plannedProject(template = "inventory") {
   const dir = initProject(template)
   tickReady(dir)

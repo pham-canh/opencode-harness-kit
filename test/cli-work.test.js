@@ -18,6 +18,8 @@ function gitEnv() {
 }
 import { fileURLToPath } from "node:url"
 
+import { writeTrack } from "../src/driver/track.mjs"
+
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
 const PLAN = `# Answer the question
@@ -186,4 +188,28 @@ test("status reads the run record and prints it as JSON", () => {
   const report = JSON.parse(r.stdout)
   assert.equal(report.ok, true)
   assert.equal(report.run.status, "done")
+})
+
+test("strict accepts the track acceptance command as its final verify", () => {
+  const bin = fakeOpencode()
+  const { dir, env } = repo(bin)
+  mkdirSync(join(dir, ".space"), { recursive: true })
+  writeTrack(dir, {
+    schema_version: 1,
+    template: { id: "blank", version: "1.0.0" },
+    vars: {},
+    acceptance: `node -e "process.exit(0)"`,
+    required_sections: [],
+    trace_required: false,
+    milestone: null,
+    readiness: { charter_ready: true, research_ready: true, design_ready: true, plan_ready: false },
+    updated_at: new Date().toISOString(),
+  })
+  const r = spawnSync(
+    "node",
+    cli("work", "--strict", "--review", "--final-review", "--worktree", "--commit", "--plan-only", "answer the question"),
+    { cwd: dir, encoding: "utf8", env, timeout: 60_000 },
+  )
+  assert.equal(r.status, 0, r.stderr)
+  assert.doesNotMatch(r.stderr, /--strict requires --final-verify/)
 })

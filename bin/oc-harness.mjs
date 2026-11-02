@@ -90,7 +90,12 @@ const COPY_ROOT = join(CONFIG_DIR, "kit")
  */
 function ensurePackageCopy() {
   if (CHECKOUT) return
-  const want = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version
+  let want
+  try {
+    want = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version
+  } catch (err) {
+    throw new Error(`cannot read package.json for version: ${err instanceof Error ? err.message : String(err)}`)
+  }
   let have = null
   try {
     have = readFileSync(join(COPY_ROOT, ".source"), "utf8").trim()
@@ -479,9 +484,21 @@ function cmdShow(id) {
  * reached through npm or npx.
  */
 function cmdLink() {
-  const dist = join(kitSourceRoot(), "dist", "index.js")
+  // Pick the plugin shape the installed opencode can actually load. V1 wants a
+  // function default export, V2 wants a `{ id, setup }` object, and handing
+  // the wrong one leaves the session silently unguarded.
+  let major = null
+  try {
+    const r = spawnSync("opencode", ["--version"], { encoding: "utf8", timeout: 5000 })
+    if (r.status === 0) {
+      const m = String(r.stdout ?? "").trim().match(/^(\d+)\./)
+      if (m) major = Number(m[1])
+    }
+  } catch {}
+  const entry = major !== null && major >= 2 ? "v2.js" : "index.js"
+  const dist = join(kitSourceRoot(), "dist", entry)
   if (!existsSync(dist)) {
-    fail("dist/index.js missing. Run: npm run build")
+    fail(`dist/${entry} missing. Run: npm run build`)
   }
   const dir = join(CONFIG_DIR, "plugins")
   try {
@@ -3745,7 +3762,7 @@ function cmdAgents() {
     // whose model publishes no such level gets none either. `resolveRoles`
     // returns null for the second case and never undefined, so the check
     // that used to be `=== undefined` was never true and reported nothing.
-    if (lane in roles && roles[lane] === null) {
+    if (Object.hasOwn(roles ?? {}, lane) && roles[lane] === null) {
       notes.push("the profile asks for a level this model does not publish, so no variant is set")
     }
 
@@ -3890,6 +3907,11 @@ try {
     case "agents":
       cmdAgents()
       break
+    case "finish": {
+      const { cmdFinish } = await import("../src/cli/finish.mjs")
+      process.exitCode = await cmdFinish(args.slice(1))
+      break
+    }
     case "lanes":
       cmdLanes()
       break
@@ -3914,6 +3936,9 @@ try {
       break
     case "work":
       await loopCommands.work()
+      break
+    case "autopilot":
+      await loopCommands.autopilot()
       break
     case "spec": {
       const { cmdSpec } = await import("../src/cli/spec.mjs")
@@ -3966,6 +3991,9 @@ try {
     verify    check the install still matches the profile and its rules are loaded
     link          symlink the built plugin into ~/.config/opencode/plugins
     agents        report agents the effort tiering does not reach
+    finish        task completion gate, final verify, install check, publish boundary
+    autopilot <request>  init/check/research/design/decompose then work, and
+                  advance to the next milestone when one finishes
     lanes         report which lanes the fleet actually used; --suggest names
                   lanes the telemetry says are not earning a slot
     trust         set up npm trusted publishing for this package
@@ -4029,9 +4057,16 @@ try {
     --max-tokens N  stop before the next round once the run spent N tokens
     --max-task-minutes N  stop a single task that runs longer than N minutes
     --final-verify "cmd"  run one command after the last task; failure stops
+    --no-final-gate  do not fall back to the track acceptance or npm test
     --final-review  review the whole diff, not just the last task
     --base-ref <ref>  the commit the final review diffs against (default: HEAD
                    from before the first task)
+    --verify-repeats N  run each verify, and the final verify, up to N times
+    --max-task-tokens N  stop a task after N tokens
+    --sandbox none|container  run verify commands in a container
+    --sandbox-image <image>  image for --sandbox container
+    --adapter exec --agent-command "<cmd>"  run an agent other than opencode
+    --no-strict    skip the strict planning contract for a local run
     --json         print one machine-readable report on stdout
 
   work-only flags:

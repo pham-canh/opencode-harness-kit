@@ -10,9 +10,11 @@
 // capped and never retried.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 
 import { parseTasks, validatePlan } from "../tasks.js"
+import { readMilestones, findMilestone } from "./milestones.mjs"
 import { inspectVerify } from "./policy.mjs"
 import { extractPlan, PLAN_FORMAT, TASKS_PATH } from "./plan.mjs"
 import { specInstructions, runSpecStep } from "./spec-agent.mjs"
@@ -570,6 +572,12 @@ export function validateGeneratedPlan(text, { charter, trace }) {
   return { plan, parsed, errors: problems }
 }
 
+function nextMilestoneId(list, id) {
+  const idx = list.findIndex((m) => m.id === id)
+  if (idx < 0 || idx + 1 >= list.length) return null
+  return list[idx + 1].id
+}
+
 /**
  * Decompose: the validated `.space/tasks.md` the loop reads.
  *
@@ -586,6 +594,34 @@ export function specDecompose(options) {
   requireReady(track, "design_ready")
   const charter = readRequired(options.cwd, CHARTER_PATH)
   const milestones = readRequired(options.cwd, MILESTONES_PATH)
+  const milestoneList = readMilestones(milestones)
+  let selectedMilestone = null
+  if (options.milestone) {
+    selectedMilestone = findMilestone(milestoneList, options.milestone)
+    if (!selectedMilestone) {
+      throw new TrackError("spec-milestone-unknown", `unknown milestone ${options.milestone}`, [
+        { path: MILESTONES_PATH, message: `known: ${milestoneList.map((m) => m.id).join(", ") || "(none)"}`, fix: "use one of the milestone ids in the milestones document" },
+      ])
+    }
+    const selectedIndex = milestoneList.indexOf(selectedMilestone)
+    const hasNext = selectedIndex + 1 < milestoneList.length
+    // The last milestone has no next milestone to gate, so its gate may be
+    // omitted. Every other milestone needs one: it is what makes the move to
+    // the next milestone a checkpoint instead of an assumption.
+    if (hasNext && !selectedMilestone.gate) {
+      throw new TrackError("spec-milestone-gate", `milestone ${selectedMilestone.id} has no gate`, [
+        { path: MILESTONES_PATH, message: `add - gate: <command> under ## ${selectedMilestone.id}`, fix: "add a gate line to the milestone" },
+      ])
+    }
+    if (selectedMilestone.gate) {
+      const verdict = inspectVerify(selectedMilestone.gate, { allowCompound: true })
+      if (!verdict.ok) {
+        throw new TrackError("spec-milestone-gate", `gate for ${selectedMilestone.id} is not runnable`, [
+          { path: MILESTONES_PATH, message: verdict.reason, fix: "make the gate a real command, or remove it from the last milestone" },
+        ])
+      }
+    }
+  }
   const adrs = readMarkdownDir(options.cwd, ADR_DIR)
   const contracts = readMarkdownDir(options.cwd, CONTRACT_DIR)
   if (!adrs.length || !contracts.length) {
@@ -621,12 +657,49 @@ export function specDecompose(options) {
     "## Milestones",
     "",
     milestones.trim(),
+    ...(selectedMilestone
+      ? [
+          "",
+          "## This milestone",
+          "",
+          `Write only the tasks for ${selectedMilestone.id} - ${selectedMilestone.title}.`,
+          selectedMilestone.gate
+            ? `The gate is \`${selectedMilestone.gate}\`; it must pass before ${nextMilestoneId(milestoneList, selectedMilestone.id) || "the project ships"}.`
+            : "This is the last milestone; there is no next milestone to gate.",
+        ]
+      : []),
     ...adrs.flatMap((adr) => ["", `## ${adr.path}`, "", adr.text.trim()]),
     ...contracts.flatMap((contract) => ["", `## ${contract.path}`, "", contract.text.trim()]),
   ].join("\n")
 
+  const milestoneToWrite = options.milestone ?? track.milestone ?? null
   if (options.print || options.dryRun) {
-    return { ok: true, prompt, would_write: [TASKS_PATH], wrote: null, readiness: track.readiness }
+    return { ok: true, prompt, would_write: [TASKS_PATH], wrote: null, readiness: track.readiness, milestone: milestoneToWrite }
+  }
+
+  // Every earlier milestone's gate must have passed before this one may be
+  // decomposed. Run them after the cheap refusals above and after the dry-run
+  // return: a dry run must not execute a shell command, and a plan that would
+  // be refused for an existing task file must not run one either.
+  if (selectedMilestone) {
+    const selectedIndex = milestoneList.indexOf(selectedMilestone)
+    for (let i = 0; i < selectedIndex; i++) {
+      const prior = milestoneList[i]
+      if (!prior.gate) continue
+      const verdict = inspectVerify(prior.gate, { allowCompound: true })
+      if (!verdict.ok) {
+        throw new TrackError("spec-milestone-gate", `gate for ${prior.id} is not runnable`, [
+          { path: MILESTONES_PATH, message: verdict.reason, fix: "make the gate a real command before decomposing the next milestone" },
+        ])
+      }
+      const result = spawnSync(prior.gate, { cwd: options.cwd, shell: true, encoding: "utf8", timeout: 300000, maxBuffer: 10 * 1024 * 1024 })
+      if (result.status !== 0) {
+        const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim().slice(-500)
+        throw new TrackError("spec-milestone-gate", `gate for ${prior.id} failed`, [
+          { path: MILESTONES_PATH, message: output || `exit ${result.status}`, fix: `make \`${prior.gate}\` pass before decomposing ${selectedMilestone.id}` },
+        ])
+      }
+    }
   }
 
   const agent = runSpecStep({
@@ -648,7 +721,12 @@ export function specDecompose(options) {
   }
 
   writeTextAtomic(options.cwd, TASKS_PATH, `${checked.plan}\n`)
+  // Preserve a milestone recorded by an earlier decompose when this run did
+  // not name one. A plain `spec decompose` passes `milestone: null`, not
+  // `undefined`; testing `!== undefined` here erased the recorded milestone.
   const outcome = setReadinessKey(options.cwd, track, "plan_ready", true)
+  const nextTrack = { ...outcome.track, updated_at: new Date().toISOString(), milestone: milestoneToWrite }
+  writeTrack(options.cwd, nextTrack)
   return {
     ok: true,
     prompt,
@@ -657,5 +735,6 @@ export function specDecompose(options) {
     tasks: checked.parsed.tasks.length,
     text: checked.plan,
     readiness: outcome.readiness,
+    milestone: milestoneToWrite ?? null,
   }
 }

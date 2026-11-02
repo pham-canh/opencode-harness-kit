@@ -211,6 +211,9 @@ async function showBudget() {
  */
 async function cmdWork() {
   const wantJson = flag("--json")
+  // Read-only flags run first. Auto-resume used to sit above these, so a
+  // `work --show-budget` with an interrupted record resumed the run instead of
+  // printing the budget table.
   if (flag("--show-budget")) return showBudget()
   if (flag("--cleanup")) {
     const { cleanupRun } = await import("../driver/work.mjs")
@@ -221,13 +224,49 @@ async function cmdWork() {
     if (!cleaned.ok) process.exitCode = cleaned.code ?? 2
     return
   }
+  // Auto-resume: a run that stopped mid-flight is continued by `work` itself,
+  // so a crash or Ctrl-C does not need a separate `resume` command. `--fresh`
+  // opts out and starts a new run.
+  if (!flag("--fresh") && !flag("--dry-run") && !flag("--plan-only")) {
+    const request = positionalRequest()
+    if (!request && !flag("--project")) {
+      try {
+        const { readRun } = await import("../driver/run-state.mjs")
+        const recorded = readRun(process.cwd())
+        if (recorded && recorded.terminal !== "done" && recorded.terminal !== "interrupted") {
+          return cmdResume()
+        }
+      } catch {
+        // no run recorded; fall through to a fresh work
+      }
+    }
+  }
   const request = positionalRequest()
   const project = flag("--project")
   const planOnly = flag("--plan-only")
   const dryRun = flag("--dry-run")
   const { workRequest, strictProblem } = await import("../driver/work.mjs")
   const { isGitRepo } = await import("../driver/git.mjs")
-  const finalVerify = opt("--final-verify") ?? null
+  let finalVerify = opt("--final-verify") ?? null
+  // Auto final gate: unless opted out, run the track's acceptance command
+  // (or the project's test script) once the loop finishes.
+  if (finalVerify === null && !flag("--no-final-gate")) {
+    try {
+      const { readTrack } = await import("../driver/track.mjs")
+      const track = readTrack(process.cwd())
+      if (track?.acceptance) finalVerify = track.acceptance
+    } catch {
+      // no track; try the package's test script below
+    }
+    if (finalVerify === null) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"))
+        if (pkg?.scripts?.test) finalVerify = "npm test"
+      } catch {
+        // no package.json or no test script; no final gate
+      }
+    }
+  }
   // `--project` runs the plan `spec decompose` wrote. It never plans, so the
   // strict planning contract does not apply, and a request is a contradiction:
   // the whole point is that the plan already exists.
@@ -246,6 +285,10 @@ async function cmdWork() {
   }
   const strict = project ? false : flag("--no-strict") ? false : true
   const loopOptions = loopFlags()
+  // The auto final gate is the final verify this run will actually use, so the
+  // strict contract must see it too; otherwise strict refuses a run that has a
+  // track acceptance command just because `--final-verify` was not repeated.
+  loopOptions.finalVerify = finalVerify
 
   // The strict contract is a refusal about the command, not about the
   // install. Ask it before `opencode --version`, or a missing binary turns
@@ -301,6 +344,7 @@ async function cmdWork() {
   // commands a plan will run do not exist until the plan has been written.
   const stop = installStopHandler()
   common.loop.shouldStop = stop.signal
+  common.loop.finalVerify = finalVerify
   let result
   try {
     if (!planOnly && !dryRun) {
@@ -377,6 +421,100 @@ async function cmdWork() {
  * is reconciled first, which is how a killed run becomes resumable instead of
  * staying `running` forever.
  */
+async function cmdAutopilot() {
+  const wantJson = flag("--json")
+  const cli = process.argv[1]
+  const adapterArgs = []
+  const adapter = opt("--adapter") ?? process.env.OC_HARNESS_ADAPTER
+  const agentCommand = opt("--agent-command") ?? process.env.OC_HARNESS_AGENT_CMD
+  if (adapter) adapterArgs.push("--adapter", adapter)
+  if (agentCommand) adapterArgs.push("--agent-command", agentCommand)
+  // `--json` means one object on stdout and nothing else. The spec steps are
+  // human-facing, so their stdout is discarded in that mode; their errors stay
+  // on stderr where a caller can still read them.
+  const runCli = (args, { quiet = false } = {}) =>
+    spawnSync(process.execPath, [cli, ...args], {
+      stdio: quiet ? ["ignore", "ignore", "inherit"] : "inherit",
+      cwd: process.cwd(),
+    })
+  const runStep = (args) => runCli(args, { quiet: wantJson })
+
+  const { existsSync: _exists, readFileSync: _read, writeFileSync: _write, renameSync: _rename } = await import("node:fs")
+  const goal = positionalRequest()
+  // Ensure a track exists. Refuse to turn an existing hand-written `.space`
+  // into a blank template: `spec init --force` would overwrite the charter,
+  // research and design that are already there.
+  const spacePath = join(process.cwd(), ".space")
+  if (!_exists(join(spacePath, "track.json"))) {
+    if (_exists(spacePath)) {
+      console.error("autopilot: .space exists but has no track.json; refusing to overwrite it")
+      console.error("autopilot: run `oc-harness spec init` yourself, or move the existing .space aside")
+      process.exitCode = 2
+      return
+    }
+    const r = runStep(["spec", "init", "--template", "blank", "--var", `project_name=${process.cwd().split("/").pop()}`, "--var", "test_command=npm test"])
+    if (r.status !== 0) { process.exitCode = r.status ?? 1; return }
+  }
+
+  // Autonomous charter: tick the ready items so the pipeline can run without a
+  // human. The goal line is filled from the request when one was given. Every
+  // `.space` write is atomic and redacted; this one used to be neither.
+  try {
+    const charterPath = join(spacePath, "charter.md")
+    let charter = _read(charterPath, "utf8")
+    if (goal) {
+      charter = charter.replace(/^One sentence: what is true after this work that is not true now\.$/m, () => goal)
+    }
+    charter = charter.replace(/^- \[ \] /gm, "- [x] ")
+    const { redact } = await import("../driver/run-state.mjs")
+    const tmp = `${charterPath}.tmp`
+    _write(tmp, redact(charter))
+    _rename(tmp, charterPath)
+  } catch {
+    // best-effort; spec check will report the real problem
+  }
+
+  // Read readiness.
+  const { readTrack } = await import("../driver/track.mjs")
+  let track = null
+  try { track = readTrack(process.cwd()) } catch (e) {
+    console.error(String(e instanceof Error ? e.message : e))
+    process.exitCode = 2
+    return
+  }
+
+  // Charter must be human-ready; research/design/decompose can run automatically.
+  if (track?.readiness?.charter_ready !== true) {
+    const r = runStep(["spec", "check"])
+    if (r.status !== 0) { process.exitCode = r.status ?? 2; return }
+    track = readTrack(process.cwd())
+  }
+
+  if (track?.readiness?.research_ready !== true) {
+    const r = runStep(["spec", "research", ...adapterArgs])
+    if (r.status !== 0) { process.exitCode = r.status ?? 2; return }
+    track = readTrack(process.cwd())
+  }
+
+  if (track?.readiness?.design_ready !== true) {
+    const r = runStep(["spec", "design", ...adapterArgs])
+    if (r.status !== 0) { process.exitCode = r.status ?? 2; return }
+    track = readTrack(process.cwd())
+  }
+
+  if (track?.readiness?.plan_ready !== true) {
+    const r = runStep(["spec", "decompose", "--force", ...adapterArgs])
+    if (r.status !== 0) { process.exitCode = r.status ?? 2; return }
+  }
+
+  // Run the plan.
+  const workArgs = ["work", "--project", ...adapterArgs, ...(flag("--dry-run") ? ["--dry-run"] : []), ...(wantJson ? ["--json"] : [])]
+  const r = runCli(workArgs)
+  // A killed child has status null; treating that as success made a signal
+  // look like a finished run.
+  process.exitCode = r.status ?? (r.signal ? 1 : 0)
+}
+
 async function cmdResume() {
   const wantJson = flag("--json")
   const cwd = process.cwd()
@@ -400,7 +538,26 @@ async function cmdResume() {
   }
 
   requireOpencode()
-  const finalVerify = opt("--final-verify") ?? null
+  let finalVerify = opt("--final-verify") ?? null
+  // Auto final gate: unless opted out, run the track's acceptance command
+  // (or the project's test script) once the loop finishes.
+  if (finalVerify === null && !flag("--no-final-gate")) {
+    try {
+      const { readTrack } = await import("../driver/track.mjs")
+      const track = readTrack(process.cwd())
+      if (track?.acceptance) finalVerify = track.acceptance
+    } catch {
+      // no track; try the package's test script below
+    }
+    if (finalVerify === null) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"))
+        if (pkg?.scripts?.test) finalVerify = "npm test"
+      } catch {
+        // no package.json or no test script; no final gate
+      }
+    }
+  }
   // A worktree run keeps its tasks file in the worktree; checking the project
   // directory instead would trust an empty command list.
   const { readRun } = await import("../driver/run-state.mjs")
@@ -425,6 +582,7 @@ async function cmdResume() {
       loop: {
         role: opt("--role") ?? "build",
         ...loopFlags(),
+        finalVerify,
         shouldStop: stop.signal,
       },
     })
@@ -469,13 +627,19 @@ function positionalRequest() {
     "--budget",
     "--max-fix-rounds",
     "--review-fix-rounds",
+    "--verify-repeats",
     "--max-tokens",
+    "--max-task-tokens",
     "--max-task-minutes",
     "--final-verify",
     "--base-ref",
     "--run-id",
     "--branch",
     "--profile",
+    "--sandbox",
+    "--sandbox-image",
+    "--adapter",
+    "--agent-command",
   ])
   for (let i = 1; i < args.length; i++) {
     const a = args[i]
@@ -688,5 +852,5 @@ async function cmdRun() {
   if (report.code !== 0) process.exitCode = report.code
 }
 
-  return { run: cmdRun, plan: cmdPlan, work: cmdWork, goal: cmdWork, resume: cmdResume, status: cmdStatus, report: cmdReport }
+  return { run: cmdRun, plan: cmdPlan, work: cmdWork, goal: cmdWork, resume: cmdResume, autopilot: cmdAutopilot, status: cmdStatus, report: cmdReport }
 }

@@ -179,6 +179,14 @@ export function reconcileRunLock(cwd, { force = false, at = new Date().toISOStri
 const SECRET = /\b([A-Z0-9_.-]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_.-]*)\s*[:=]\s*(\S+)/gi
 
 /**
+ * A credential can arrive without a field name, especially in a goal or a
+ * reason pasted from a terminal. Recognise the token shapes with enough
+ * structure that a false positive is implausible.
+ */
+const SECRET_TOKEN =
+  /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35})\b/g
+
+/**
  * The same rule for JSON-shaped text: `"api_key": "sk-..."`.
  *
  * `SECRET` expects the colon straight after the key, which a closing quote
@@ -207,6 +215,7 @@ export function redact(text) {
       return `${keyQuote}${key}${keyQuote}${separator}${valueQuote}[redacted]${valueQuote}`
     })
     .replace(SECRET, "$1=[redacted]")
+    .replace(SECRET_TOKEN, "[redacted]")
 }
 
 /**
@@ -270,6 +279,7 @@ export function runPath(cwd) {
  *   branch?: string | null,
  *   worktree?: string | null,
  *   planHash?: string | null,
+ *   milestone?: string | null,
  *   budget?: Partial<{ maxMinutes: number | null, maxTokens: number | null, maxTaskTokens: number | null, spentTokens: number, spentCacheTokens: number }>
  * }} opts
  */
@@ -281,6 +291,7 @@ export function createRun({
   branch = null,
   worktree = null,
   planHash = null,
+  milestone = null,
   budget = {},
 }) {
   const now = new Date().toISOString()
@@ -302,6 +313,7 @@ export function createRun({
     updatedAt: now,
     resumeCount: 0,
     planHash,
+    milestone,
     finalBaseRef: null,
     rounds: 0,
     tokens: 0,

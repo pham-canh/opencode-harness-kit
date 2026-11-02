@@ -82,8 +82,18 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
   // once when it completes. Writing a record per event counted one call three
   // times, which made the "cut the lanes nobody calls" counter wrong by a
   // factor of three. A lane is counted once per message id instead.
+  // Bounded: a long session would otherwise grow these without limit. 2000
+  // entries covers any realistic session; older ids are evicted FIFO.
+  const SET_CAP = 2000
   const opened = new Set<string>()
   const closed = new Set<string>()
+  const boundedAdd = (set: Set<string>, value: string) => {
+    if (set.size >= SET_CAP) {
+      const oldest = set.values().next().value
+      if (oldest !== undefined) set.delete(oldest)
+    }
+    set.add(value)
+  }
 
   // The lane a request ran on, and the model it ran on, keyed by the id of
   // the user message the request was made from.
@@ -193,7 +203,7 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
           // The completed event. Written once, and only if the open record
           // did not already carry a duration.
           if (closed.has(lane.id)) return
-          closed.add(lane.id)
+          boundedAdd(closed, lane.id)
           write(dir, { kind: "lane", ...lane })
           return
         }
@@ -202,7 +212,7 @@ export const TelemetryPlugin: Plugin = async ({ worktree, directory }) => {
         // are different questions and only the first one is settled by a
         // record with no duration.
         if (opened.has(lane.id)) return
-        opened.add(lane.id)
+        boundedAdd(opened, lane.id)
         write(dir, { kind: "lane", ...lane })
       }
     },

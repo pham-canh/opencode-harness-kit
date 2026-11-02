@@ -2,10 +2,14 @@
 
 ## M1 - Prove the baseline
 
+- gate: node --test
+
 Run the existing test command and record the result. Add one test that fails
 for the reason the goal describes, and show it failing.
 
 ## M2 - Make the smallest change
+
+- gate: node --test
 
 Change only the modules named in the charter. The new test passes; the old
 tests still pass.

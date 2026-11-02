@@ -88,6 +88,25 @@ The answer is validated before it is written:
 - With `trace_required`, every title needs a `[REQ-NNN]` tag **and** that REQ
   must appear in the charter. A tag that traces to nothing is a refusal.
 
+### Milestone gating
+
+`--milestone <id>` decomposes tasks for one milestone only. A milestone is a
+`## M1 - Title` heading in `.space/plan/milestones.md`; an optional
+`- gate: <command>` line names the command that must pass before the **next**
+milestone may be decomposed.
+
+- An unknown id is refused (`spec-milestone-unknown`).
+- A milestone that is not the last one in the document must name a gate; a
+  missing gate is refused (`spec-milestone-gate`). The last milestone may
+  omit it because there is no next milestone to gate.
+- Every earlier milestone's gate is run; a failing one refuses
+  (`spec-milestone-gate`) with its output. `--dry-run` does not run a gate
+  and writes nothing.
+- The chosen milestone is recorded in `.space/track.json` (`milestone`). A
+  plain `decompose` keeps the recorded milestone instead of clearing it.
+- The built-in templates carry gates on M1 and M2, so the first milestone can
+  be decomposed without editing the generated plan.
+
 `plan_ready` is set only after the file is on disk and parses. An existing
 `.space/tasks.md` is kept unless `--force` is given.
 

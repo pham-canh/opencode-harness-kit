@@ -2,6 +2,8 @@
 
 ## M1 - Ledger and balances
 
+- gate: {{test_command}}
+
 REQ-001, REQ-002, REQ-003.
 
 - The ledger table exists with an idempotency key and a UTC timestamp.
@@ -9,6 +11,8 @@ REQ-001, REQ-002, REQ-003.
 - A movement writes one entry and returns the derived balance.
 
 ## M2 - Warehouses, lots and transfers
+
+- gate: {{test_command}}
 
 REQ-004, REQ-005, REQ-006.
 

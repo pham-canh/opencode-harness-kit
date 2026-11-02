@@ -2348,7 +2348,8 @@ function writeHealth(dir, health) {
       }
       throw err;
     }
-  } catch {
+  } catch (err) {
+    console.error("[harness] health write failed:", err instanceof Error ? err.message : String(err));
   }
 }
 function unhealthyRoutes(dir) {
@@ -2517,7 +2518,8 @@ var RouterPlugin = async ({ worktree, directory }) => {
             else agent.variant = next;
           }
         }
-      } catch {
+      } catch (err) {
+        console.error("[harness] router config hook failed:", err instanceof Error ? err.message : String(err));
       }
     },
     event: async ({ event }) => {
@@ -2606,8 +2608,16 @@ import { join as join11 } from "node:path";
 var TelemetryPlugin = async ({ worktree, directory }) => {
   const dir = join11(projectRoot(directory, worktree), ".space");
   const started = Date.now();
+  const SET_CAP = 2e3;
   const opened = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
+  const boundedAdd = (set, value) => {
+    if (set.size >= SET_CAP) {
+      const oldest = set.values().next().value;
+      if (oldest !== void 0) set.delete(oldest);
+    }
+    set.add(value);
+  };
   const requests = /* @__PURE__ */ new Map();
   const REQUEST_MEMORY = 500;
   const budget = budgetFor(projectRoot(directory, worktree));
@@ -2658,12 +2668,12 @@ var TelemetryPlugin = async ({ worktree, directory }) => {
         if (!lane || !lane.id) return;
         if (lane.ms !== void 0) {
           if (closed.has(lane.id)) return;
-          closed.add(lane.id);
+          boundedAdd(closed, lane.id);
           write(dir, { kind: "lane", ...lane });
           return;
         }
         if (opened.has(lane.id)) return;
-        opened.add(lane.id);
+        boundedAdd(opened, lane.id);
         write(dir, { kind: "lane", ...lane });
       }
     },

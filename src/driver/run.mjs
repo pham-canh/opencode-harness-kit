@@ -45,7 +45,7 @@ import {
   isVacuousVerify,
 } from "../tasks.js"
 import { gitEnv, gitStashCreate } from "./git.mjs"
-import { appendVerify, verifyEntry } from "./evidence.mjs"
+import { appendVerify, readEvidence, verifyEntry } from "./evidence.mjs"
 import { appendEvent } from "./events.mjs"
 import { agentInvocation } from "./adapter.mjs"
 import { sandboxCommand } from "./sandbox.mjs"
@@ -490,7 +490,7 @@ export function formatBlockers(blockers) {
  * itself. A diff alone cannot show a new file, and a reviewer that is not told
  * that is a reviewer that passes work it never saw.
  */
-export function reviewDiff(cwd, { maxBytes = 200_000, baseRef = null, changesBefore = null } = {}) {
+export function reviewDiff(cwd, { maxBytes = 60_000, baseRef = null, changesBefore = null } = {}) {
   const run = (args) => {
     const res = spawnSync("git", ["-C", cwd, ...args], {
       env: gitEnv(),
@@ -1132,9 +1132,11 @@ export function runLoop(options) {
         run.next = nextActionFor(run)
         const wrote = writeRun(cwd, run)
         if (wrote && wrote.ok === false) log(`run: could not write the failed checkpoint: ${wrote.error}`)
+        if (o.dossier !== false && run) writeRunReport(cwd, run)
         return { ...result, code: 2, reason }
       }
     }
+    if (run && o.dossier !== false && run.status !== "route-failed") writeRunReport(cwd, run)
     return result
   }
 
@@ -1168,8 +1170,10 @@ export function runLoop(options) {
         goal: o.goal ?? parsed.goal ?? "",
         role,
         branch: o.branch ?? null,
+        milestone: o.milestone ?? null,
       })
       run.goal = run.goal || o.goal || parsed.goal || ""
+      if (o.milestone !== undefined && o.milestone !== null) run.milestone = o.milestone
       run.finalBaseRef = finalBaseRef
       for (const t of parsed.tasks) runTask(run, t)
       // Opening a record is a transition like any other. `start` only exists
@@ -1333,10 +1337,33 @@ export function runLoop(options) {
         const deadRoute =
           timedOut ||
           (agent?.ok === true && Object.hasOwn(agent, "stdout") && !said.trim() && Number(agent?.steps ?? 0) === 0)
+        // An agent that said nothing but still changed files left a partial
+        // edit in the tree. Retrying on another route would stack on top of it,
+        // so treat it as blocked, not as a spent route.
+        const deadRouteEdits = deadRoute && !timedOut ? changedSince(changesBefore, gitChanges(cwd)) : []
         if (deadRoute) {
           const why = tail(agent?.stderr || agent?.error || agent?.output || "", 8)
           if (timedOutEdits.length) {
             const output = `blocked by the loop: the ${role} agent timed out after changing ${timedOutEdits.join(", ")}. The tree is partially edited, so another route would start on top of it. Check the diff and unblock the task.\n${why}${why ? "\n\n" : ""}The agent timed out: it did not answer within the budget allowed.`
+            if (existsSync(file)) {
+              const text = readFileSync(file, "utf8")
+              const current = findTask(parseTasks(text), task)
+              if (current && !isDone(current)) {
+                writeTasks(file, markTask(text, current, { status: "blocked", verifyOutput: output }))
+              }
+            }
+            if (stateTask) {
+              stateTask.status = "blocked"
+              stateTask.note = output
+              stateTask.endedAt = new Date().toISOString()
+              stateTask.seconds = Math.round((Date.now() - taskStarted) / 1000)
+              record()
+            }
+            return finish({ reason: output, code: 2, status: "blocked" })
+          }
+          if (deadRouteEdits.length) {
+            const edited = deadRouteEdits.join(", ")
+            const output = `blocked by the loop: the ${role} agent exited without a word after changing ${edited}. The tree is partially edited, so another route would start on top of it. Check the diff and unblock the task.\n${why}${why ? "\n\n" : ""}The agent produced no output; the edit it made needs a person.`
             if (existsSync(file)) {
               const text = readFileSync(file, "utf8")
               const current = findTask(parseTasks(text), task)
@@ -1781,6 +1808,7 @@ export function runLoop(options) {
         run.endedAt = new Date().toISOString()
         const wrote = writeRun(cwd, run)
         if (wrote && wrote.ok === false) log(`run: could not write the crashed record: ${wrote.error}`)
+        if (o.dossier !== false) writeRunReport(cwd, run)
       }
       return { reason, code: 2, rounds, log: entries, run }
     }
@@ -1944,6 +1972,87 @@ function lastReviewRound(runState, cwd) {
     // No review directory yet, or it is unreadable; the record is enough.
   }
   return max
+}
+
+/**
+ * Write a human-readable run report to `.space/report.md`.
+ *
+ * Best-effort: a failure to write is logged, never thrown. The record on disk
+ * is the source of truth; the report is a convenience view of it.
+ *
+ * @param {string} cwd
+ * @param {any} run
+ * @returns {void}
+ */
+export function writeRunReport(cwd, run) {
+  try {
+    if (!run) return
+    const lines = []
+    lines.push("# Run report")
+    lines.push("")
+    lines.push(`- Run: \`${run.id ?? "?"}\``)
+    lines.push(`- Goal: ${run.goal ?? ""}`)
+    lines.push(`- Role: ${run.role ?? ""}`)
+    if (run.milestone) lines.push(`- Milestone: ${run.milestone}`)
+    lines.push(`- Terminal: ${run.terminal ?? run.status ?? "?"}`)
+    lines.push(`- Rounds: ${run.rounds ?? 0}`)
+    lines.push(`- Tokens: ${run.tokens ?? 0}`)
+    lines.push(`- Started: ${run.startedAt ?? ""}`)
+    lines.push(`- Ended: ${run.endedAt ?? ""}`)
+    if (run.next) lines.push(`- Next: ${run.next}`)
+    lines.push("")
+    // Tasks
+    const taskFile = join(cwd, TASKS_PATH)
+    if (existsSync(taskFile)) {
+      try {
+        const parsed = parseTasks(readFileSync(taskFile, "utf8"))
+        lines.push("## Tasks")
+        lines.push("")
+        for (const t of parsed.tasks ?? []) {
+          const mark = t.checked ? "x" : " "
+          lines.push(`- [${mark}] ${t.title}${t.status ? ` (${t.status})` : ""}`)
+          if (t.verify) lines.push(`  - verify: \`${t.verify}\``)
+        }
+        lines.push("")
+      } catch {
+        // ignore
+      }
+    }
+    // Evidence
+    const evidence = readEvidence(cwd)
+    const entries = (evidence.entries ?? []).filter((e) => !run.id || e.runId === run.id)
+    if (entries.length) {
+      lines.push("## Evidence")
+      lines.push("")
+      for (const e of entries) {
+        lines.push(`- ${e.at ?? ""} — \`${e.command ?? ""}\` → ${e.ok ? "pass" : "fail"} (exit ${e.exit ?? "?"}, ${e.seconds ?? 0}s)`)
+        if (e.outputTail) lines.push(`  \`\`\``)
+        if (e.outputTail) lines.push(`  ${String(e.outputTail).replace(/\n/g, "\n  ")}`)
+        if (e.outputTail) lines.push(`  \`\`\``)
+      }
+      lines.push("")
+    }
+    // Changed files
+    const git = spawnSync("git", ["diff", "--stat", "HEAD"], { cwd, encoding: "utf8", timeout: 10_000 })
+    if (git.status === 0 && String(git.stdout ?? "").trim()) {
+      lines.push("## Changed files")
+      lines.push("")
+      lines.push("```")
+      lines.push(String(git.stdout).trim())
+      lines.push("```")
+      lines.push("")
+    }
+    const out = join(cwd, ".space", "report.md")
+    mkdirSync(join(cwd, ".space"), { recursive: true })
+    const tmp = `${out}.tmp`
+    // The record is redacted on its way to run.json; the report is built from
+    // the in-memory record, so the goal and any path can still carry a
+    // credential. Redact the rendered text exactly like .space/summary.md.
+    writeFileSync(tmp, redact(lines.join("\n")))
+    renameSync(tmp, out)
+  } catch (err) {
+    // best-effort; never throw
+  }
 }
 
 export { TASKS_PATH }

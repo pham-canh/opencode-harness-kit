@@ -13,6 +13,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "
 import { join } from "node:path"
 
 import { readHealth } from "../health.js"
+import { readMilestones } from "./milestones.mjs"
+import { readTrack, writeTrack } from "./track.mjs"
 import { loadProfile, profileIdFromConfig, resolveLaneChain } from "../profile.js"
 import { parseTasks, summarize, validatePlan } from "../tasks.js"
 import { createBranch, changedPaths, checkpoint, createWorktree, isGitRepo, removeWorktree } from "./git.mjs"
@@ -165,8 +167,14 @@ export function strictProblem(options = {}) {
 export function findWorktreeRun(cwd, { includeFinished = false } = {}) {
   const base = join(cwd, ".space", "worktrees")
   if (!existsSync(base)) return null
+  let entries
+  try {
+    entries = readdirSync(base)
+  } catch {
+    return null
+  }
   let best = null
-  for (const name of readdirSync(base)) {
+  for (const name of entries) {
     const dir = join(base, name)
     const run = readRun(dir)
     if (!run) continue
@@ -247,6 +255,16 @@ export function workRequest(options) {
   const file = join(runRoot, TASKS)
   const existing = /** @type {any} */ (existsSync(file) ? parseTasks(readFileSync(file, "utf8")) : { tasks: [] })
   const valid = validatePlan(existing)
+  let milestone = null
+  try {
+    const track = readTrack(runRoot)
+    if (track?.milestone) {
+      milestone = track.milestone
+      log(`milestone: ${track.milestone}`)
+    }
+  } catch {
+    // track is optional; a missing one is not a blocker for work
+  }
 
   if (resuming) {
     if (!priorRun) {
@@ -504,6 +522,7 @@ export function workRequest(options) {
       }
       return {
         ...loop,
+        milestone,
         laneBudget: loop.laneBudget ?? configuredLaneBudget(loop.role ?? "build"),
         cwd: runDir,
         goal: options.request ?? "",
@@ -605,6 +624,43 @@ export function workRequest(options) {
         applyTransition(run, "route-exhausted", { reason, exitCode: 3 })
         run.next = nextActionFor(run)
         writeRun(runDir, run)
+      }
+    }
+
+    if (result.code === 0 && milestone) {
+      try {
+        // Only advance when this run actually finished a task. A plan that was
+        // already complete also exits 0; advancing on that would switch the
+        // track to the next milestone without a plan, and the next autopilot
+        // would see `plan_ready: true` and run the old, completed plan again.
+        const didWork = (run.tasks ?? []).some(
+          (t) => t.status === "done" && t.endedAt && run.startedAt && t.endedAt >= run.startedAt,
+        )
+        if (!didWork) {
+          log(`milestone: ${milestone} was already complete; not advancing`)
+        } else {
+          const milestoneText = readFileSync(join(runRoot, ".space", "plan", "milestones.md"), "utf8")
+          const list = readMilestones(milestoneText)
+          const current = list.find((m) => m.id === milestone)
+          const idx = current ? list.indexOf(current) : -1
+          const next = idx >= 0 && idx + 1 < list.length ? list[idx + 1] : null
+          if (next) {
+            const track = readTrack(runRoot)
+            if (track) {
+              track.milestone = next.id
+              // The old plan belongs to the milestone that just finished.
+              // Clearing readiness is what makes `work --project` refuse and
+              // `autopilot` decompose the next milestone instead of running
+              // the completed plan against the new name.
+              track.readiness = { ...track.readiness, plan_ready: false }
+              track.updated_at = new Date().toISOString()
+              writeTrack(runRoot, track)
+              log(`milestone advanced: ${milestone} -> ${next.id}; run spec decompose --milestone ${next.id} before the next work`)
+            }
+          }
+        }
+      } catch {
+        // milestone auto-advance is best-effort; a missing file is not a failure
       }
     }
 

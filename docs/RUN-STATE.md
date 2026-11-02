@@ -13,7 +13,7 @@ The current schema is `oc-harness/run@2`.
 | `schema` | Always `oc-harness/run@2` on disk. |
 | `id` | Run id. Time-sortable, with a random suffix. |
 | `cwd` | Project root the run belongs to. |
-| `goal` | What the run was asked to do. |
+| `goal` | What the run was asked to do. Redacted before it reaches disk, including bare credentials such as a GitHub token. |
 | `role` | Lane the run is using. |
 | `branch`, `worktree` | Git isolation, when the run uses it. |
 | `status` | Writer-local status: `running`, `done`, `preflight-failed`, `budget`, `blocked`, `round-cap`, `route-failed`, `lost-task`, `checkpoint-failed`, `final-verify-failed`, `final-review-failed` or `interrupted`. `route-failed` is the one live status that can carry `terminal: null`. |
@@ -23,6 +23,7 @@ The current schema is `oc-harness/run@2`.
 | `endedAt`, `interruptedAt` | When the attempt stopped, and when a signal or a stale lock stopped it. `endedAt` is cleared when the record is resumed; `finishedAt` is a v1 alias kept for old readers. |
 | `resumeCount` | How many times this record has been resumed. |
 | `planHash` | Hash of the task file the run started from. `null` on v1 records. |
+| `milestone` | Milestone id the plan was decomposed for, or `null` when the run is not milestone-scoped. |
 | `finalBaseRef` | The commit the final review diffs from, captured before the first task. Kept across a resume so task commits do not shrink the final diff; `null` outside git. |
 | `budget` | `maxMinutes`, `maxTokens`, `maxTaskTokens`, `spentTokens`, `spentCacheTokens`. `spentTokens` includes cache reads and writes; `spentCacheTokens` is the cache share, not an additional cost. |
 | `routes` | `current`, `tried`, `skipped` agent routes. |
@@ -111,6 +112,10 @@ make.
 `work` holds `.space/run.lock` for the whole request, across route retries, and
 releases it on every return path. `runLoop` only takes a lock when it was not
 given one, so a direct `run` still holds its own.
+
+The human-readable `.space/summary.md` and `.space/report.md` are rendered
+from the live record and then redacted with the same rule as `run.json`. A
+credential in the goal or a verify command must not reappear in a report.
 
 A read must not change a file. `status` and `report` use `readRun` and never
 call `writeRun`.

@@ -27,7 +27,7 @@ function scratch() {
   return dir
 }
 
-test("verifyEntry hashes the whole output and keeps only the tail", () => {
+test("verifyEntry hashes the redacted tail and keeps only that", () => {
   const output = `start\n${"x".repeat(4_000)}\nerror: last line`
   const entry = verifyEntry({ command: VERIFY, result: { ok: false, status: 1, output, seconds: 0.2 } })
 

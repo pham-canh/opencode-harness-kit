@@ -22,7 +22,4 @@ export declare function logPrune(worktree: string, profileId: string, stats: Stu
     saved: number;
     threshold: number;
 }, maxBytes?: number): Promise<void>;
-export declare const pruneMeta: {
-    note: string;
-};
 export default PrunePlugin;

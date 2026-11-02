@@ -3,8 +3,8 @@
 // A verify command that passed is only useful if the next person can see what
 // actually ran. This file appends one record per execution to
 // `.space/evidence.json`: the command, the exit, the duration, a hash of the
-// whole output and its tail. The tail is what a reviewer reads; the hash is
-// what proves the tail belongs to the output that was hashed.
+// retained (redacted) output tail, and that tail. The hash identifies the tail
+// the record actually kept; it is not a hash of the full log.
 
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
@@ -66,7 +66,10 @@ export function verifyEntry({
     // instead of inferring it from a count.
     repeat,
     repeats,
-    sha256: createHash("sha256").update(output).digest("hex"),
+    // Hash the retained tail, not the full output: the tail is what the
+    // record keeps, and hashing megabytes of log only to discard them is
+    // wasted work on every verify.
+    sha256: createHash("sha256").update(redact(tailBytes(output))).digest("hex"),
     outputBytes: Buffer.byteLength(output),
     outputTail: redact(tailBytes(output)),
   }

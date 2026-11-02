@@ -68,10 +68,13 @@ plans, so `resume` needs an existing record.
 
 | Code | Meaning |
 |---|---|
-| 0 | The resumed run finished: every task done and any final gate that was asked for passed. |
+| 0 | The resumed run finished: every task done, and the explicit final gate or its automatic fallback (track acceptance, then `npm test`) passed. |
 | 2 | Nothing to resume, the run already finished, the plan changed since the run started (`--replan` resumes against the new plan), another process holds the lock, or the loop stopped and needs a person. |
 | 3, 4, 5 | Same meanings as `run`: route exhausted, verify failed, review failed. |
 | 130 | Interrupted by `SIGINT` or `SIGTERM`; the record is stopped and can be resumed. |
+
+When no `--final-verify` is given, `resume` uses the track's acceptance command
+or the project's `npm test` script; `--no-final-gate` disables that fallback.
 
 A stale lock - one whose pid is gone - is cleared by `resume` (and by `work`)
 before the run starts, and the record it guarded is marked `interrupted` with
@@ -173,6 +176,9 @@ every way that call can fail is a `2`, never a retry:
 | `spec-agent-output` | The answer passed 200 KB. That is a runaway, not a note. |
 | `spec-not-ready` | An earlier readiness key is false, so the order is wrong. |
 | `spec-check` | The charter is missing a locked section, or `## Ready` is empty or unticked. |
+| `spec-milestones` | The milestones document has a duplicate id or two gate lines on one milestone. |
+| `spec-milestone-unknown` | `--milestone` names a milestone that is not in the milestones document. |
+| `spec-milestone-gate` | A non-final milestone has no gate, or an earlier milestone's gate failed. |
 | `spec-design-shape` | The design answer lacks `=== adr ===` or `=== contract ===`, or one is empty. |
 | `spec-decompose` | The plan does not parse, or a task has no runnable `verify`, no `accept`, or a trace tag that does not exist. |
 | `spec-tasks-exists` | `.space/tasks.md` is already there; `--force` replaces it. |
@@ -185,6 +191,36 @@ wants the refusals and none of the spend.
 missing track, or `plan_ready` that is not `true`, exits `2` - the loop does
 not run a plan that `decompose` has not validated. A positional request
 combined with `--project` is also a `2`: the plan already exists.
+
+## `oc-harness finish`
+
+The completion gate. It reads `.space/tasks.md`, refuses unless every task is
+done, then runs the track's acceptance command and the install check. It does
+not publish; it reports whether the tree is dirty and leaves the publish
+decision to a human.
+
+| Code | Meaning |
+|---|---|
+| 0 | Every task is done, the acceptance command passed, and the install check passed. |
+| 1 | The acceptance command passed but the install check failed. The output is printed. |
+| 2 | Nothing to finish: no task file, an empty plan, a pending or blocked task, no track, or a track acceptance command that cannot fail (`true`, `echo ok`). |
+| 4 | The acceptance command failed. Its output is printed; the task file is not changed. |
+
+## `oc-harness autopilot`
+
+The empty-directory path: init, charter check, research, design, decompose,
+then `work --project`.
+
+| Code | Meaning |
+|---|---|
+| 0 | The requested sequence finished. With `--dry-run`, the spec steps ran and the final work step passed preflight. |
+| 2 | `.space` exists without `track.json`, a spec step refused (its own code is used when it is 2), or `work` refused. |
+| 3, 4, 5 | Propagated from `work`: route exhausted, verify failed, review failed. |
+| 130 | Interrupted by `SIGINT` or `SIGTERM`. |
+
+`--dry-run` does not skip the model-backed research, design and decompose
+steps; it only makes the final `work` step a preflight. `--json` suppresses
+the spec steps' stdout so the one JSON object on stdout is the work result.
 
 ## The measurement gates
 

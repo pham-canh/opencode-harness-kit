@@ -21,6 +21,21 @@ blind.
 
 ### Added
 
+- **`oc-harness autopilot`**: from an empty directory, initialise a blank
+  track, tick the charter, run research/design/decompose, then call
+  `work --project`. It refuses an existing `.space` without a `track.json`
+  instead of overwriting a hand-written track. `--json` keeps stdout to one
+  object; `--dry-run` still runs the model-backed spec steps and only makes the
+  final work step a preflight.
+- **Milestone gates in the built-in templates.** `blank`, `inventory`,
+  `billing` and `existing` now put `- gate: {{test_command}}` on M1 and M2, so
+  `spec decompose --milestone M1` works on a freshly initialised project. The
+  last milestone may omit its gate because there is no next milestone to gate.
+- **`oc-harness finish` runs the real completion gate.** It refuses missing or
+  empty plans and unfinished tasks with exit 2, runs the track's acceptance
+  command (exit 4 on failure), then the install check (exit 1 on drift), and
+  reports the dirty/publish boundary without publishing.
+
 - **`resolve`: lane models drawn from the catalogue instead of written down.**
   A profile may declare `"resolve": { "from": "catalogue", "free": true,
   "chainDepth": 3 }` and carry no `roleModels` at all. At `use` time the kit
@@ -40,6 +55,37 @@ blind.
   or a lock and how old it is.
 
 ### Fixed
+
+- **`spec decompose` erased the milestone it was not asked about.** A plain
+  decompose wrote `milestone: null` over the track's recorded milestone; it
+  now preserves it. The `--milestone` path validates the selected gate with
+  the same policy as a task verify command, runs earlier gates only after the
+  cheap refusals and `--dry-run`, and no longer executes a gate the policy
+  would refuse. Milestones inside fenced examples are ignored, and backticks
+  around a gate command are stripped.
+- **`work` advanced the milestone without doing any work.** A plan that was
+  already complete moved M1 to M2 and skipped M2's tasks. It now advances only
+  when this run marked a task done, and it resets `plan_ready` so the next
+  milestone needs its own decompose.
+- **`.space/report.md` and `.space/summary.md` could carry the raw goal.**
+  Both were rendered from the live record after `run.json` had been redacted;
+  they now pass through the same `redact` before the atomic write. Bare
+  credentials (GitHub, OpenAI/Anthropic, Slack, AWS, Google token shapes) are
+  recognised even when no field name precedes them.
+- **`autopilot` could overwrite a hand-written `.space`.** It now refuses when
+  `.space` exists without `track.json`, writes the charter atomically with
+  redaction, treats a `$&` in the goal as text rather than a replacement
+  pattern, suppresses spec stdout under `--json`, and maps a killed child to a
+  non-zero exit instead of reporting success.
+- **`work --strict` ignored the automatic final gate.** A track acceptance
+  command (or the project's `npm test`) did not satisfy the strict contract
+  unless `--final-verify` was repeated. The resolved gate is now the one strict
+  validates, and `--no-final-gate` still opts out.
+- **`work --show-budget` and `work --cleanup` resumed an interrupted run first.**
+  Both read-only/cleanup paths now run before auto-resume, so a flag that asks
+  a question does not start or continue a run.
+- **`use --target` defaulted to `auto` while the docs promised V1.** The
+  default is V1 again; `--target auto` remains explicit.
 
 - **A lane could be given a model above the profile's retention ceiling.** The
   last resort in `laneModelId` returned `chain[0]` without asking

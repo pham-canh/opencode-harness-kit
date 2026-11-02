@@ -1017,6 +1017,7 @@ test("final verify and final review gate the summary", () => {
 test("redaction catches JSON-shaped credentials and credential-named fields", () => {
   assert.equal(redact("API_KEY=abc123"), "API_KEY=[redacted]")
   assert.equal(redact('{"api_key": "sk-live-123"}'), '{"api_key": "[redacted]"}')
+  assert.equal(redact("deploy with ghp_abcdefghijklmnopqrstuvwxyz0123456789"), "deploy with [redacted]")
   assert.equal(redact(`"client-secret": 's3cr3t'`), `"client-secret": '[redacted]'`)
   assert.equal(redact("nothing secret here"), "nothing secret here")
   const record = redactDeep({ apiKey: "sk-live-123", nested: { password: "hunter2" }, note: '{"token": "abc"}' })
