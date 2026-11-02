@@ -14,7 +14,8 @@ import { readRun } from "../driver/run-state.mjs"
 /** @param {string} cwd */
 export async function buildReport(cwd) {
   const run = readRun(cwd)
-  const events = readEvents(cwd, 10_000)
+  const allEvents = readEvents(cwd, 10_000)
+  const events = run?.id ? allEvents.filter((event) => event.runId === run.id) : allEvents
   const evidence = readEvidence(cwd)
   const tasksFile = join(cwd, ".space", "tasks.md")
   /** @type {any} */
@@ -29,7 +30,7 @@ export async function buildReport(cwd) {
   }
 
   const byPhase = summarizeEvents(events)
-  const verifies = evidence?.entries ?? []
+  const verifies = (evidence?.entries ?? []).filter((entry) => !run?.id || entry.runId === run.id)
   const failures = verifies.filter((v) => v.ok === false)
   const routes = new Map()
   for (const event of events) {

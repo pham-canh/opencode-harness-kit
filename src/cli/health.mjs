@@ -42,9 +42,21 @@ export async function cmdHealth(argv = [], opts = {}) {
   const probe = argv.includes("--probe")
   const modelsFlag = argv.find((a) => a.startsWith("--models="))?.slice("--models=".length)
   const modelsArgIndex = argv.indexOf("--models")
-  const inlineModels = modelsFlag ?? (modelsArgIndex >= 0 ? argv[modelsArgIndex + 1] : null)
+  let inlineModels = modelsFlag
+  if (modelsArgIndex >= 0) {
+    const value = argv[modelsArgIndex + 1]
+    if (value === undefined || value.startsWith("-")) {
+      console.error("--models needs a value, for example --models model-a,model-b")
+      return 2
+    }
+    if (inlineModels === undefined) inlineModels = value
+  }
 
   let models = inlineModels ? inlineModels.split(",").map((s) => s.trim()).filter(Boolean) : []
+  if ((modelsFlag !== undefined || modelsArgIndex >= 0) && !models.length) {
+    console.error("--models needs at least one model id")
+    return 2
+  }
   if (!models.length) {
     const { profileIdFromConfig, loadProfile } = await import("../profile.js")
     const id = profileIdFromConfig()

@@ -116,7 +116,8 @@ export function writeTrack(root, track) {
  * @returns {any}
  */
 export function setReadiness(root, key, value) {
-  if (!READINESS_KEYS.includes(key)) {
+  const at = READINESS_KEYS.indexOf(key)
+  if (at < 0) {
     throw new TrackError("track-key", `unknown readiness flag "${key}"`, [
       { path: key, fix: `use one of: ${READINESS_KEYS.join(", ")}` },
     ])
@@ -127,10 +128,11 @@ export function setReadiness(root, key, value) {
       { path: join(root, TRACK_FILE), fix: "run oc-harness spec init --template blank" },
     ])
   }
-  track.readiness[key] = value
-  track.updated_at = new Date().toISOString()
-  writeTrack(root, track)
-  return track
+  const readiness = { ...track.readiness, [key]: value }
+  for (const later of READINESS_KEYS.slice(at + 1)) readiness[later] = false
+  const next = { ...track, readiness, updated_at: new Date().toISOString() }
+  writeTrack(root, next)
+  return next
 }
 
 /**

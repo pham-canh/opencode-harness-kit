@@ -36,11 +36,13 @@ test("buildReport aggregates the run, its events and its evidence", async () => 
   appendEvent(dir, { runId: "run-report", event: "phase", phase: "build", route: "m1", tokens: 100, ms: 40 })
   appendEvent(dir, { runId: "run-report", event: "phase", phase: "verify", route: "m1", tokens: 20, ms: 10 })
   appendEvent(dir, { runId: "run-report", event: "phase", phase: "verify", code: 2, ms: 5 })
+  appendEvent(dir, { runId: "older-run", event: "phase", phase: "build", route: "old-route", tokens: 900 })
   writeEvidence(dir, {
     runId: "run-report",
     entries: [
-      { ok: true, command: "node --test", seconds: 1.5, tail: "" },
-      { ok: false, command: "node --test", seconds: 0.5, tail: "boom" },
+      { runId: "run-report", ok: true, command: "node --test", seconds: 1.5, tail: "" },
+      { runId: "run-report", ok: false, command: "node --test", seconds: 0.5, tail: "boom" },
+      { runId: "older-run", ok: false, command: "old", seconds: 9, tail: "old failure" },
     ],
   })
 

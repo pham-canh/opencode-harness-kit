@@ -56,7 +56,7 @@ function isVacuousSegment(segment) {
  * @returns {boolean}
  */
 function hasVacuousCompound(text) {
-  const parts = text.split(/(\|\||&&|;)/)
+  const parts = text.split(/(\|\||&&|;|\|)/)
   const segments = parts.filter((_, i) => i % 2 === 0).map((part) => part.trim())
   const operators = parts.filter((_, i) => i % 2 === 1)
   // A chain of only vacuous commands cannot become meaningful by joining it.
@@ -70,9 +70,11 @@ function hasVacuousCompound(text) {
     // trailing `exit 0` after `&&` only runs when the command before it
     // succeeded, so it does not make the gate unfailable.
     if (segments[i].trim().replace(/\s+/g, " ").toLowerCase() === "exit 0") {
-      if (next !== null || previous === ";" || previous === "||") return true
+      if (next !== null || previous === ";" || previous === "||" || previous === "|") return true
     }
     if (previous === ";" || previous === "||" || next === "||") return true
+    // A vacuous last command after a pipe decides the pipeline's status.
+    if (previous === "|" && next === null) return true
   }
   return false
 }

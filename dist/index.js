@@ -2272,6 +2272,31 @@ function utilityModel(p) {
 // src/health.js
 import { existsSync as existsSync7, mkdirSync as mkdirSync3, readFileSync as readFileSync5, renameSync as renameSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join10 } from "node:path";
+
+// src/redact.mjs
+var SECRET = /\b([A-Z0-9_.-]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_.-]*)\s*[:=]\s*(\S+)/gi;
+var SECRET_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35})\b/g;
+var SECRET_JSON = /(["']?)([A-Z0-9_.-]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_.-]*)\1(\s*[:=]\s*)(["'])(.*?)\4/gi;
+var SECRET_KEY = /(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)/i;
+function redact(text) {
+  return String(text ?? "").replace(SECRET_JSON, (_, keyQuote, key, separator, valueQuote) => {
+    return `${keyQuote}${key}${keyQuote}${separator}${valueQuote}[redacted]${valueQuote}`;
+  }).replace(SECRET, "$1=[redacted]").replace(SECRET_TOKEN, "[redacted]");
+}
+function redactDeep(value) {
+  if (typeof value === "string") return redact(value);
+  if (Array.isArray(value)) return value.map(redactDeep);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = SECRET_KEY.test(k) && typeof v === "string" ? "[redacted]" : redactDeep(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+// src/health.js
 var DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_WITHDRAWN_WINDOW_MS = 30 * 24 * 60 * 60 * 1e3;
 function spentWindowMs() {
@@ -2335,7 +2360,7 @@ function writeHealth(dir, health) {
   try {
     const spaceDir = join10(dir, ".space");
     if (!existsSync7(spaceDir)) mkdirSync3(spaceDir, { recursive: true });
-    const pruned = { ...health ?? {}, unhealthy: liveUnhealthy(health) };
+    const pruned = redactDeep({ ...health ?? {}, unhealthy: liveUnhealthy(health) });
     const file = healthPath(dir);
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {

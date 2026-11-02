@@ -32,7 +32,10 @@ export function laneBudget(profile, role) {
     chain: chain ?? [],
     context,
     input: narrow("input", context),
-    output: narrow("output", Number.MAX_SAFE_INTEGER),
+    // No declared output limit means no reserve, not a reserve as large as
+    // the context itself: subtracting MAX_SAFE_INTEGER made every prompt
+    // look like it had zero usable tokens.
+    output: narrow("output", 0),
   }
 }
 

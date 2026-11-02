@@ -9,6 +9,14 @@ test("availableRoutes drops spent, tried and duplicate routes but keeps profile 
   assert.deepEqual(routes, ["model-a"])
 })
 
+test("availableRoutes matches qualified health keys against bare chain routes", () => {
+  const health = {
+    unhealthy: { "opencode/model-c": { at: new Date().toISOString(), class: "quota", reason: "spent" } },
+  }
+  const routes = availableRoutes(["model-a", "model-b", "model-c"], health, { tried: ["model-b"] })
+  assert.deepEqual(routes, ["model-a"])
+})
+
 test("availableRoutes treats an expired health entry as available again", () => {
   const health = { unhealthy: { "model-a": { at: new Date(Date.now() - 30 * 24 * 3600_000).toISOString(), class: "quota", reason: "spent" } } }
   assert.deepEqual(availableRoutes(["model-a", "model-b"], health), ["model-a", "model-b"])

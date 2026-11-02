@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-import { TrackError, writeJsonAtomic, writeTextAtomic } from "../src/driver/track.mjs"
+import { TrackError, readTrack, setReadiness, writeJsonAtomic, writeTextAtomic, writeTrack } from "../src/driver/track.mjs"
 
 function scratch() {
   return mkdtempSync(join(tmpdir(), "oc-track-"))
@@ -76,4 +76,35 @@ test("writeTextAtomic refuses a path that escapes the project", () => {
       return true
     })
   }
+})
+
+test("setReadiness clears later readiness and rejects unknown keys", () => {
+  const root = scratch()
+  writeTrack(root, {
+    schema_version: 1,
+    template: { id: "minimal", version: "1.0.0" },
+    vars: {},
+    acceptance: "true",
+    required_sections: [],
+    trace_required: false,
+    milestone: null,
+    readiness: {
+      charter_ready: true,
+      research_ready: false,
+      design_ready: true,
+      plan_ready: true,
+    },
+  })
+
+  setReadiness(root, "research_ready", true)
+  const saved = readTrack(root)
+  assert.equal(saved.readiness.research_ready, true)
+  assert.equal(saved.readiness.design_ready, false, "a new research note makes the old design stale")
+  assert.equal(saved.readiness.plan_ready, false, "a new research note makes the old plan stale")
+
+  assert.throws(() => setReadiness(root, "typo_ready", true), (err) => {
+    assert.ok(err instanceof TrackError)
+    assert.equal(err.code, "track-key")
+    return true
+  })
 })

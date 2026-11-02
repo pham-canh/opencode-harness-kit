@@ -91,7 +91,15 @@ test("work refuses before planning or building when a verify command has an outs
 })
 
 test("allow-compound does not accept a gate that cannot fail", () => {
-  for (const command of ["npm test || true", "npm test; echo ok", "true || npm test", "exit 0; npm test", ": && echo ok"]) {
+  for (const command of [
+    "npm test || true",
+    "npm test; echo ok",
+    "true || npm test",
+    "exit 0; npm test",
+    ": && echo ok",
+    "npm test | true",
+    "npm test | exit 0",
+  ]) {
     const verdict = inspectVerify(command, { allowCompound: true })
     assert.equal(verdict.code, "vacuous", command)
   }

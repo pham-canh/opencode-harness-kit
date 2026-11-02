@@ -216,6 +216,10 @@ test("no command and help both explain the command", async (t) => {
   const help = await run(["spec", "help"], where)
   assert.equal(help.code, 0)
   assert.match(help.stdout, /validate \[name\|path\]/)
+
+  const flagHelp = await run(["spec", "--help"], where)
+  assert.equal(flagHelp.code, 0)
+  assert.match(flagHelp.stdout, /validate \[name\|path\]/)
 })
 
 test("--json keeps a refusal off stdout when the command is not validate", async (t) => {

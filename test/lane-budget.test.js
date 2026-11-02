@@ -78,3 +78,9 @@ test("the loop refuses an oversized prompt before it calls the agent", () => {
   assert.equal(called, 0)
   rmSync(dir, { recursive: true, force: true })
 })
+
+test("a profile with no declared limits does not reserve the whole context", () => {
+  const budget = laneBudget({}, "build")
+  assert.equal(budget.output, 0, "no output limit means no reserve")
+  assert.equal(assertPromptFits("hello", budget).ok, true)
+})

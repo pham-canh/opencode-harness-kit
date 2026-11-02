@@ -56,6 +56,36 @@ blind.
 
 ### Fixed
 
+- **A spent route could be retried because its health key was qualified.** The
+  router records `provider/model`, while a lane chain names the bare model;
+  `availableRoutes` compared the two directly, so a route the session had
+  already written off stayed a candidate. Both shapes now match.
+- **`oc-harness report` counted earlier runs.** The event log and evidence file
+  outlive a run, but the report counted every record in them. It now scopes
+  both to the current `run.id`, matching the evidence section of `report.md`.
+- **`oc-harness spec --help` exited 2.** The help flag was treated as a missing
+  subcommand because the parser only looked for non-flag words. `--help` and
+  `-h` now print usage and exit 0, like `spec help`.
+- **`.space/health.json` was written without redaction.** A provider error
+  stored as the route's reason could carry a credential to disk. Health writes
+  now pass through `redactDeep` like the other `.space/` records.
+- **A healthy probe did not clear the router's qualified health key.** Probing
+  a bare model deleted only `model`, leaving `opencode/model` spent. The
+  default provider's key is cleared too; another provider's key is untouched.
+- **`health --models` accepted the next flag as a model id.** `--models
+  --probe` and an empty `--models=` now refuse with exit 2 instead of probing
+  a flag or falling back to the configured profile.
+- **A profile with no declared limits could not send any prompt.** Both the
+  context and output fallbacks were `MAX_SAFE_INTEGER`, so the output reserve
+  left zero usable tokens. An undeclared output limit now reserves nothing.
+- **`--allow-compound-verify` accepted a pipe into a vacuous command.**
+  `npm test | true` and `npm test | exit 0` always exit 0; they are now rejected
+  as vacuous, while real pipes such as `npm test | tee log` remain available
+  under the escape hatch.
+- **The second readiness setter did not clear later stages.** `track.setReadiness`
+  accepted unknown keys and left `design_ready`/`plan_ready` set after a new
+  research note; it now mirrors `setReadinessKey` and clears everything after
+  the key being set.
 - **`spec research` and `spec design` spent a model call on flags they ignored.**
   `--milestone` is only meaningful to `decompose` and `--question` only to
   `research`; both are now refused as argument errors before any model call.

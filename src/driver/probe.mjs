@@ -71,7 +71,13 @@ export function probeAndRecord(cwd, models, opts) {
   const report = probeRoutes(models, opts)
   const health = readHealth(cwd)
   const unhealthy = { ...(health.unhealthy ?? {}) }
-  for (const model of report.healthy) delete unhealthy[model]
+  for (const model of report.healthy) {
+    delete unhealthy[model]
+    // A bare model is probed through the default provider, whose health key
+    // is qualified. Delete both spellings so a recovered default route is
+    // actually available again. Other providers' keys are left alone.
+    if (!model.includes("/")) delete unhealthy[`opencode/${model}`]
+  }
   for (const row of report.unhealthy) {
     if (row.class === "unknown") continue
     unhealthy[row.model] = /** @type {any} */ ({ at: row.at, class: row.class, reason: row.reason.slice(0, 200) })

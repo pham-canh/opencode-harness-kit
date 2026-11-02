@@ -15,6 +15,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
+import { redactDeep } from "./redact.mjs"
+
 /**
  * @typedef {object} SpentEntry
  * @property {string} at when the route was recorded as spent
@@ -198,7 +200,7 @@ export function writeHealth(dir, health) {
   try {
     const spaceDir = join(dir, ".space")
     if (!existsSync(spaceDir)) mkdirSync(spaceDir, { recursive: true })
-    const pruned = { ...(health ?? {}), unhealthy: liveUnhealthy(health) }
+    const pruned = redactDeep({ ...(health ?? {}), unhealthy: liveUnhealthy(health) })
     const file = healthPath(dir)
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
     try {

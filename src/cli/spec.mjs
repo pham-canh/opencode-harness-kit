@@ -76,11 +76,12 @@ export async function cmdSpec(argv, opts = {}) {
     builtin: resolve(opts.builtin ?? BUILTIN_DIR),
   }
   const sub = args.find((a) => !a.startsWith("-")) ?? ""
+  const wantsHelp = sub === "help" || args.includes("--help") || args.includes("-h")
 
   try {
-    if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
+    if (!sub || wantsHelp) {
       process.stdout.write(SPEC_USAGE)
-      return sub ? 0 : 2
+      return sub || wantsHelp ? 0 : 2
     }
     if (sub === "list") return commandList(args, where, json)
     if (sub === "show") return commandShow(args, where, json)

@@ -21,7 +21,14 @@ import { liveUnhealthy } from "../health.js"
  * @returns {string[]}
  */
 export function availableRoutes(chain, health, { tried = [], now = Date.now() } = {}) {
-  const spent = new Set(Object.keys(liveUnhealthy(/** @type {any} */ (health ?? {}), now)))
+  const spent = new Set()
+  for (const key of Object.keys(liveUnhealthy(/** @type {any} */ (health ?? {}), now))) {
+    spent.add(key)
+    // Health entries are qualified (`provider/model`) when the router wrote
+    // them, while lane chains name bare model ids. Match both shapes so a
+    // spent route is not tried again just because the key is qualified.
+    if (key.includes("/")) spent.add(key.slice(key.indexOf("/") + 1))
+  }
   const seen = new Set(tried)
   const out = []
   for (const route of chain ?? []) {
