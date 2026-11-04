@@ -2473,6 +2473,18 @@ The publish is now automatic and holds no secret:
   that people run from the wrong one, and the failure is `Cannot read
   package.json`, which says nothing about what the command was for.
 
+## [0.3.3] — 2026-10-20
+
+**Published to npm, then backfilled.** The version was staged by a diagnostic
+with side effects; it reached the registry but had no git tag or GitHub
+release. The tag and release were added during the 0.8.0 release cleanup. The
+changes are folded into the 0.3.4 notes below.
+
+## [0.3.2] — 2026-10-20
+
+**Not published.** The commit was cut, but the publish path it needed was not
+set up yet. The changes shipped in 0.3.4.
+
 ## [0.3.4] — 2026-10-20
 
 > 0.3.2 was never published: it carried the fix below, but the publish path

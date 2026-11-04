@@ -1546,8 +1546,10 @@ and the measurements behind each choice.
 
 [`CHANGELOG.md`](CHANGELOG.md) records what each release changed and, for the
 releases before this one, what was broken in it — the silent failures that a
-config could look correct through. [`MIGRATION.md`](MIGRATION.md) covers the
-two upgrades that ask something of you: 0.2.x → 0.3.0 (the profile ids
+config could look correct through. [`docs/RELEASE-HISTORY.md`](docs/RELEASE-HISTORY.md)
+explains the historical gaps between tags, npm and GitHub releases.
+[`MIGRATION.md`](MIGRATION.md) covers the two upgrades that ask something of
+you: 0.2.x → 0.3.0 (the profile ids
 changed, the config layout changed, the telemetry file now means something
 different) and 0.3.x → 0.4.x (the guard started refusing in code what it used
 to only suggest, and the pre-commit hook started running your project's

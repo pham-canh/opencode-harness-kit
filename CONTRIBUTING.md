@@ -26,3 +26,6 @@ publishes through npm trusted publishing and creates the GitHub release with
 the CHANGELOG entry, the npm tarball and its SHA-256. A re-run of a published
 tag is green: it finds the version on the registry and only refreshes the
 release assets.
+
+[`docs/RELEASE-HISTORY.md`](docs/RELEASE-HISTORY.md) explains the historical
+gaps between the tag, npm and release histories.
