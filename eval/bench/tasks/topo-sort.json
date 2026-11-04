@@ -1,0 +1,17 @@
+{
+  "id": "topo-sort",
+  "title": "Topological order, and the cycle you have to report",
+  "why": "Reporting the cycle instead of an empty array is the difference between a useful build tool and a hung one, and it is the part an implementation tends to skip.",
+  "requirements": "Write `src.js` exporting `topoSort(nodes, edges)` where `nodes` is an array of ids and `edges` is an array of `[from, to]` pairs. Return an array with every node once, each node after everything it depends on. Independent nodes keep the order they had in `nodes`. If a cycle exists, throw an `Error` whose message contains `cycle:` and the ids that are stuck. If an edge names an id that is not in `nodes`, throw an `Error` whose message contains `unknown node` rather than ignoring the edge. No dependencies.",
+  "starter": {},
+  "solutionDir": "topo-sort/solution",
+  "testDir": "topo-sort/tests",
+  "grade": {
+    "cmd": "node",
+    "args": [
+      "--test",
+      "tests/*.test.js"
+    ]
+  },
+  "timeoutMs": 900000
+}

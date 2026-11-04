@@ -157,11 +157,18 @@ export function importSpecifiers(text) {
 
 /** Every JS/TS file under the scanned directories, relative to `root`. */
 function sourceFiles(root) {
+  // The benchmark tasks are fixture trees, not modules of this repository:
+  // their tests import a `../src.js` the starter deliberately does not have
+  // until the solution is copied in. Walking them reports six unresolved
+  // imports that are the benchmark working as designed.
+  const SKIP = ["eval/bench/tasks"]
   const out = []
   const walk = (dir) => {
     for (const name of readdirSync(dir)) {
       if (name === "node_modules" || name === ".git") continue
       const full = join(dir, name)
+      const rel = relative(root, full).split(sep).join("/")
+      if (SKIP.some((p) => rel === p || rel.startsWith(`${p}/`))) continue
       const st = statSync(full)
       if (st.isDirectory()) walk(full)
       else if (EXTS.some((e) => name.endsWith(e))) out.push(full)
