@@ -17,9 +17,9 @@ the tarball from the registry.
 
 | Version | Commit | Note |
 | --- | --- | --- |
-| 0.1.0 | `7290e55` | First published version. |
-| 0.2.0 | `fb70fd7` | Published before the tag-and-release routine existed. |
-| 0.3.3 | `0e34d49` | Staged by a diagnostic with side effects; see the 0.3.4 notes. |
+| 0.1.0 | `7290e55` | First published version; the tag points at the npm `gitHead`. |
+| 0.2.0 | `fb70fd7` | npm records `gitHead 5102916`, which is not in this history, so the tag points at `fb70fd7` - the commit that carries version 0.2.0 in `package.json`. |
+| 0.3.3 | `0e34d49` | npm records `gitHead 90f2ad5`, which is not in this history, so the tag points at `0e34d49` - the commit that carries version 0.3.3 in `package.json`. See the 0.3.4 notes. |
 
 ## Published but historically awkward
 
