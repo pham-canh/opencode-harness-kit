@@ -49,6 +49,10 @@ if [ -z "$gate" ]; then
   exit 0
 fi
 
+# Git exports GIT_DIR and GIT_INDEX_FILE to the hook. A test that creates its
+# own repository inherits them and reads or writes this repository instead.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
+
 log="${TMPDIR:-/tmp}/space-harness-hook.log"
 echo "pre-commit: npm run $gate"
 if ! npm run "$gate" >"$log" 2>&1; then

@@ -5,14 +5,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-import { createWorktree, removeWorktree } from "../src/driver/git.mjs"
+import { createWorktree, gitEnv, removeWorktree } from "../src/driver/git.mjs"
 import { createRun, readRun, runTask, writeRun } from "../src/driver/run-state.mjs"
 import { cleanupRun, findWorktreeRun, workRequest } from "../src/driver/work.mjs"
 
 const VERIFY = `node -e "process.exit(0)"`
 
 function git(cwd, ...args) {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim()
+  return execFileSync("git", args, { cwd, encoding: "utf8", env: gitEnv() }).trim()
 }
 
 function repo() {
