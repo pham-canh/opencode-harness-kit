@@ -1,0 +1,17 @@
+{
+  "id": "lru-cache",
+  "title": "An LRU cache with the recency right",
+  "why": "The recency update on read and on overwrite is the whole task, and a `Map` without re-insertion gets both wrong in a way that only shows up on the third operation.",
+  "requirements": "Write `src.js` exporting `createLru(capacity)` returning an object with `get(key)`, `put(key, value)` and a `size` getter. `get` on a missing key returns `undefined` and does not change the cache. `get` on a present key makes it the most recently used. `put` on an existing key updates both value and recency. When the cache would exceed `capacity`, evict the least recently used entry. With `capacity` of 0, nothing is stored and `size` stays 0. No dependencies.",
+  "starter": {},
+  "solutionDir": "lru-cache/solution",
+  "testDir": "lru-cache/tests",
+  "grade": {
+    "cmd": "node",
+    "args": [
+      "--test",
+      "tests/*.test.js"
+    ]
+  },
+  "timeoutMs": 900000
+}

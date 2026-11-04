@@ -1,0 +1,17 @@
+{
+  "id": "rate-window",
+  "title": "A sliding-window rate limiter with an injected clock",
+  "why": "A fixed-window counter passes the first test and fails the sliding one, and a refused call that gets recorded makes the limiter lock out for twice as long. Both are one assertion each and both are invisible without a fake clock.",
+  "requirements": "Write `src.js` exporting `createLimiter({ limit, windowMs, now })` returning an object with `allow(key)` returning a boolean. `allow` returns true while fewer than `limit` calls for that key are inside the last `windowMs`, and false after. A refused call must not count towards the limit and must not extend the window. Keys are counted separately. `now` is a function returning milliseconds; default it to `Date.now`. No dependencies, and do not read the real clock when `now` is given.",
+  "starter": {},
+  "solutionDir": "rate-window/solution",
+  "testDir": "rate-window/tests",
+  "grade": {
+    "cmd": "node",
+    "args": [
+      "--test",
+      "tests/*.test.js"
+    ]
+  },
+  "timeoutMs": 900000
+}

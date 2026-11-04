@@ -1,0 +1,17 @@
+{
+  "id": "semver-range",
+  "title": "Version ranges, the four operators that matter",
+  "why": "Number-vs-string comparison and prerelease precedence are the two places an implementation that looks right returns the wrong boolean, and both are cheap to test.",
+  "requirements": "Write `src.js` exporting `satisfies(version, range)` returning a boolean. `version` is `MAJOR.MINOR.PATCH` with an optional `-prerelease`. `range` is an exact version or one prefixed with `^`, `~`, `>=`, `<=`, `>`, or `<`. Caret stays within the same major, tilde within the same minor, and a prerelease version does not satisfy a range whose base has no prerelease. Compare version components as numbers. Throw on input you cannot parse. No dependencies.",
+  "starter": {},
+  "solutionDir": "semver-range/solution",
+  "testDir": "semver-range/tests",
+  "grade": {
+    "cmd": "node",
+    "args": [
+      "--test",
+      "tests/*.test.js"
+    ]
+  },
+  "timeoutMs": 900000
+}

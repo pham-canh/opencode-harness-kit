@@ -1,0 +1,17 @@
+{
+  "id": "csv-rows",
+  "title": "Parse CSV, quotes and all",
+  "why": "Delimiters inside quotes, an escaped quote, a newline inside a field, CRLF, and the two boundary cases (empty input, trailing newline) are where a naive `split(',')` fails. This is the cheapest task here and it is still one a split()-based answer gets wrong.",
+  "requirements": "Write `src.js` exporting `parseCsv(text)` that returns an array of rows, each row an array of string fields. A field wrapped in double quotes may contain commas and newlines. Two double quotes inside a quoted field mean one literal quote. Accept both \\n and \\r\\n as a row separator. Empty input is an empty array, and a trailing newline does not produce a trailing empty row. Do not add dependencies.",
+  "starter": {},
+  "solutionDir": "csv-rows/solution",
+  "testDir": "csv-rows/tests",
+  "grade": {
+    "cmd": "node",
+    "args": [
+      "--test",
+      "tests/*.test.js"
+    ]
+  },
+  "timeoutMs": 900000
+}

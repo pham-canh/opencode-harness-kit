@@ -1,0 +1,17 @@
+{
+  "id": "json-pointer",
+  "title": "Resolve a JSON pointer, RFC 6901",
+  "why": "The escape order (~1 before ~0), array indices that are not numbers, and the two different kinds of failure (missing member vs malformed pointer) are what a hand-rolled `split('/')` gets wrong.",
+  "requirements": "Write `src.js` exporting `resolve(doc, pointer)`. The empty pointer returns the whole document. Otherwise the pointer starts with `/` and each `/`-separated token names an object key or an array index; `~1` inside a token is `/` and `~0` is `~`. A member that does not exist, or a path through a scalar, returns `undefined` rather than throwing. A pointer that is not empty and does not start with `/` throws an `Error` whose message contains `not a JSON pointer`. No dependencies.",
+  "starter": {},
+  "solutionDir": "json-pointer/solution",
+  "testDir": "json-pointer/tests",
+  "grade": {
+    "cmd": "node",
+    "args": [
+      "--test",
+      "tests/*.test.js"
+    ]
+  },
+  "timeoutMs": 900000
+}
