@@ -19,6 +19,16 @@ import { policyDecision, readPolicy } from "./driver/policy.mjs"
 export const MARKER = "[opencode-harness-kit] blocked"
 
 /**
+ * The longest a shell call may run when the caller did not ask for a
+ * timeout. OpenCode's own default is two minutes, but a max-effort subagent
+ * spent 181.9s in one `git status` audit call and 66.8s in a command whose
+ * own timeout was 200ms, so a real command with no ceiling is a real cost.
+ * A caller that needs more passes `timeout` explicitly; this only fills the
+ * empty case.
+ */
+export const DEFAULT_SHELL_TIMEOUT_MS = 90_000
+
+/**
  * The tools that write to a file, and where the path to write lives in each.
  *
  * OpenCode 1.19 has `write` and `edit` (both take `filePath`) and
@@ -278,6 +288,15 @@ export const GuardPlugin: Plugin = async ({ worktree, directory }) => {
       }
       try {
         if (SHELL_TOOLS.has(input.tool)) {
+          // Fill the empty timeout before the command runs. A tool call that
+          // names its own timeout keeps it.
+          if (
+            output.args &&
+            output.args.timeout === undefined &&
+            Object.isExtensible(output.args)
+          ) {
+            output.args.timeout = DEFAULT_SHELL_TIMEOUT_MS
+          }
           // The bash tool takes a `workdir`, and it becomes the command's
           // working directory. A command run from outside the project is
           // writing outside the project, which is the one thing the scope

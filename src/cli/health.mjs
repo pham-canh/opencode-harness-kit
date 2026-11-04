@@ -23,11 +23,11 @@ export function profileModels(profile) {
  * A 60s timeout because a route that needs longer than that to say "OK" is
  * not one an unattended run should wait for.
  */
-export function probeModel(model, { timeoutMs = 60_000 } = {}) {
-  const res = spawnSync(
+export function probeModel(model, { timeoutMs = 60_000, cwd = process.cwd(), spawn = spawnSync } = {}) {
+  const res = spawn(
     "opencode",
     ["run", "-m", model, "--format", "json", "Reply with exactly: OK"],
-    { encoding: "utf8", timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
+    { cwd, encoding: "utf8", timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
   )
   return { ok: res.status === 0, output: `${res.stdout ?? ""}${res.stderr ?? ""}` }
 }
@@ -68,7 +68,7 @@ export async function cmdHealth(argv = [], opts = {}) {
       console.error("no models to probe; pass --models a,b or configure a profile")
       return 2
     }
-    const report = probeAndRecord(cwd, models, { run: (model) => probeModel(model) })
+    const report = probeAndRecord(cwd, models, { run: (model) => probeModel(model, { cwd }) })
     if (json) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
       return report.unhealthy.length ? 1 : 0

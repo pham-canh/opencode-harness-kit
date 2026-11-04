@@ -341,3 +341,25 @@ test("a command that is not on the list is not blocked", () => {
     assert.equal(checkDenied(command), null, `the guard blocked this: ${command}`)
   }
 })
+
+test("a shell call with no timeout gets the kit's 90s ceiling", async () => {
+  const dir = workspace()
+  try {
+    const hooks = await guard(dir)
+    const args = { command: "git status --porcelain" }
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses", callID: "c" },
+      { args },
+    )
+    assert.equal(args.timeout, 90_000)
+
+    const explicit = { command: "npm test", timeout: 300_000 }
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses", callID: "c" },
+      { args: explicit },
+    )
+    assert.equal(explicit.timeout, 300_000, "an explicit timeout is the caller's choice")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

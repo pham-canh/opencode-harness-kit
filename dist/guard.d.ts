@@ -1,6 +1,15 @@
 import type { Plugin } from "./plugin.js";
 export declare const MARKER = "[opencode-harness-kit] blocked";
 /**
+ * The longest a shell call may run when the caller did not ask for a
+ * timeout. OpenCode's own default is two minutes, but a max-effort subagent
+ * spent 181.9s in one `git status` audit call and 66.8s in a command whose
+ * own timeout was 200ms, so a real command with no ceiling is a real cost.
+ * A caller that needs more passes `timeout` explicitly; this only fills the
+ * empty case.
+ */
+export declare const DEFAULT_SHELL_TIMEOUT_MS = 90000;
+/**
  * The files a patch touches.
  *
  * `apply_patch` sends a patch, not a path, so the paths have to be read out

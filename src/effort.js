@@ -11,7 +11,7 @@
 // the lane actually runs on, so a lane asking for `max` on a model without
 // `max` gets the nearest level that actually exists.
 
-import { loadProfile, resolveRoles, resolveDefaultVariant, resolveLaneModel, LANE_NAMES } from "./profile.js"
+import { loadProfile, resolveRoles, resolveDefaultVariant, resolveLaneModel, resolveEffort, LANE_NAMES } from "./profile.js"
 import { unhealthyModels } from "./health.js"
 
 /**
@@ -23,6 +23,7 @@ import { unhealthyModels } from "./health.js"
  * @property {string} profileId
  * @property {string} model
  * @property {string|null} defaultVariant
+ * @property {string|null} utilityVariant
  * @property {Record<string, string|null>} roles
  * @property {Record<string, string | null>} laneModels
  * @property {string[]} notes
@@ -38,6 +39,17 @@ import { unhealthyModels } from "./health.js"
  * @type {string[]}
  */
 export const MANAGED_ROLES = LANE_NAMES
+
+/**
+ * The two built-in utility agents that otherwise inherit the session's
+ * effort. `general` runs every subagent, and `compaction` rewrites the
+ * context; on a `max` session both were measured as the slowest paths in a
+ * real audit. They are not lanes, so they are not in `LANE_NAMES` and cannot
+ * be put in a profile's `roles`.
+ *
+ * @type {string[]}
+ */
+export const UTILITY_ROLES = ["general", "compaction"]
 
 /**
  * The spent routes the effort plan honours.
@@ -61,6 +73,10 @@ export function planEffort(profileId, opts = {}) {
   const scoped = unhealthy === undefined ? opts : { ...opts, unhealthy }
   const levels = p.effort?.levels ?? []
   const roles = resolveRoles(p, scoped)
+  // The lowest rung the session model actually publishes. `low` is the
+  // request; `resolveEffort` snaps it to the lowest level the model has, and
+  // returns null when the model publishes no tunable effort at all.
+  const utilityVariant = resolveEffort(levels, "low")
   const notes = []
 
   if (levels.length === 0) {
@@ -96,6 +112,7 @@ export function planEffort(profileId, opts = {}) {
     profileId,
     model: `${p.provider}/${p.model}`,
     defaultVariant: resolveDefaultVariant(p),
+    utilityVariant,
     roles,
     laneModels,
     notes,
@@ -146,6 +163,24 @@ export function applyEffort(config, result, opts = {}) {
     if (level === null) delete existing.variant
     else existing.variant = level
     cfg.agent[role] = existing
+  }
+
+  // `general` and `compaction` are built-ins: they have no lane of their own
+  // in the profile, so without this they inherit the session's `max`. An
+  // explicit variant the user set on either agent wins; the kit only fills in
+  // the empty case.
+  if (result.utilityVariant) {
+    for (const role of UTILITY_ROLES) {
+      const existing = cfg.agent[role] ?? {}
+      // `variant` only applies to the agent's own configured model, so the
+      // model is written too. It is the session model unless the user pinned
+      // one; the built-ins would have inherited exactly that model anyway.
+      if (!existing.model) existing.model = sessionModel
+      if (existing.variant === undefined || existing.variant === null) {
+        existing.variant = result.utilityVariant
+      }
+      cfg.agent[role] = existing
+    }
   }
 
   // The router publishes `sessionModel` and `threshold` on the same object.

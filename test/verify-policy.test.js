@@ -104,7 +104,28 @@ test("allow-compound does not accept a gate that cannot fail", () => {
     assert.equal(verdict.code, "vacuous", command)
   }
   assert.equal(inspectVerify("npm test && echo ok", { allowCompound: true }).ok, true)
-  assert.equal(inspectVerify("echo ok; npm test", { allowCompound: true }).ok, true)
+  assert.equal(inspectVerify("echo ok && npm test", { allowCompound: true }).ok, true)
   // `exit 0` after `&&` only runs on success, so it is redundant, not vacuous.
   assert.equal(inspectVerify("npm test && exit 0", { allowCompound: true }).ok, true)
+  // Redirections contain `&` but do not background the command.
+  assert.equal(inspectVerify("npm test 2>&1", { allowCompound: true }).ok, true)
+  assert.equal(inspectVerify("npm test &> verify.log", { allowCompound: true }).ok, true)
+})
+
+test("allow-compound still refuses anything that can hide a failure", () => {
+  for (const command of [
+    "npm test || echo failed",
+    "npm test; echo failed",
+    "npm test | tee log",
+    "npm test\necho failed",
+    "npm test\r\necho failed",
+    "npm test & echo failed",
+    "npm test &",
+    "! npm test",
+    "!npm test",
+  ]) {
+    const verdict = inspectVerify(command, { allowCompound: true })
+    assert.equal(verdict.ok, false, JSON.stringify(command))
+    assert.equal(verdict.code, "compound", JSON.stringify(command))
+  }
 })

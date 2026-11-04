@@ -79,14 +79,27 @@ function hasVacuousCompound(text) {
   return false
 }
 
-const COMPOUND = [
-  { pattern: /(^|[^&])&&([^&]|$)/, why: "&& chains a second command" },
+// A pipe, `||`, `;`, a newline or a substitution can hide a failure, so
+// `allowCompound` never accepts them. It exists for `&&` chains, where every
+// command must succeed for the line to succeed.
+const MASKING = [
   { pattern: /\|\|/, why: "|| hides a failure behind a fallback" },
   { pattern: /(^|[^|])\|([^|]|$)/, why: "a pipe hides which command produced the exit code" },
   { pattern: /;/, why: "; runs more than the command that was reviewed" },
+  { pattern: /[\r\n]/, why: "a newline runs more than the command that was reviewed" },
+  // `&` backgrounds the command, so the line can exit before the test finishes.
+  // `&&` is handled separately, and `>&` / `&>` are redirections rather than a
+  // background job.
+  { pattern: /(^|[^&<>])&([^&>]|$)/, why: "a single & backgrounds the command and does not wait for its exit" },
+  { pattern: /(^\s*|[|;&(]\s*)!/, why: "! inverts the command's exit code, so a failing test becomes success" },
   { pattern: /`/, why: "backtick substitution runs a command nobody reviewed" },
   { pattern: /\$\(/, why: "$() substitution runs a command nobody reviewed" },
 ]
+
+const AND_CHAIN = {
+  pattern: /(^|[^&])&&([^&]|$)/,
+  why: "&& chains a second command",
+}
 
 /**
  * Decide whether a verify command is usable as evidence.
@@ -111,12 +124,14 @@ export function inspectVerify(command, { allowCompound = false } = {}) {
     if (pattern.test(text)) return { ok: false, code: "dangerous", reason: why }
   }
 
-  if (!allowCompound) {
-    for (const { pattern, why } of COMPOUND) {
-      if (pattern.test(text)) {
-        return { ok: false, code: "compound", reason: `${why}; pass --allow-compound-verify to accept it` }
-      }
+  for (const { pattern, why } of MASKING) {
+    if (pattern.test(text)) {
+      const hint = allowCompound ? "only && chains are accepted with --allow-compound-verify" : "pass --allow-compound-verify to accept an && chain"
+      return { ok: false, code: "compound", reason: `${why}; ${hint}` }
     }
+  }
+  if (!allowCompound && AND_CHAIN.pattern.test(text)) {
+    return { ok: false, code: "compound", reason: `${AND_CHAIN.why}; pass --allow-compound-verify to accept it` }
   }
 
   return { ok: true, code: null, reason: "" }

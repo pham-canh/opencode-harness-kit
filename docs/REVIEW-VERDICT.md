@@ -67,7 +67,7 @@ cannot tell it happened.
 
 | Verdict | Outcome |
 |---|---|
-| `pass` | The task is marked `done`, and the task's `output:` records the verdict path. |
+| `pass` | The task is marked `done`, and the task's `output:` records the verdict path. If the verdict file cannot be written, the task is not marked done and the run stops with exit 2. |
 | `fail` | The task is marked `blocked` with the blockers, and the run stops with exit 5. |
 | malformed | The task is marked `blocked`, and the run stops with exit 5. |
 | reviewer crashed | The task is marked `blocked`, and the run stops with exit 5. |

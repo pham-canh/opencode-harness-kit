@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path"
 
 import { createHarnessHooks } from "./harness-hooks.js"
-import { planEffort } from "./effort.js"
+import { planEffort, UTILITY_ROLES } from "./effort.js"
 import { projectRoot } from "./project.js"
 import { profileIdFromConfig } from "./profile.js"
 import { loadProfile, resolveRoles, resolveLaneModel } from "./profile.js"
@@ -209,7 +209,22 @@ export async function setupV2(ctx?: V2Context, options?: Record<string, any>): P
           const list = typeof editor?.list === "function" ? editor.list() : []
           for (const agent of list ?? []) {
             const id = agent?.id ?? agent?.name
-            if (!id || !(id in (result.roles ?? {}))) continue
+            if (!id) continue
+            if (UTILITY_ROLES.includes(id)) {
+              if (!result.utilityVariant) continue
+              editor.update(id, (draft: any) => {
+                if (!draft.model) {
+                  const provider = String(result.model ?? "").split("/")[0] || "opencode"
+                  draft.model = {
+                    providerID: provider,
+                    id: String(result.model ?? "").split("/").slice(1).join("/"),
+                  }
+                }
+                if (draft.variant === undefined) draft.variant = result.utilityVariant
+              })
+              continue
+            }
+            if (!(id in (result.roles ?? {}))) continue
             editor.update(id, (draft: any) => {
               const provider = String(result.model ?? "").split("/")[0] || "opencode"
               const laneModel = result.laneModels?.[id]

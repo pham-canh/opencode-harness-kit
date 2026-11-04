@@ -4,7 +4,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, unlinkSync } from "node:fs"
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, unlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -1098,4 +1098,96 @@ test("the token budget stops before the next round", () => {
   assert.equal(r.code, 2)
   assert.match(r.reason, /token budget/)
   assert.equal(calls, 1, "the second task must not start after the budget is spent")
+})
+
+test("preflight refuses every bad task without marking the wrong one", () => {
+  const dir = scratch(`# Goal
+
+## Tasks
+- [ ] first
+  - files: a.js
+  - change: first change
+  - verify: true
+  - status: pending
+- [ ] second
+  - files: b.js
+  - change: second change
+  - verify: echo ok
+  - status: pending
+- [ ] third
+  - files: c.js
+  - change: third change
+  - verify: npm test
+  - status: pending
+`)
+  try {
+    const r = runLoop({
+      cwd: dir,
+      state: false,
+      events: false,
+      runAgent: () => {
+        throw new Error("preflight must not call the agent")
+      },
+      log: () => {},
+    })
+    assert.equal(r.code, 2)
+    const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+    assert.deepEqual(after.tasks.map((t) => t.status), ["blocked", "blocked", "pending"])
+    assert.match(after.tasks[0].output, /task 1|verify "true"/)
+    assert.match(after.tasks[1].output, /echo ok/)
+    assert.doesNotMatch(after.tasks[0].output, /echo ok/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a review verdict that cannot be written stops the task", () => {
+  const dir = scratch(oneTask())
+  try {
+    writeFileSync(join(dir, ".space", "review"), "not a directory")
+    const r = runLoop({
+      cwd: dir,
+      review: true,
+      events: false,
+      runAgent: () => ({ ok: true }),
+      runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+      runReviewer: () => ({
+        ok: true,
+        status: 0,
+        output: "",
+        stdout: verdictEvent(passVerdict),
+      }),
+      log: () => {},
+    })
+    assert.equal(r.code, 2)
+    assert.match(r.reason, /verdict could not be written/)
+    const after = parseTasks(readFileSync(join(dir, ".space", "tasks.md"), "utf8"))
+    assert.notEqual(after.tasks[0].status, "done")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a task file that cannot be written cannot be reported as done", { skip: process.platform === "win32" || (typeof process.getuid === "function" && process.getuid() === 0) }, () => {
+  const dir = scratch(oneTask())
+  const originalError = console.error
+  console.error = () => {}
+  try {
+    chmodSync(join(dir, ".space"), 0o555)
+    const r = runLoop({
+      cwd: dir,
+      state: false,
+      events: false,
+      lock: { release() {} },
+      runAgent: () => ({ ok: true }),
+      runVerify: () => ({ ok: true, status: 0, output: "ok", seconds: 0 }),
+      log: () => {},
+    })
+    assert.equal(r.code, 2)
+    assert.match(r.reason, /checkpoint failed|could not write/)
+  } finally {
+    console.error = originalError
+    chmodSync(join(dir, ".space"), 0o755)
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

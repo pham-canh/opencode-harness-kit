@@ -78,10 +78,11 @@ blind.
 - **A profile with no declared limits could not send any prompt.** Both the
   context and output fallbacks were `MAX_SAFE_INTEGER`, so the output reserve
   left zero usable tokens. An undeclared output limit now reserves nothing.
-- **`--allow-compound-verify` accepted a pipe into a vacuous command.**
-  `npm test | true` and `npm test | exit 0` always exit 0; they are now rejected
-  as vacuous, while real pipes such as `npm test | tee log` remain available
-  under the escape hatch.
+- **`--allow-compound-verify` accepted commands that hide a failure.** A pipe,
+  `||`, `;`, newline, background `&`, or leading `!` can make a failing verify
+  exit 0; all are now refused even under the escape hatch. The flag accepts
+  `&&` chains such as `npm test && npm run lint`, where every command must
+  succeed. `finish` uses the same rule for the track's acceptance command.
 - **The second readiness setter did not clear later stages.** `track.setReadiness`
   accepted unknown keys and left `design_ready`/`plan_ready` set after a new
   research note; it now mirrors `setReadinessKey` and clears everything after
@@ -102,11 +103,21 @@ blind.
   `finishedAt` alias and a nonexistent `budget.spentMinutes`; the JSON now
   exposes `finishedAt` with the `endedAt` fallback and `seconds`, and the text
   derives minutes from `seconds`.
-- **A compound verify could hide an unfailable segment.** With
-  `--allow-compound-verify`, `npm test || true` and `npm test; echo ok` were
-  accepted even though neither can fail. Vacuous segments are now rejected
-  before the compound escape hatch is considered; real chains such as
-  `npm test && npm run lint` still pass.
+- **A preflight with several invalid tasks corrupted the plan.** Each fix-up
+  inserted an `output:` block into the document, but the next task still used
+  the ranges from the original parse, so two invalid tasks wrote their notes
+  under the first one. The preflight now reparses before each edit.
+- **A review verdict that could not be written was reported as a pass.** If
+  `.space/review` was not writable, the task was still marked done and the run
+  exited 0 with `review: pass` and no verdict file. The write is now a
+  checkpoint: the task stays unfinished and the run stops with exit 2.
+- **A task file that could not be written was ignored.** The task could be
+  recorded as done in `run.json` while `.space/tasks.md` still said `pending`.
+  A failed task-file write now stops the run as `checkpoint-failed`.
+- **The health probe ran `opencode` outside the project.** `health --probe`
+  passed no `cwd` to `spawnSync`, so the model was checked against whatever
+  directory the command happened to start in. The probe now runs in the same
+  project as the health file.
 - **Clearing a task's verify output did not clear it.** `markTask` treated an
   explicit empty string as "leave the previous output alone"; `""` now removes
   the stale block, while an omitted value still preserves it.

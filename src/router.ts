@@ -47,6 +47,10 @@ const SPENT = [
   /\b429\b/,
   /quota (?:exceeded|exhausted)/i,
   /overloaded_error/i,
+  // The live refusal is "Free usage limit reached", and the title agent
+  // wraps it in AI_RetryError, so neither the class name nor a 429 is
+  // guaranteed to be present. The message is the evidence.
+  /usage limit/i,
 ]
 
 /**

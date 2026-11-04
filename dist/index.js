@@ -1796,6 +1796,7 @@ function policyDecision(command, policy) {
 
 // src/guard.ts
 var MARKER = "[opencode-harness-kit] blocked";
+var DEFAULT_SHELL_TIMEOUT_MS = 9e4;
 function hunkFollows(lines, from) {
   for (let i = from; i < lines.length; i++) {
     if (/^@@/.test(lines[i])) return true;
@@ -1915,6 +1916,9 @@ var GuardPlugin = async ({ worktree, directory }) => {
       }
       try {
         if (SHELL_TOOLS.has(input.tool)) {
+          if (output.args && output.args.timeout === void 0 && Object.isExtensible(output.args)) {
+            output.args.timeout = DEFAULT_SHELL_TIMEOUT_MS;
+          }
           const raw = output.args?.workdir;
           if (typeof raw === "string" && raw.trim()) {
             const target = raw.startsWith("~") ? join7(homedir3(), raw.slice(1)) : resolve3(project, raw);
@@ -2395,7 +2399,11 @@ var SPENT = [
   /rate[_ -]?limit/i,
   /\b429\b/,
   /quota (?:exceeded|exhausted)/i,
-  /overloaded_error/i
+  /overloaded_error/i,
+  // The live refusal is "Free usage limit reached", and the title agent
+  // wraps it in AI_RetryError, so neither the class name nor a 429 is
+  // guaranteed to be present. The message is the evidence.
+  /usage limit/i
 ];
 var WITHDRAWN = [
   /\bmodel[\W_]*not[\W_]*found\b/i,
@@ -2746,12 +2754,14 @@ function truncate2(s, n = 300) {
 }
 
 // src/effort.js
+var UTILITY_ROLES = ["general", "compaction"];
 function planEffort(profileId, opts = {}) {
   const p = loadProfile(profileId);
   const unhealthy = opts.unhealthy ?? (opts.dir ? unhealthyModels(opts.dir, p.provider) : void 0);
   const scoped = unhealthy === void 0 ? opts : { ...opts, unhealthy };
   const levels = p.effort?.levels ?? [];
   const roles = resolveRoles(p, scoped);
+  const utilityVariant = resolveEffort(levels, "low");
   const notes = [];
   if (levels.length === 0) {
     notes.push(
@@ -2779,6 +2789,7 @@ function planEffort(profileId, opts = {}) {
     profileId,
     model: `${p.provider}/${p.model}`,
     defaultVariant: resolveDefaultVariant(p),
+    utilityVariant,
     roles,
     laneModels,
     notes
@@ -2801,6 +2812,16 @@ function applyEffort(config, result, opts = {}) {
     if (level === null) delete existing.variant;
     else existing.variant = level;
     cfg.agent[role] = existing;
+  }
+  if (result.utilityVariant) {
+    for (const role of UTILITY_ROLES) {
+      const existing = cfg.agent[role] ?? {};
+      if (!existing.model) existing.model = sessionModel;
+      if (existing.variant === void 0 || existing.variant === null) {
+        existing.variant = result.utilityVariant;
+      }
+      cfg.agent[role] = existing;
+    }
   }
   cfg.harness = {
     ...cfg.harness ?? {},

@@ -19,6 +19,7 @@ function result(overrides = {}) {
     profileId: "fleet-safe",
     model: "opencode/deepseek-v4.1-flash-free",
     defaultVariant: "max",
+    utilityVariant: "low",
     roles: {
       plan: "max",
       build: "high",
@@ -86,6 +87,38 @@ test("a null level deletes a stale variant, an undefined one is skipped", () => 
   )
   assert.equal("variant" in cfg.agent.reviewer, false)
   assert.equal(cfg.agent.locate.variant, "low")
+})
+
+test("the utility agents run at the lowest level, not the session's max", () => {
+  // `general` runs every subagent and `compaction` rewrites the context. They
+  // are built-ins with no profile lane, so without an explicit variant they
+  // inherit the session's `max` - the two slowest paths in the 2026-11-03
+  // audit (218.7s of reasoning and 73-113s per compaction).
+  const cfg = applyEffort({}, result())
+  assert.equal(cfg.agent.general.variant, "low")
+  assert.equal(cfg.agent.compaction.variant, "low")
+})
+
+test("an explicit utility variant wins over the kit's low default", () => {
+  const cfg = applyEffort(
+    { agent: { general: { variant: "high", prompt: "general.md" } } },
+    result(),
+  )
+  assert.equal(cfg.agent.general.variant, "high")
+  assert.equal(cfg.agent.general.prompt, "general.md")
+  assert.equal(cfg.agent.general.model, "opencode/deepseek-v4.1-flash-free")
+  assert.equal(cfg.agent.compaction.variant, "low")
+})
+
+test("a model with no tunable effort gets no utility variant", () => {
+  const cfg = applyEffort({}, result({ utilityVariant: null }))
+  assert.equal("general" in cfg.agent, false)
+  assert.equal("compaction" in cfg.agent, false)
+})
+
+test("a fleet plan resolves the utility effort against its own model", () => {
+  assert.equal(planEffort("fleet-safe").utilityVariant, "low")
+  assert.equal(planEffort("mimo-v2.6-flash-free").utilityVariant, null)
 })
 
 test("the router's own harness keys survive the write", () => {

@@ -7,6 +7,7 @@ export type EffortResult = {
     profileId: string;
     model: string;
     defaultVariant: string | null;
+    utilityVariant: string | null;
     roles: Record<string, string | null>;
     laneModels: Record<string, string | null>;
     notes: string[];
@@ -20,6 +21,7 @@ export type EffortResult = {
  * @property {string} profileId
  * @property {string} model
  * @property {string|null} defaultVariant
+ * @property {string|null} utilityVariant
  * @property {Record<string, string|null>} roles
  * @property {Record<string, string | null>} laneModels
  * @property {string[]} notes
@@ -34,6 +36,16 @@ export type EffortResult = {
  * @type {string[]}
  */
 export declare const MANAGED_ROLES: string[];
+/**
+ * The two built-in utility agents that otherwise inherit the session's
+ * effort. `general` runs every subagent, and `compaction` rewrites the
+ * context; on a `max` session both were measured as the slowest paths in a
+ * real audit. They are not lanes, so they are not in `LANE_NAMES` and cannot
+ * be put in a profile's `roles`.
+ *
+ * @type {string[]}
+ */
+export declare const UTILITY_ROLES: string[];
 /**
  * The spent routes the effort plan honours.
  *

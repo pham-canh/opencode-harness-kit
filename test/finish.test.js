@@ -111,6 +111,27 @@ test("finish refuses a vacuous acceptance command", () => {
   }
 })
 
+test("finish refuses acceptance commands that hide a failure", () => {
+  for (const acceptance of ["npm test || echo failed", "npm test | tee log", "npm test\necho failed"]) {
+    const dir = project(TASK_DONE, acceptance)
+    try {
+      let ran = false
+      const result = finishRequest({
+        cwd: dir,
+        runAcceptance: () => {
+          ran = true
+          return ok()
+        },
+      })
+      assert.equal(result.code, 2, acceptance)
+      assert.match(result.message, /not runnable/, acceptance)
+      assert.equal(ran, false, acceptance)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+})
+
 test("finish reports an install failure as 1", () => {
   const dir = project()
   try {

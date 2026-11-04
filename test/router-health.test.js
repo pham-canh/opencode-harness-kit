@@ -322,6 +322,34 @@ test("an error that says the rate limit was hit does spend the route", async () 
   }
 })
 
+test("the provider's real free-tier refusal spends the route", async () => {
+  // The live text is "Free usage limit reached", and the title agent wraps
+  // it in AI_RetryError. That shape carries neither the FreeUsageLimitError
+  // class name nor a 429, so a classifier keyed on those alone misses the
+  // refusal that actually stops a session.
+  const text =
+    "AI_RetryError: Failed after 3 attempts. Last error: Free usage limit reached. " +
+    "Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go " +
+    "to keep going: https://opencode.ai/go"
+
+  for (const [shape, event] of failedMessage({
+    name: "AI_RetryError",
+    data: { message: text },
+  }).entries()) {
+    const dir = mkdtemp("ock-router-health-")
+    const hooks = await router(dir)
+    await hooks.event({ event })
+
+    const written = healthOnDisk(dir)
+    assert.ok(
+      written.unhealthy[`opencode/${MODEL}`],
+      `shape ${shape}: the free-tier refusal was not recorded: ${JSON.stringify(written)}`,
+    )
+  }
+
+  assert.equal(classifyError({ data: { message: text } })?.kind, "spent")
+})
+
 test("a withdrawn model spends the route, and an unrelated message does not", async () => {
   // The error's own text decides. A body that mentions a model and a
   // "not found" far apart is a coincidence, and the old pattern read it as a

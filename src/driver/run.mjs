@@ -841,7 +841,10 @@ function writeTasks(file, text) {
     }
     const message = err instanceof Error ? err.message : String(err)
     console.error(`tasks: could not write ${file}: ${message}`)
-    return { ok: false, error: message }
+    // The plan is the resume's ground truth. A write that did not land must
+    // stop the run: marking the record done while the task file still says
+    // pending is a success that no later command can reproduce.
+    throw new CheckpointError(`could not write ${file}: ${message}`)
   }
 }
 
@@ -1197,14 +1200,18 @@ export function runLoop(options) {
       if (ids.size) {
         let text = readFileSync(file, "utf8")
         for (const t of parsed.tasks) {
-          if (ids.has(`${t.index}`)) {
-            const bad = !t.verify ? "no verify command" : `verify "${t.verify}" cannot fail`
-            text = markTask(text, t, { status: "blocked", verifyOutput: `blocked before the agent ran: ${bad}` })
-            if (run) {
-              const stateTask = runTask(run, t)
-              stateTask.status = "blocked"
-              stateTask.note = `blocked before the agent ran: ${bad}`
-            }
+          if (!ids.has(`${t.index}`)) continue
+          // Each mark inserts lines into the document, so the task ranges from
+          // the original parse no longer describe the same text. Reparse before
+          // editing, or the second invalid task is marked under the first one.
+          const current = findTask(parseTasks(text), t)
+          if (!current) continue
+          const bad = !t.verify ? "no verify command" : `verify "${t.verify}" cannot fail`
+          text = markTask(text, current, { status: "blocked", verifyOutput: `blocked before the agent ran: ${bad}` })
+          if (run) {
+            const stateTask = runTask(run, current)
+            stateTask.status = "blocked"
+            stateTask.note = `blocked before the agent ran: ${bad}`
           }
         }
         writeTasks(file, text)
@@ -1532,7 +1539,15 @@ export function runLoop(options) {
             blocked = { code: 5, reason: `${task.title}: reviewer did not return a schema'd verdict: ${verdict.error}` }
             break
           }
-          writeVerdict(cwd, task, reviewRound, verdict.parsed, verify)
+          const written = writeVerdict(cwd, task, reviewRound, verdict.parsed, verify)
+          if (written.error) {
+            blocked = {
+              code: 2,
+              terminal: "needs-human",
+              reason: `${task.title}: the review verdict could not be written: ${written.error}`,
+            }
+            break
+          }
           if (verdict.parsed.verdict === "pass") break
           if (reviewFixes < reviewFixRounds) {
             reviewFixes++
@@ -1761,7 +1776,15 @@ export function runLoop(options) {
       if (verdict.error) {
         return finish({ reason: `final reviewer did not return a schema'd verdict: ${verdict.error}`, code: 5, status: "final-review-failed" })
       }
-      writeVerdict(cwd, wholePlan, "final", verdict.parsed, { status: 0, seconds: 0 })
+      const written = writeVerdict(cwd, wholePlan, "final", verdict.parsed, { status: 0, seconds: 0 })
+      if (written.error) {
+        return finish({
+          reason: `the final review verdict could not be written: ${written.error}`,
+          code: 2,
+          status: "checkpoint-failed",
+          terminal: "needs-human",
+        })
+      }
       if (verdict.parsed.verdict !== "pass") {
         return finish({
           reason: `final review failed\n${formatBlockers(verdict.parsed.blockers)}`,
