@@ -59,5 +59,15 @@ test("a deprecated fallback rung is reported gone", () => {
 test("every live shipped model exits zero", () => {
   const r = check()
   assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /every shipped model is still live/)
+  assert.match(r.out, /every catalogue-backed shipped model is still live/)
+})
+
+test("a local profile is not reported gone when models.dev does not carry it", () => {
+  // `ollama-qwen3-coder` is served on localhost and is deliberately absent
+  // from models.dev. Asking the catalogue for it used to report the model as
+  // withdrawn on every scheduled run.
+  const r = check()
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /ollama-qwen3-coder is local/)
+  assert.doesNotMatch(r.out, /qwen3-coder:30b is gone/)
 })

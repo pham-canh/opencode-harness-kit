@@ -140,6 +140,7 @@
       "title": "Qwen3 Coder 30B on Ollama (local)",
       "retention": "zero-retention",
       "free": false,
+      "local": true,
       "topEffort": null,
       "context": 262144,
       "default": false,

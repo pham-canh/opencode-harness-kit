@@ -50,6 +50,35 @@ test("--tag requires the tag to match the package version", () => {
   assert.match(issues[0], /tag "v1\.2\.2"/)
 })
 
+test("--tag requires the tag to exist, not just to be spelled correctly", () => {
+  const issues = releaseIssues(good({ release: true, tag: `v${VERSION}`, tagExists: false }))
+  assert.equal(issues.length, 1)
+  assert.match(issues[0], /does not exist/)
+})
+
+test("--tag requires the tag to point at HEAD", () => {
+  const issues = releaseIssues(
+    good({ release: true, tag: `v${VERSION}`, tagExists: true, tagAtHead: false }),
+  )
+  assert.equal(issues.length, 1)
+  assert.match(issues[0], /does not point at HEAD/)
+})
+
+test("a tag that exists at HEAD has no issues", () => {
+  const issues = releaseIssues(
+    good({ release: true, tag: `v${VERSION}`, tagExists: true, tagAtHead: true }),
+  )
+  assert.deepEqual(issues, [])
+})
+
+test("a tag whose target cannot be checked is not silently accepted", () => {
+  const issues = releaseIssues(
+    good({ release: true, tag: `v${VERSION}`, tagExists: true, tagAtHead: null }),
+  )
+  assert.equal(issues.length, 1)
+  assert.match(issues[0], /could not verify/)
+})
+
 test("a required file missing from the tarball is an issue", () => {
   const files = REQUIRED_FILES.filter((path) => path !== "MIGRATION.md")
   const issues = releaseIssues(good({ files }))

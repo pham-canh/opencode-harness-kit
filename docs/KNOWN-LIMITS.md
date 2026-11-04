@@ -619,8 +619,11 @@ Two things it also does not do:
 ## A local model is not a cheaper hosted model
 
 `ollama-qwen3-coder` exists for work that must not leave the machine, not to
-save money on a fleet. A 30B model runs the loop more slowly on the hardware
-that fits it, follows a multi-task plan less reliably, and fails in the shape
+save money on a fleet. It is marked `"local": true`, so `doctor` and
+`refresh` skip the models.dev comparison instead of reporting it withdrawn;
+the profile's limits and capabilities are maintained by hand. A 30B model
+runs the loop more slowly on the hardware that fits it, follows a multi-task
+plan less reliably, and fails in the shape
 of "the agent exited 0 without editing the file" rather than an error. That
 failure is reported as a route failure and `work` will try the next route -
 which, for a single-model local profile, is none. Start it on `locate` and

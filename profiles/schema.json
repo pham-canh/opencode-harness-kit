@@ -45,6 +45,10 @@
       "type": "string",
       "description": "ISO date a human checked this profile against live metadata."
     },
+    "local": {
+      "type": "boolean",
+      "description": "True when the model is served locally and models.dev does not carry it. Catalogue checks skip it instead of reporting it as withdrawn."
+    },
     "retention": {
       "enum": [
         "zero-retention",

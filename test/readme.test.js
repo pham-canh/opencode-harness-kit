@@ -337,17 +337,16 @@ test("the README presents OC_HARNESS_MODEL as an escape hatch, not a control", (
   )
 })
 
-test("the CHANGELOG records the resolve work under Unreleased", () => {
+test("the CHANGELOG records the resolve work in the latest release", () => {
   const changelog = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8")
-  const unreleased = changelog.slice(
-    changelog.indexOf("## [Unreleased]"),
-    changelog.indexOf("## [", changelog.indexOf("## [Unreleased]") + 1),
-  )
-  assert.ok(unreleased.length > 0, "CHANGELOG.md has no [Unreleased] section")
+  const heading = /^## \[(\d+\.\d+\.\d+[^\]]*)\][^\n]*$/m.exec(changelog)
+  assert.ok(heading, "CHANGELOG.md has no release heading")
+  const next = changelog.indexOf("\n## [", heading.index + 1)
+  const section = changelog.slice(heading.index, next === -1 ? undefined : next)
   for (const needle of ["resolve", "big-pickle-auto", "laneModelId", "retention ceiling"]) {
     assert.ok(
-      unreleased.includes(needle),
-      `[Unreleased] does not mention ${needle}`,
+      section.includes(needle),
+      `${heading[1]} does not mention ${needle}`,
     )
   }
 })

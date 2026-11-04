@@ -343,7 +343,8 @@ The full list, with a reason for each, is in
 then typechecks, runs the suite, checks the import graph and the eval
 premises, and installs into a fresh directory. `doctor` is the online half —
 it reads models.dev and the installed config — and it is not a substitute for
-that gate.
+that gate. The tag is what publishes: see
+[`CONTRIBUTING.md`](CONTRIBUTING.md#cutting-a-release) for the steps.
 
 A cron line that tells you the moment a route disappears, rather than the
 moment a lane starts failing:
@@ -351,6 +352,11 @@ moment a lane starts failing:
 ```cron
 0 9 * * * cd ~/.config/opencode && oc-harness doctor --check-models
 ```
+
+A **local** profile (`ollama-qwen3-coder`) is served on localhost and is not
+in models.dev, so `doctor` and `refresh` name it and skip the catalogue
+comparison instead of reporting its model as withdrawn. It is the one
+exemption, and it is printed, not silent.
 
 `doctor` separates the two kinds of finding, because they are not the same
 kind of finding:

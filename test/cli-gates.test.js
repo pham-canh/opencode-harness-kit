@@ -336,7 +336,7 @@ test("doctor --check-models fails when a shipped model is gone", () => {
       env: { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${full}` },
     })
     assert.equal(ok.code, 0, ok.out)
-    assert.match(ok.out, /every shipped model is still live/)
+    assert.match(ok.out, /every catalogue-backed shipped model is still live/)
   } finally {
     box.cleanup()
   }
@@ -388,6 +388,53 @@ test("refresh --all re-derives every profile against the live catalogue", () => 
       123456,
       "the test rewrote the kit's own profiles",
     )
+  } finally {
+    box.cleanup()
+  }
+})
+
+test("refresh skips a local profile instead of calling it gone", () => {
+  const box = sandbox()
+  try {
+    const profiles = join(box.dir, "profiles")
+    cpSync(join(REPO, "profiles"), profiles, { recursive: true })
+
+    const models = {}
+    for (const id of listProfileIds()) {
+      const p = loadProfile(id)
+      if (p.local === true) continue
+      models[p.model] = {
+        limit: { context: p.limits.context, output: p.limits.output, input: p.limits.input },
+        reasoning_options: p.effort.levels.length
+          ? [{ type: "effort", values: p.effort.levels }]
+          : [],
+        temperature: p.supports?.temperature ?? true,
+        attachment: p.supports?.attachment ?? false,
+        tool_call: p.supports?.toolCall ?? true,
+        structured_output: p.supports?.structuredOutput ?? false,
+        reasoning: p.supports?.reasoning ?? false,
+      }
+    }
+    const cat = join(box.dir, "cat.json")
+    writeFileSync(cat, JSON.stringify({ opencode: { models } }))
+    const env = {
+      ...box.env,
+      OPENCODE_HARNESS_CATALOG_URL: `file://${cat}`,
+      OPENCODE_HARNESS_PROFILES: profiles,
+    }
+
+    const all = run(box, ["refresh", "--all"], { env })
+    assert.equal(all.code, 0, all.out)
+    const allPlain = all.out.replace(/\x1b\[[0-9;]*m/g, "")
+    assert.match(allPlain, /ollama-qwen3-coder is local/)
+    assert.doesNotMatch(allPlain, /ollama-qwen3-coder .*no longer in the catalogue/)
+
+    const localFile = join(profiles, "ollama-qwen3-coder.json")
+    const before = readFileSync(localFile, "utf8")
+    const one = run(box, ["refresh", "ollama-qwen3-coder"], { env })
+    assert.equal(one.code, 0, one.out)
+    assert.match(one.out.replace(/\x1b\[[0-9;]*m/g, ""), /nothing to refresh/)
+    assert.equal(readFileSync(localFile, "utf8"), before, "the local profile was rewritten")
   } finally {
     box.cleanup()
   }

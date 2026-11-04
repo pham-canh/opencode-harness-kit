@@ -2,16 +2,17 @@
 // release-check.mjs - the version, the changelog, the tag and the tarball have
 // to describe the same release.
 //
-// The publish workflow already compares the tag with package.json. That catches
-// the loud failure - a tag that would publish a different version - but not the
-// quiet ones: a package-lock.json left at the previous version, a CHANGELOG
-// whose first release heading is one behind, or a tarball missing a file the
-// README tells a reader to open.
+// A tag name that agrees with package.json is not the same thing as a tag that
+// exists, or one that points at the commit being tested. This gate checks the
+// version pair, the tag's existence and target, the CHANGELOG, and the tarball
+// together, so a release cannot be green while any one of them is describing a
+// different release.
 //
 // `npm run release:check` is the release gate. Without --release it checks the
 // version pair and the tarball, which is what an ordinary pull request can
 // satisfy. With --release it also requires the first release heading in
-// CHANGELOG.md to match, and with --tag it requires the tag to agree too.
+// CHANGELOG.md to match. With --tag it also requires the tag to agree, to
+// exist, and to point at HEAD.
 //
 // The tarball is read with `npm pack --dry-run --json --ignore-scripts`, so
 // nothing is written and no lifecycle script runs.
@@ -63,9 +64,20 @@ export function filePaths(files) {
  * @param {(string | { path?: string })[]} input.files
  * @param {boolean} [input.release]
  * @param {string | null} [input.tag]
+ * @param {boolean | null} [input.tagExists]
+ * @param {boolean | null} [input.tagAtHead]
  * @returns {string[]}
  */
-export function releaseIssues({ pkg, lock, changelog, files, release = false, tag = null }) {
+export function releaseIssues({
+  pkg,
+  lock,
+  changelog,
+  files,
+  release = false,
+  tag = null,
+  tagExists = null,
+  tagAtHead = null,
+}) {
   const issues = []
   const version = pkg?.version
 
@@ -99,6 +111,23 @@ export function releaseIssues({ pkg, lock, changelog, files, release = false, ta
 
   if (tag !== null && tag !== `v${version}`) {
     issues.push(`tag ${JSON.stringify(tag)} does not match package.json version ${JSON.stringify(version)}`)
+  }
+
+  // A tag name that matches package.json is not a tag that exists. Without
+  // this check `--tag v0.8.0` passed on a tree where v0.8.0 had never been
+  // created, which is exactly the state a release gate must refuse.
+  if (tag !== null && tagExists === false) {
+    issues.push(`tag ${JSON.stringify(tag)} does not exist in this repository`)
+  }
+
+  // The publish workflow checks out the tag ref, so HEAD is the tag's commit.
+  // A tag on an older commit would publish code that was never tested by the
+  // run for this tag.
+  if (tag !== null && tagAtHead === false) {
+    issues.push(`tag ${JSON.stringify(tag)} does not point at HEAD`)
+  }
+  if (tag !== null && tagExists === true && tagAtHead === null) {
+    issues.push(`could not verify that tag ${JSON.stringify(tag)} points at HEAD`)
   }
 
   const paths = filePaths(files)
@@ -162,6 +191,28 @@ export function packedFiles() {
   return packSummary(r.stdout ?? "").files ?? []
 }
 
+function git(args) {
+  return spawnSync("git", args, { cwd: ROOT, encoding: "utf8" })
+}
+
+/**
+ * Ask git whether a tag exists and whether it points at HEAD.
+ *
+ * `null` means git could not answer (for example, a tarball checkout with no
+ * repository). The caller treats that as a failure to verify, not as a pass.
+ *
+ * @param {string} tag
+ * @returns {{ exists: boolean, atHead: boolean | null }}
+ */
+export function tagState(tag) {
+  const exists = git(["rev-parse", "--verify", "--quiet", `refs/tags/${tag}`])
+  if (exists.status !== 0) return { exists: false, atHead: null }
+  const target = git(["rev-parse", "--verify", "--quiet", `refs/tags/${tag}^{commit}`])
+  const head = git(["rev-parse", "--verify", "--quiet", "HEAD"])
+  if (target.status !== 0 || head.status !== 0) return { exists: true, atHead: null }
+  return { exists: true, atHead: target.stdout.trim() === head.stdout.trim() }
+}
+
 function main(argv) {
   const release = argv.includes("--release")
   const tagAt = argv.indexOf("--tag")
@@ -196,7 +247,17 @@ function main(argv) {
     return 1
   }
 
-  const issues = releaseIssues({ pkg, lock, changelog, files, release, tag })
+  const state = tag === null ? null : tagState(tag)
+  const issues = releaseIssues({
+    pkg,
+    lock,
+    changelog,
+    files,
+    release,
+    tag,
+    tagExists: state?.exists ?? null,
+    tagAtHead: state?.atHead ?? null,
+  })
   if (issues.length > 0) {
     for (const issue of issues) console.error(`  - ${issue}`)
     console.error(`release check: ${issues.length} issue${issues.length === 1 ? "" : "s"}`)

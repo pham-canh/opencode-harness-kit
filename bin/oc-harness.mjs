@@ -2176,6 +2176,9 @@ async function cmdRefreshAll() {
   // summary line counted every id it was given, so a broken profile was
   // reported as a refreshed one.
   const skipped = []
+  // Local models are not in models.dev, so there is nothing to refresh. They
+  // are reported separately instead of being called gone.
+  const local = []
   let checked = 0
   for (const id of ids) {
     const path = profilePath(id)
@@ -2188,6 +2191,10 @@ async function cmdRefreshAll() {
       p = JSON.parse(readFileSync(path, "utf8"))
     } catch (err) {
       skipped.push(`${id} (${err instanceof Error ? err.message : String(err)})`)
+      continue
+    }
+    if (p.local === true) {
+      local.push(id)
       continue
     }
     checked++
@@ -2247,6 +2254,7 @@ async function cmdRefreshAll() {
   for (const c of changed) console.log(`  ${green("~")} ${c}`)
   for (const g of gone) console.log(`  ${red("!")} ${g} is no longer in the catalogue`)
   for (const id of same) console.log(`  ${green("✓")} ${id} already matches`)
+  for (const id of local) console.log(`  ${stamp(id)} ${stamp("is local - models.dev does not carry it, nothing to refresh")}`)
   for (const s of skipped) console.log(`  ${red("!")} ${s} - skipped`)
   if (skipped.length) {
     console.log("")
@@ -2815,8 +2823,14 @@ async function cmdRefresh(id) {
   }
   const path = profilePath(id)
   if (!path) fail(`no profile named "${id}"`)
-  const catalog = await fetchCatalogOrFail()
   const p = JSON.parse(readFileSync(path, "utf8"))
+  if (p.local === true) {
+    console.log(
+      `\n  ${green("✓")} ${id} is local - models.dev does not carry it, so there is nothing to refresh.\n`,
+    )
+    return
+  }
+  const catalog = await fetchCatalogOrFail()
   const live = catalog?.[p.provider]?.models?.[p.model]
 
   if (!live) {
@@ -3027,9 +3041,10 @@ function recordWithdrawal(model, profiles) {
  * chain has one fewer rung, and nobody is told.
  *
  * @param {any} catalog
- * @returns {{gone: Map<string, string[]>, skipped: {id: string, why: string}[]}}
- *   the model ids that are gone and the profiles that used each one, and the
- *   profiles that could not be checked at all
+ * @returns {{gone: Map<string, string[]>, skipped: {id: string, why: string}[], local: string[]}}
+ *   the model ids that are gone and the profiles that used each one, the
+ *   profiles that could not be checked at all, and the local profiles that
+ *   models.dev deliberately does not carry
  */
 function withdrawnModels(catalog) {
   /** @type {Map<string, string[]>} the model, and the profiles that use it */
@@ -3041,12 +3056,22 @@ function withdrawnModels(catalog) {
   // fine. A skipped profile is a failure, not a footnote.
   /** @type {{id: string, why: string}[]} */
   const skipped = []
+  // A local profile is not in models.dev by design. Reporting its model as
+  // "gone" is the false positive that kept the scheduled check red for nine
+  // runs, and treating it as skipped would make a healthy install fail. It is
+  // named in the report instead, so the exemption is visible.
+  /** @type {string[]} */
+  const local = []
   for (const id of listProfileIds()) {
     let p
     try {
       p = loadProfile(id)
     } catch (err) {
       skipped.push({ id, why: err instanceof Error ? err.message : String(err) })
+      continue
+    }
+    if (p.local === true) {
+      local.push(id)
       continue
     }
     for (const model of new Set([
@@ -3068,7 +3093,7 @@ function withdrawnModels(catalog) {
       gone.set(model, users)
     }
   }
-  return { gone, skipped }
+  return { gone, skipped, local }
 }
 
 /**
@@ -3092,17 +3117,21 @@ async function cmdDoctorWatch() {
   // The profiles that could not be checked, so the watch says them once and
   // not every poll.
   const seenSkipped = new Set()
+  const seenLocal = new Set()
   let first = true
   for (;;) {
     /** @type {Map<string, string[]>} */
     let gone = new Map()
     /** @type {{id: string, why: string}[]} */
     let skipped = []
+    /** @type {string[]} */
+    let local = []
     try {
       const catalog = await fetchCatalog()
       const found = withdrawnModels(catalog)
       gone = found.gone
       skipped = found.skipped
+      local = found.local
     } catch (err) {
       // A failed fetch is NOT an empty catalogue. Treating it as one
       // announced every missing model as "is back", emptied the seen-set,
@@ -3128,6 +3157,11 @@ async function cmdDoctorWatch() {
       console.error(
         stamp("    a profile that was skipped was not checked. Its model may have been withdrawn without anyone noticing."),
       )
+    }
+    for (const id of local) {
+      if (seenLocal.has(id)) continue
+      seenLocal.add(id)
+      console.log(stamp(`  ${id} is local, so models.dev does not carry it - not checked`))
     }
     if (!first) {
       for (const m of seen) {
@@ -3155,7 +3189,20 @@ async function cmdDoctorWatch() {
         )
         process.exit(1)
       }
-      console.log(green("  every shipped model is still live"))
+      if (local.length) {
+        console.log(
+          stamp(
+            `  ${local.length} local profile(s) not checked against models.dev: ${local.join(", ")}`,
+          ),
+        )
+      }
+      console.log(
+        green(
+          local.length
+            ? "  every catalogue-backed shipped model is still live"
+            : "  every shipped model is still live",
+        ),
+      )
       return
     }
     first = false
@@ -3239,7 +3286,11 @@ async function cmdResearch() {
   const profiles = []
   for (const id of listProfileIds()) {
     try {
-      profiles.push(loadProfile(id))
+      const p = loadProfile(id)
+      // models.dev does not carry a local model, so "gone" is not a finding
+      // about it. Research is about the hosted tier.
+      if (p.local === true) continue
+      profiles.push(p)
     } catch {
       // doctor reports this, with the profile's own name on it.
     }
@@ -3346,6 +3397,11 @@ async function runDoctor(catalog) {
       console.log(`  ${red("✗")} ${id.padEnd(32)} ${message}`)
       note("problem", id, message)
       problems++
+      continue
+    }
+    if (p.local === true) {
+      console.log(`  ${green("✓")} ${id.padEnd(32)} ${stamp("local - not checked against models.dev")}`)
+      note("info", id, "local profile - not checked against models.dev")
       continue
     }
     const live = catalog?.[p.provider]?.models?.[p.model]

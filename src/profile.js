@@ -70,6 +70,7 @@ export const ROOT = findRoot(resolve(HERE, ".."))
  * @property {string | null} [family]
  * @property {{ model: string, why?: string }} [utility] the route for opencode's short auxiliary calls
  * @property {string} [verified]
+ * @property {boolean} [local] the model is served locally and is not in models.dev
  * @property {Retention} retention
  * @property {Retention} [maxRetention]
  * @property {string} [notes]

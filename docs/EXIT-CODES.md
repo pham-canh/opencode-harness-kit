@@ -116,8 +116,9 @@ metadata is stale. That exits 0, and the drift is reported. `--strict` is
 the flag that makes it fail, for a CI job that wants to know.
 
 `--check-models` exits 1 when a shipped model has **left** the catalogue -
-not when it has drifted. `--watch` never exits: it polls, and reports only
-what CHANGED.
+not when it has drifted. A profile marked `"local": true` is not in
+models.dev by design; it is named in the report and does not count as gone.
+`--watch` never exits: it polls, and reports only what CHANGED.
 
 A failed catalogue fetch is not a finding. It is reported, the models are not
 announced as withdrawn, and the poll carries on - a catalogue that cannot be

@@ -1,34 +1,354 @@
-name: ci
+# The name is the filename, deliberately. npm's trusted publisher form asks
+# for the workflow FILENAME, and the Actions tab shows this name - so the
+# value that has to be typed on npmjs.com is the value that is on screen.
+name: ci.yml
 
 on:
   push:
     branches: [main]
+    # A tag has to trigger the workflow, or the publish job below can never
+    # run: its condition is `startsWith(github.ref, 'refs/tags/v')`, and a
+    # workflow that only listens to `main` never sees a tag.
+    tags: ['v*']
   pull_request:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    concurrency:
+      # One group per OS and OpenCode version. A shared group would make the
+      # matrix jobs cancel each other, which is a green CI that tested one
+      # platform and one client.
+      group: check-${{ matrix.os }}-${{ matrix.opencode }}-${{ github.ref }}
+      cancel-in-progress: true
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        # The terminal tests use script(1), and macOS ships the BSD one with
+        # a different command line. Running only on Linux let that difference
+        # ship. The suite is the product; it has to run where people use it.
+        os: [ubuntu-latest, macos-latest]
         opencode: ["1.19.4", "2.1.4"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
-      - run: npm ci
+          node-version: '22.x'
+      - run: npm ci --no-audit --no-fund
       - name: Install OpenCode
         run: |
+          set -euo pipefail
           if [ "${{ matrix.opencode }}" = "1.19.4" ]; then
             npm install -g opencode-ai@1.19.4
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            npm install -g @opencode/cli-darwin-arm64@2.1.4
           else
             npm install -g @opencode/cli-linux-x64@2.1.4
           fi
+      # dist/ is committed, so test:all rebuilds before the tests that import it.
+      # test:all is deliberately the offline subset: measure/attribute read the
+      # install database and ~/.config/opencode, neither of which exists here.
       - run: npm run check
+      # The suite runs from a checkout; the tarball is what a user installs.
+      # Without --release here: a pull request is not expected to have bumped
+      # CHANGELOG.md yet, but its version pair and file list must still agree.
+      - name: release integrity
+        run: npm run release:check
+      # The suite says the modules it loads work. The graph says nothing is
+      # orphaned by a rename and no module cycle was introduced, and the
+      # coverage thresholds keep the failover and trust branches from quietly
+      # losing the tests that reach them.
+      - run: npm run graph
+      - run: npm run test:coverage
+      # A suite task cites file:line. The citation is the premise, and a
+      # rename makes it a lie without failing any test.
+      - run: node eval/premises.mjs --target . --suite eval/tasks-self.json
+      - name: loop end-to-end
+        run: npm run test:loop
+      - run: npm run gate:loop
+      - name: CLI smoke test
+        run: |
+          set -euo pipefail
+          node bin/oc-harness.mjs list
+          node bin/oc-harness.mjs show fleet-safe
+          node bin/oc-harness.mjs use fleet-safe --print | tail -20
+          # `big-pickle` publishes no effort levels: the loader omits `variant`
+          # for every lane it serves. Assert the count is zero, not merely that
+          # the word appears somewhere - an unmanaged key inherited from a dirty
+          # local config once faked this check green.
+          #
+          # The check runs against an empty config dir, or a config left over
+          # from a previous step would carry its own `variant` keys into the
+          # merge and the count would not be zero.
+          export OPENCODE_CONFIG_DIR="$RUNNER_TEMP/opencode-smoke"
+          mkdir -p "$OPENCODE_CONFIG_DIR"
+          test "$(node bin/oc-harness.mjs use big-pickle --print | grep -c '"variant"')" = "0"
+          # A fleet puts ten different models behind ten lanes.
+          test "$(node bin/oc-harness.mjs use fleet-all --print | grep -c '"model": "opencode/')" -ge "10"
+      - name: install and verify into a scratch config dir
+        run: |
+          set -euo pipefail
+          export OPENCODE_CONFIG_DIR="$RUNNER_TEMP/opencode-config"
+          node bin/oc-harness.mjs use fleet-safe --yes
+          node bin/oc-harness.mjs install
+          # --strict, because the migration case is exactly what CI is for:
+          # a config written by the previous kit must not silently pass as
+          # the current one. Locally that is a note; here it is a failure.
+          node bin/oc-harness.mjs verify --strict
+          node bin/oc-harness.mjs agents
+          # Reuses the same scratch config dir, so the config-drift check inside
+          # doctor reads the config installed above instead of the runner's.
+          #
+          # doctor fails on a broken install, and on catalogue drift only under
+          # --strict. A provider changing a context window is not a broken
+          # install, and a CI job that goes red on that teaches people to
+          # ignore the job.
+          node bin/oc-harness.mjs doctor
       - name: V2 gates
         if: startsWith(matrix.opencode, '2.')
         run: |
+          set -euo pipefail
           export HOME="$RUNNER_TEMP/oc-home"
           mkdir -p "$HOME"
           npm run gate:v2
+
+  publish:
+    needs: check
+    # Only on a tag. On every push to main the second run would fail with
+    # EPUBLISHCONFLICT, because the version in package.json is already on the
+    # registry - a broken build on every ordinary commit after the first.
+    # Cutting a release: bump the version, update CHANGELOG.md, then
+    #   git tag v0.8.0 && git push origin main v0.8.0
+    # The tag is what triggers the publish; the release notes are the
+    # CHANGELOG entry for that version.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Required for trusted publishing: npm exchanges the runner's OIDC
+      # identity for a short-lived publish token, so there is no long-lived
+      # secret in the repository to leak, rotate or expire.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # Node 24 ships an npm that already speaks trusted publishing. A
+          # `npm install -g npm@latest` self-upgrade also works, and is
+          # documented elsewhere as intermittently corrupting the install.
+          node-version: '24.x'
+          # Never cache the package manager in a release build: the cache is
+          # keyed on the lockfile, and a stale one is a mystery in a publish.
+          package-manager-cache: false
+      - name: configure the registry
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          {
+            echo "registry=https://registry.npmjs.org/"
+            if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+              echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}"
+              echo "always-auth=true"
+            fi
+          } >> ~/.npmrc
+      - run: npm ci --no-audit --no-fund
+      # Two ways to publish, and the job picks the one that is available.
+      #
+      #   trusted publishing (OIDC)  - no secret at all. The package names
+      #     this workflow on npmjs.com and npm trusts the runner's identity.
+      #   a token                   - a granular token scoped to this one
+      #     package, for the case where OIDC is not set up.
+      #
+      # The registry is configured by hand rather than through setup-node's
+      # `registry-url`, because that helper always writes an auth line. An
+      # empty auth line makes npm think it is authenticated and skip the OIDC
+      # exchange entirely.
+      - name: the tag and the package must agree
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "::error::the tag says $tag_version and package.json says $package_version."
+            echo "::error::publishing would publish $package_version under a v$tag_version tag."
+            exit 1
+          fi
+      # The check above compares two fields. This compares the lockfile, the
+      # CHANGELOG and the files actually packed, and it verifies that the tag
+      # exists and points at the commit this run checked out.
+      - name: release integrity
+        run: npm run release:check -- --release --tag "$GITHUB_REF_NAME"
+      # npm reports a failed OIDC exchange as "package not found", which is
+      # what a MISSING or MISMATCHED trusted publisher looks like from here -
+      # and it does not say which field was wrong. The claims are what the
+      # registry compares the configuration against, so they are printed here
+      # and can be read next to the entry on npmjs.com.
+      - name: print the OIDC claims npm matches against
+        if: ${{ env.NODE_AUTH_TOKEN == '' }}
+        run: |
+          set -uo pipefail
+          echo "npm version: $(npm --version)"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::The runner did not provide ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN. The publish job needs the id-token: write permission."
+            exit 1
+          fi
+          curl -sS -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
+            -H "Accept: application/json" > /tmp/idtoken.json
+          node -e '
+            const fs = require("fs")
+            let t = ""
+            try { t = JSON.parse(fs.readFileSync("/tmp/idtoken.json", "utf8")).value || "" } catch {}
+            if (!t) { console.log("  the runner issued no id token"); process.exit(0) }
+            const c = JSON.parse(Buffer.from(t.split(".")[1], "base64url").toString())
+            console.log("  what the registry will look for, and what it will be given:")
+            console.log("    repository    " + (c.repository ?? "(absent)"))
+            console.log("    workflow file " + String(c.workflow_ref ?? "").split("@")[0].split("/").pop() + "   (the trusted publisher must name exactly this)")
+            console.log("    environment   " + (c.environment ?? "(absent) - the trusted publisher must name NO environment"))
+            console.log("    owner         " + (c.repository_owner ?? "(absent)"))
+            for (const k of ["aud", "sub", "workflow", "workflow_ref", "job_workflow_ref", "ref", "event_name"]) {
+              console.log("    " + k + ": " + (c[k] === undefined ? "(absent)" : c[k]))
+            }
+
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"))
+            const want = String(pkg.repository?.url ?? "").replace(/.*github\.com[/:]/, "").replace(/\.git$/, "")
+            const got = c.repository ?? ""
+            if (want && got && want !== got) {
+              console.error("")
+              console.error("::error::the OIDC claim names a different repository than package.json.")
+              console.error("::error::  the claim says:    " + got)
+              console.error("::error::  package.json says: " + want)
+              console.error("::error::the trusted publisher on npmjs.com is matched against the CLAIM, so a renamed repository stops publishing.")
+              console.error("::error::re-point it with:")
+              console.error("::error::  npm trust github " + pkg.name + " --file ci.yml --repo " + want + " --allow-publish --allow-stage-publish -y")
+              process.exit(1)
+            }
+          '
+      - name: check the publish credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            if ! npm whoami; then
+              echo "::error::NPM_TOKEN is not a valid npm token. The publish job needs a token that can publish opencode-harness-kit."
+              exit 1
+            fi
+            echo "publishing with a token"
+            npm trust list opencode-harness-kit --json 2>/dev/null || true
+          else
+            echo "no NPM_TOKEN: publishing through trusted publishing (OIDC)"
+          fi
+      # Is the version already on the registry? A re-run of a tag whose
+      # publish already succeeded has nothing to publish: npm refuses a
+      # second publish of the same version (EPUBLISHCONFLICT), the job goes
+      # red, and the tag ends up marked as a failed release for a package
+      # that is in fact out. So the registry is asked first, and a re-run of
+      # a published tag is green and says what it found.
+      - name: is this version already on the registry?
+        id: already
+        run: |
+          set -uo pipefail
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if npm view "opencode-harness-kit@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "  $version is already on the registry - there is nothing to publish"
+          elif npm stage list opencode-harness-kit 2>/dev/null | grep -qF "$version"; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "  $version is staged on the registry - it was published and is still being processed"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: publish
+        id: publish
+        if: steps.already.outputs.published != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm_config_loglevel: verbose
+        run: |
+          set -uo pipefail
+          args=(--access public)
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            args+=(--provenance)
+          fi
+          code=0
+          npm publish "${args[@]}" > /tmp/publish.log 2>&1 || code=$?
+          echo "--- what npm printed ---"
+          tail -30 /tmp/publish.log
+          echo "--- end ---"
+          if [ $code -ne 0 ]; then
+            if grep -qE "E409|Cannot publish over previously staged version" /tmp/publish.log; then
+              echo "::error::the registry refused this publish with E409: this version is ALREADY STAGED."
+              echo "::error::That means the publish already went through and the registry is still processing it - the OIDC exchange was fine and there is nothing to fix."
+              echo "::error::Wait for the version to appear on npmjs.com, then re-run this job: the check above will find it and publish nothing."
+            elif grep -q "oidc/token/exchange" /tmp/publish.log; then
+              echo "::error::the OIDC exchange was refused, so the trusted publisher configuration does not match."
+              echo "::error::npm looks the publisher up by (package, repository), and a RENAMED repository is a repository name that will never match again."
+              echo "::error::  it needs: Organization or user = pham-canh"
+              echo "::error::             Repository = opencode-harness-kit"
+              echo "::error::             Workflow filename = ci.yml"
+              echo "::error::             Environment name = EMPTY (the workflow declares no environment, so a claim that is never sent can never match)"
+              echo "::error::             Allowed actions includes npm publish"
+              echo "::error::re-point it with (npm login first):"
+              echo "::error::  npm trust github opencode-harness-kit --file ci.yml --repo pham-canh/opencode-harness-kit --allow-publish --allow-stage-publish -y"
+              echo "::error::or edit it on npmjs.com: the package, then Settings, then Trusted Publisher, then the repository field."
+            elif grep -q "one-time password" /tmp/publish.log; then
+              echo "::error::the publish was refused with a one-time password challenge. The token authenticated (npm whoami passed) but the account has two-factor authentication on, and a granular token only bypasses it when 'Bypass two-factor authentication' is ticked when the token is created. Create the token again with that box ticked, plus 'Read and write' on opencode-harness-kit."
+            else
+              echo "::error::npm publish failed (exit $code). With a token it is usually a token without WRITE access to the opencode-harness-kit package - npm answers 404 for a package the token cannot touch, which reads like a missing package."
+            fi
+            exit $code
+          fi
+      - name: nothing to publish
+        if: steps.already.outputs.published == 'true'
+        run: |
+          echo "  ${{ steps.already.outputs.version }} is already on the registry."
+          echo "  This run was a re-run of a publish that already happened, so it"
+          echo "  published nothing - and that is the correct answer, not a failure."
+      # The tag, the npm tarball and the GitHub release are three copies of
+      # the same artifact. This step creates the release from the CHANGELOG
+      # entry, then attaches the exact tarball npm published and its SHA-256,
+      # so a reader can verify the download without trusting the registry.
+      - name: create or update the GitHub release
+        if: always() && (steps.already.outputs.published == 'true' || steps.publish.outcome == 'success')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          tag="$GITHUB_REF_NAME"
+          notes="$RUNNER_TEMP/release-notes.md"
+          node - "$version" "$notes" <<'NODE'
+          const fs = require("fs")
+          const [version, out] = process.argv.slice(2)
+          const lines = fs.readFileSync("CHANGELOG.md", "utf8").split("\n")
+          const escaped = version.replace(/\./g, "\\.")
+          const start = lines.findIndex((line) => new RegExp(`^## \\[?v?${escaped}\\]?`).test(line))
+          if (start < 0) {
+            console.error(`CHANGELOG.md has no section for ${version}`)
+            process.exit(1)
+          }
+          let end = lines.length
+          for (let i = start + 1; i < lines.length; i += 1) {
+            if (/^## \[/.test(lines[i])) {
+              end = i
+              break
+            }
+          }
+          fs.writeFileSync(out, `${lines.slice(start, end).join("\n").trimEnd()}\n`)
+          NODE
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$version" --notes-file "$notes"
+          else
+            gh release create "$tag" --title "$version" --notes-file "$notes" --verify-tag
+          fi
+          tarball="$(npm pack --ignore-scripts --silent)"
+          test -f "$tarball"
+          sha256sum "$tarball" > "$tarball.sha256"
+          gh release upload "$tag" "$tarball" "$tarball.sha256" --clobber
+          rm -f "$tarball" "$tarball.sha256"

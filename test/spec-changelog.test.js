@@ -11,15 +11,15 @@ import { ROOT } from "./spec-helpers.mjs"
 
 const changelog = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8")
 
-test("the unreleased section names every spec command", () => {
-  const start = changelog.indexOf("## [Unreleased]")
-  assert.notEqual(start, -1, "no ## [Unreleased] section")
-  const next = changelog.indexOf("\n## [", start + 1)
-  const section = changelog.slice(start, next === -1 ? undefined : next)
+test("the latest release section names every spec command", () => {
+  const heading = /^## \[(\d+\.\d+\.\d+[^\]]*)\][^\n]*$/m.exec(changelog)
+  assert.ok(heading, "no release heading in CHANGELOG.md")
+  const next = changelog.indexOf("\n## [", heading.index + 1)
+  const section = changelog.slice(heading.index, next === -1 ? undefined : next)
   for (const command of ["spec init", "spec check", "spec research", "spec design", "spec decompose"]) {
-    assert.ok(section.includes(command), `[Unreleased] does not mention \`${command}\``)
+    assert.ok(section.includes(command), `${heading[1]} does not mention \`${command}\``)
   }
-  assert.ok(section.includes("work --project"), "[Unreleased] does not mention work --project")
+  assert.ok(section.includes("work --project"), `${heading[1]} does not mention work --project`)
 })
 
 test("the docs the changelog relies on exist", () => {

@@ -14,12 +14,59 @@ is not happening.
 
 ## [Unreleased]
 
+Nothing yet.
+
+---
+
+## [0.8.0] — 2026-11-04
+
+The loop becomes something you can leave running. `run` now fixes a failed
+verify or review instead of stopping at the first one, `work` is the one
+command that plans, builds, verifies, reviews and finishes, and the run
+records enough for a script - or the person after you - to see what happened.
+
 The loop is now observable and resumable rather than only restartable: a run
 leaves evidence, an event log and a record a script can read; a worktree run
 can be found after the terminal closes; and a route that died is not retried
 blind.
 
 ### Added
+
+- **`oc-harness work "<request>"`.** Plan when there is no executable plan,
+  then build, verify, review, final verify, final review and summary. Flags:
+  `--plan-only`, `--dry-run`, `--branch`, `--commit`, `--worktree`,
+  `--allow-dirty`, `--max-tokens`, `--max-task-minutes`, `--final-verify`,
+  `--final-review`. It never pushes, opens a pull request or publishes.
+- **`oc-harness plan "<request>"`.** The planner's answer is validated before
+  it is written: every task needs `files:`, `change:` and a `verify:` that can
+  fail. A rejected plan never replaces an existing one. `--print` shows it
+  without writing; `--force` replaces an existing plan.
+- **`oc-harness status [--json]`.** The last run from `.space/run.json`:
+  status, reason, per-task attempts, review rounds and checkpoint commits.
+- **Plan preflight.** `run` checks the whole plan before the first agent is
+  called: no tasks, a missing verify, a verify that cannot fail, or two tasks
+  the parser cannot tell apart all stop the run at exit 2.
+- **Fix rounds.** A failed verify is handed back to the build agent with its
+  real output; a failed review is handed back with its blockers. Default 2
+  rounds each (`--max-fix-rounds`, `--review-fix-rounds`).
+- **Final checks.** `--final-verify` runs one command after the last task;
+  `--final-review` reviews the whole diff from the run's base commit.
+  `.space/summary.md` is written only when both pass.
+- **Checkpoints.** `--branch` and `--commit` commit each finished task and
+  only the paths it touched. `--worktree` runs in `.space/worktrees/<id>` so
+  the project itself is untouched while the run happens.
+- **Route failover inside a run.** A spent or unreachable route no longer
+  marks the task blocked; `work` retries once per other route in the lane
+  chain using `OC_HARNESS_MODEL`, and never on the route that failed.
+- **`oc-harness lanes --suggest`.** Names lanes the telemetry says are not
+  earning a slot. It reads; it never edits `lanes.json` or a profile.
+- **A local profile, `ollama-qwen3-coder`.** Qwen3 Coder 30B served by Ollama
+  on localhost: zero egress, zero-retention by construction, no per-token
+  cost. Pull it with `ollama pull qwen3-coder:30b`.
+- **`npm run test:loop`**, and a named CI step for it: end-to-end scenarios
+  through the real CLI with a stand-in `opencode`, covering a fix round, a
+  review fix, an out-of-scope edit, a vacuous verify, a token budget and a
+  failed final verify.
 
 - **`oc-harness autopilot`**: from an empty directory, initialise a blank
   track, tick the charter, run research/design/decompose, then call
@@ -53,6 +100,182 @@ blind.
   profile index for: whether a lane costs money (`free`) and who trains on it
   (`retention`). A footer names where the models came from — the profile file,
   or a lock and how old it is.
+
+- **The `spec` workflow: a validated plan before the loop starts.** `oc-harness
+  spec init` lays a track down from a template (`inventory`, `billing`,
+  `existing`, or `blank`), `spec check` proves the charter still has its locked
+  sections and a ticked `## Ready`, and `spec research`, `spec design` and
+  `spec decompose` make **exactly one** model call each and write what it
+  returns into `.space/`. Each step is budget-checked before the call and
+  size-checked after it, is refused rather than retried when the model is
+  offline, times out or returns junk, and cannot be re-run without `--force`;
+  `--print` and `--dry-run` never reach the model at all, so a template is data
+  and the data commands cost nothing. Readiness lives in `.space/track.json`
+  (`charter_ready` → `research_ready` → `design_ready` → `plan_ready`) and
+  setting a key clears every later one, so a plan cannot stay "ready" after the
+  design it was built on changed. `spec decompose` runs the generated
+  `tasks.md` through the same parser `work` uses, and refuses a plan whose task
+  has no `verify`, whose `[REQ-NNN]` tag is not in the charter, or whose verify
+  command is not runnable. Every refusal is exit `2` with a JSON body on
+  stderr and an empty stdout, listed in `docs/EXIT-CODES.md`.
+- **`oc-harness work --project`: run a planned track and nothing else.** It
+  takes no positional request — the request is `.space/tasks.md` — and refuses
+  before it looks for `opencode` when the directory has no track or
+  `plan_ready` is not `true`. `--strict` is forced off, because strict mode
+  exists to make an under-specified request fail and a planned track is the
+  output of the steps that remove that ambiguity. The refusal prints to stdout
+  with exit `2`, matching plain `work --json`, and `--dry-run` runs the same
+  preflight without writing a run record.
+- **A ceiling on what one session may spend (`effort.sessionTokens`).** The kit
+  bounded one request (compaction at 130k) and one task (40 calls for a build),
+  and neither bounds a session: the measured one made 769 requests, every one
+  of them under the ceiling, and spent 67.93M prompt tokens until the route
+  answered "Free usage limit reached". `fleet-safe` now sets 6,000,000 tokens;
+  the telemetry hook charges each finished message (`input + cache read +
+  output`, counted once per message id), and the guard throws a three-line
+  message at 70% and refuses every tool call at 100%. The message is prose, not
+  a rule map, because opencode echoes a rule map back as the refusal and the
+  measured one was 11,041 characters. `0` turns the ceiling off, which is what
+  every install had before this; a value under one 200,000-token window is
+  rejected as a profile that would stop a session before its first request.
+  `test/budget.test.js` covers the arithmetic, both thresholds, the
+  once-per-session warning, and the guard actually refusing a call - the last
+  one is why the test bundles the guard and the counter into one graph.
+- **`eval/token-burn.mjs` (`npm run token-burn`).** The reading that was missing
+  when a session on a free route spent 67.93M prompt tokens, peaked at 169,597
+  tokens in one request and ended with "Free usage limit reached": requests,
+  prompt and output tokens, the worst request and when it happened, how many
+  tokens were re-sent in refusals, and what the tool output weighs — per day,
+  from the database the session already wrote. It does not report prune
+  coverage, because opencode stores a part unpruned and the pruner rewrites the
+  outgoing request: a stored prune marker means the session was resumed from a
+  pruned transcript, not that pruning ran. The gate is
+  the fleet's own compaction threshold plus the size of one tool result, judged
+  only on requests made after the running config was installed, so the history
+  that motivated the fix does not fail every run forever.
+- **`test/token-burn.test.js`, the token-burn suite.** Eleven tests, each
+  pinning one factor of `requests x context`: compaction at 130k rather than
+  176k, 40 calls per build rather than 120, no lane narrowing bash with a
+  catch-all rule map, no lane prompt carrying a copy of the allowlist, the
+  refusal text under its measured size, `tool_output` wide enough that a `read`
+  is not truncated, a denial ending the turn, and compaction running the pruner.
+  The last test runs the audit itself against a database it builds, including
+  the case where the gate fails.
+
+- **`oc-harness report [--json]`.** One run as numbers: phases and their
+  tokens, verify count and failures, routes used, recorded error codes, and
+  the next action.
+- **`oc-harness resume`.** Continues the recorded run, keeps its id, tokens,
+  attempts and budget, and refuses a finished run or an edited plan. It finds a
+  run inside `.space/worktrees/` when the project directory has no record, and
+  refuses if that worktree is gone.
+- **Worktree cleanup.** `work --cleanup` / `resume --cleanup` remove a finished
+  worktree; a run that is still going is refused unless `--force-cleanup`.
+- **`oc-harness health [--probe]`.** Lists spent routes. `--probe` asks every
+  route once, clears one that answers, records a quota or withdrawn failure,
+  and ignores an unclassified blip rather than poisoning the route for a day.
+- **`--sandbox container`.** Verify commands run in Docker with the project
+  mounted at `/work`, no network unless asked for, and the image configured by
+  `--sandbox-image` or `OC_HARNESS_SANDBOX_IMAGE`.
+- **`--adapter exec`.** Any command-line agent can serve a lane with
+  `--agent-command` (or `OC_HARNESS_AGENT_CMD`); `{prompt}`, `{role}` and
+  `{cwd}` are substituted, and the prompt goes on stdin otherwise.
+- **`oc-harness mcp`.** A read-only MCP server over stdio: status, report,
+  evidence, events, health and the plan (`harness_tasks`, including each task's
+  `accept:` line). There is no tool that starts or changes a run.
+- **The kit's hooks run on OpenCode 2.** A second entrypoint,
+  `opencode-harness-kit/v2` (`dist/v2.js`), is a plain `{ id, setup }` object;
+  the default V1 export stays a function, because V2 rejects a function even
+  with `id`/`setup` attached. `setup(ctx)` builds the same hook map through
+  `src/harness-hooks.ts` and registers it on `ctx.tool`, `ctx.session` and
+  `ctx.event`, so the guard, pruner, router and telemetry enforce on both
+  APIs. What the bridge cannot carry (`config`, `chat.params`, nested Code
+  Mode calls) is listed in `docs/KNOWN-LIMITS.md`.
+- **`oc-harness use --target v1|v2|auto`.** Picks the config dialect. V2 moved
+  `subagent_depth` under `experimental`, removed `batch_tool`,
+  `continue_loop_on_deny`, kept `lsp`, and stopped asking before an outside path.
+  The default stays `v1`, so an existing install regenerates unchanged; `auto`
+  reads `opencode --version`.
+- **`npm run gate:v2`.** Compiles a V2 config and reads it back through
+  `opencode debug config`, asserting the moved or removed keys, embedded lane
+  prompts, skills array, LSP and permissions. It then starts a real V2 server
+  against a fake model and checks that a `shell` call to `npm publish` is
+  refused and that Code Mode exposes no `shell` builtin. It skips with exit 0
+  when no 2.x binary is installed, so it stays out of `npm test`.
+- **V2 parity.** `setupV2` now writes `.space/active`, applies per-lane effort
+  and lane failover through `ctx.agent.transform`, and records the running lane
+  in telemetry from the V2 tool event. Lane prompts are embedded in `system`,
+  skills become an array, LSP is kept, and permissions are emitted in the V2
+  native form.
+- **`accept:` in `.space/tasks.md`.** An optional acceptance line, shown to the
+  builder before the verify command. It is prose, so it never replaces the
+  command that defines done.
+- **`--verify-repeats <n>`.** Runs each task verify, and the final verify, up to
+  `n` times and stops at the first failure. Every execution is its own evidence
+  entry (`repeat` and `repeats`), so a flaky second run stays visible. Default 1.
+- **OTLP export.** With `OTEL_EXPORTER_OTLP_ENDPOINT` set, each run event is
+  also sent as an OTLP/HTTP span. A collector that is down never fails the run.
+- **`run.schema.json`.** The written `run@2` record, so a script can validate
+  what it reads. Its `status`, `phase` and `terminal` enums are checked against
+  the state machine's vocabulary, and `history`, `endedAt` and `interruptedAt`
+  are part of the schema.
+- **`oc-harness resume` and `run` stop on `SIGINT`/`SIGTERM`.** The record ends
+  as `interrupted` with exit 130 and releases the lock, instead of the process
+  dying while `run.json` still says `running`.
+- **Cache tokens are counted, not hidden.** `run.budget.spentTokens` includes
+  cache reads and writes, and `spentCacheTokens` reports that share. The event
+  log keeps `tokens` and `cache` as per-checkpoint deltas.
+- **A task review diffs from the tree the attempt started in.** `reviewDiff`
+  takes a `git stash create` baseline, so pre-existing tracked edits and
+  untracked files are not blamed on the agent.
+- **A resumed run continues its review rounds.** The count is seeded from the
+  record's `tasks[].reviews` (and the verdict files on disk), so a resume no
+  longer overwrites `01-*.json`. The final review base is stored in
+  `finalBaseRef` and reused after task commits.
+- **`npm run gate:loop`.** Five offline loop scenarios: a pass, a repeated
+  verify failure, a destructive verify command, a spent task budget, and a
+  route failure that stops provisionally and is resumed.
+
+### Changed
+
+- **`run` no longer marks a task blocked when the model route fails.** The
+  task stays pending so a retry can reach another model. Behaviour that was
+  "exit 4 on a 429" is now "exit 3, retry the next route, stop if every route
+  is spent".
+- **A review failure is a fix round, not a terminal verdict.** It exits 5 only
+  after the review fix budget is spent, or when the reviewer's answer is not a
+  schema'd verdict.
+- **`run --json` exists**, and human progress goes to stderr in that mode. The
+  report is one object: `ok`, `code`, `reason`, `rounds`, `tokens`, `run`,
+  `summary`, `log`.
+- **`--print-verify` and `--trust-verify` gate every verify command**, in
+  `run` as well as `work`. This is the breaking change: non-interactive runs
+  that used to execute a task file's shell commands now exit 2 until they pass
+  `--trust-verify`.
+- **`.space/` is never committed by a checkpoint and never makes a tree
+  dirty** for `--branch`; it is the harness's own bookkeeping, not the change
+  under review.
+
+- **`work` is strict by default.** It refuses to start without the review,
+  final-verify, final-review, worktree and commit parts of the contract. Pass
+  `--no-strict` for a local run on a dirty tree.
+- **Per-lane prompt budget.** A prompt larger than the lane's narrowest model
+  can hold is refused before it is sent, instead of being truncated by the
+  provider.
+- **Opening a record is a transition.** `start`, `resume` and the provisional
+  `route-failed` are rows in the table, so `runLoop` cannot reset a record with
+  assignments that disagree with the state it writes. `resume` clears the old
+  terminal and `endedAt`; `route-failed` keeps the phase and leaves `terminal`
+  null until `work` writes `route-exhausted`.
+- **`work` holds one lock for the whole request**, across route retries, and
+  releases it on every return path. `runLoop` takes a lock only when it is
+  called directly.
+- **A task is committed before it is marked done.** A refused commit stops the
+  run as `checkpoint-failed` with the task still pending, so the plan never
+  claims work git does not have.
+- **`status` prints the record's own next command.** A budget stop reports the
+  `resume --max-tokens` it actually needs instead of a generic resume; a stale
+  lock still overrides it with the reconciliation command.
 
 ### Fixed
 
@@ -192,168 +415,6 @@ blind.
   every tool: `read` truncates by lines, `grep` by matches, so the call's own
   limit is what sets the size.
 
-### Added
-
-- **The `spec` workflow: a validated plan before the loop starts.** `oc-harness
-  spec init` lays a track down from a template (`inventory`, `billing`,
-  `existing`, or `blank`), `spec check` proves the charter still has its locked
-  sections and a ticked `## Ready`, and `spec research`, `spec design` and
-  `spec decompose` make **exactly one** model call each and write what it
-  returns into `.space/`. Each step is budget-checked before the call and
-  size-checked after it, is refused rather than retried when the model is
-  offline, times out or returns junk, and cannot be re-run without `--force`;
-  `--print` and `--dry-run` never reach the model at all, so a template is data
-  and the data commands cost nothing. Readiness lives in `.space/track.json`
-  (`charter_ready` → `research_ready` → `design_ready` → `plan_ready`) and
-  setting a key clears every later one, so a plan cannot stay "ready" after the
-  design it was built on changed. `spec decompose` runs the generated
-  `tasks.md` through the same parser `work` uses, and refuses a plan whose task
-  has no `verify`, whose `[REQ-NNN]` tag is not in the charter, or whose verify
-  command is not runnable. Every refusal is exit `2` with a JSON body on
-  stderr and an empty stdout, listed in `docs/EXIT-CODES.md`.
-- **`oc-harness work --project`: run a planned track and nothing else.** It
-  takes no positional request — the request is `.space/tasks.md` — and refuses
-  before it looks for `opencode` when the directory has no track or
-  `plan_ready` is not `true`. `--strict` is forced off, because strict mode
-  exists to make an under-specified request fail and a planned track is the
-  output of the steps that remove that ambiguity. The refusal prints to stdout
-  with exit `2`, matching plain `work --json`, and `--dry-run` runs the same
-  preflight without writing a run record.
-- **A ceiling on what one session may spend (`effort.sessionTokens`).** The kit
-  bounded one request (compaction at 130k) and one task (40 calls for a build),
-  and neither bounds a session: the measured one made 769 requests, every one
-  of them under the ceiling, and spent 67.93M prompt tokens until the route
-  answered "Free usage limit reached". `fleet-safe` now sets 6,000,000 tokens;
-  the telemetry hook charges each finished message (`input + cache read +
-  output`, counted once per message id), and the guard throws a three-line
-  message at 70% and refuses every tool call at 100%. The message is prose, not
-  a rule map, because opencode echoes a rule map back as the refusal and the
-  measured one was 11,041 characters. `0` turns the ceiling off, which is what
-  every install had before this; a value under one 200,000-token window is
-  rejected as a profile that would stop a session before its first request.
-  `test/budget.test.js` covers the arithmetic, both thresholds, the
-  once-per-session warning, and the guard actually refusing a call - the last
-  one is why the test bundles the guard and the counter into one graph.
-- **`eval/token-burn.mjs` (`npm run token-burn`).** The reading that was missing
-  when a session on a free route spent 67.93M prompt tokens, peaked at 169,597
-  tokens in one request and ended with "Free usage limit reached": requests,
-  prompt and output tokens, the worst request and when it happened, how many
-  tokens were re-sent in refusals, and what the tool output weighs — per day,
-  from the database the session already wrote. It does not report prune
-  coverage, because opencode stores a part unpruned and the pruner rewrites the
-  outgoing request: a stored prune marker means the session was resumed from a
-  pruned transcript, not that pruning ran. The gate is
-  the fleet's own compaction threshold plus the size of one tool result, judged
-  only on requests made after the running config was installed, so the history
-  that motivated the fix does not fail every run forever.
-- **`test/token-burn.test.js`, the token-burn suite.** Eleven tests, each
-  pinning one factor of `requests x context`: compaction at 130k rather than
-  176k, 40 calls per build rather than 120, no lane narrowing bash with a
-  catch-all rule map, no lane prompt carrying a copy of the allowlist, the
-  refusal text under its measured size, `tool_output` wide enough that a `read`
-  is not truncated, a denial ending the turn, and compaction running the pruner.
-  The last test runs the audit itself against a database it builds, including
-  the case where the gate fails.
-
-- **`oc-harness report [--json]`.** One run as numbers: phases and their
-  tokens, verify count and failures, routes used, recorded error codes, and
-  the next action.
-- **`oc-harness resume`.** Continues the recorded run, keeps its id, tokens,
-  attempts and budget, and refuses a finished run or an edited plan. It finds a
-  run inside `.space/worktrees/` when the project directory has no record, and
-  refuses if that worktree is gone.
-- **Worktree cleanup.** `work --cleanup` / `resume --cleanup` remove a finished
-  worktree; a run that is still going is refused unless `--force-cleanup`.
-- **`oc-harness health [--probe]`.** Lists spent routes. `--probe` asks every
-  route once, clears one that answers, records a quota or withdrawn failure,
-  and ignores an unclassified blip rather than poisoning the route for a day.
-- **`--sandbox container`.** Verify commands run in Docker with the project
-  mounted at `/work`, no network unless asked for, and the image configured by
-  `--sandbox-image` or `OC_HARNESS_SANDBOX_IMAGE`.
-- **`--adapter exec`.** Any command-line agent can serve a lane with
-  `--agent-command` (or `OC_HARNESS_AGENT_CMD`); `{prompt}`, `{role}` and
-  `{cwd}` are substituted, and the prompt goes on stdin otherwise.
-- **`oc-harness mcp`.** A read-only MCP server over stdio: status, report,
-  evidence, events, health and the plan (`harness_tasks`, including each task's
-  `accept:` line). There is no tool that starts or changes a run.
-- **The kit's hooks run on OpenCode 2.** A second entrypoint,
-  `opencode-harness-kit/v2` (`dist/v2.js`), is a plain `{ id, setup }` object;
-  the default V1 export stays a function, because V2 rejects a function even
-  with `id`/`setup` attached. `setup(ctx)` builds the same hook map through
-  `src/harness-hooks.ts` and registers it on `ctx.tool`, `ctx.session` and
-  `ctx.event`, so the guard, pruner, router and telemetry enforce on both
-  APIs. What the bridge cannot carry (`config`, `chat.params`, nested Code
-  Mode calls) is listed in `docs/KNOWN-LIMITS.md`.
-- **`oc-harness use --target v1|v2|auto`.** Picks the config dialect. V2 moved
-  `subagent_depth` under `experimental`, removed `batch_tool`,
-  `continue_loop_on_deny`, kept `lsp`, and stopped asking before an outside path.
-  The default stays `v1`, so an existing install regenerates unchanged; `auto`
-  reads `opencode --version`.
-- **`npm run gate:v2`.** Compiles a V2 config and reads it back through
-  `opencode debug config`, asserting the moved or removed keys, embedded lane
-  prompts, skills array, LSP and permissions. It then starts a real V2 server
-  against a fake model and checks that a `shell` call to `npm publish` is
-  refused and that Code Mode exposes no `shell` builtin. It skips with exit 0
-  when no 2.x binary is installed, so it stays out of `npm test`.
-- **V2 parity.** `setupV2` now writes `.space/active`, applies per-lane effort
-  and lane failover through `ctx.agent.transform`, and records the running lane
-  in telemetry from the V2 tool event. Lane prompts are embedded in `system`,
-  skills become an array, LSP is kept, and permissions are emitted in the V2
-  native form.
-- **`accept:` in `.space/tasks.md`.** An optional acceptance line, shown to the
-  builder before the verify command. It is prose, so it never replaces the
-  command that defines done.
-- **`--verify-repeats <n>`.** Runs each task verify, and the final verify, up to
-  `n` times and stops at the first failure. Every execution is its own evidence
-  entry (`repeat` and `repeats`), so a flaky second run stays visible. Default 1.
-- **OTLP export.** With `OTEL_EXPORTER_OTLP_ENDPOINT` set, each run event is
-  also sent as an OTLP/HTTP span. A collector that is down never fails the run.
-- **`run.schema.json`.** The written `run@2` record, so a script can validate
-  what it reads. Its `status`, `phase` and `terminal` enums are checked against
-  the state machine's vocabulary, and `history`, `endedAt` and `interruptedAt`
-  are part of the schema.
-- **`oc-harness resume` and `run` stop on `SIGINT`/`SIGTERM`.** The record ends
-  as `interrupted` with exit 130 and releases the lock, instead of the process
-  dying while `run.json` still says `running`.
-- **Cache tokens are counted, not hidden.** `run.budget.spentTokens` includes
-  cache reads and writes, and `spentCacheTokens` reports that share. The event
-  log keeps `tokens` and `cache` as per-checkpoint deltas.
-- **A task review diffs from the tree the attempt started in.** `reviewDiff`
-  takes a `git stash create` baseline, so pre-existing tracked edits and
-  untracked files are not blamed on the agent.
-- **A resumed run continues its review rounds.** The count is seeded from the
-  record's `tasks[].reviews` (and the verdict files on disk), so a resume no
-  longer overwrites `01-*.json`. The final review base is stored in
-  `finalBaseRef` and reused after task commits.
-- **`npm run gate:loop`.** Five offline loop scenarios: a pass, a repeated
-  verify failure, a destructive verify command, a spent task budget, and a
-  route failure that stops provisionally and is resumed.
-
-### Changed
-
-- **`work` is strict by default.** It refuses to start without the review,
-  final-verify, final-review, worktree and commit parts of the contract. Pass
-  `--no-strict` for a local run on a dirty tree.
-- **Per-lane prompt budget.** A prompt larger than the lane's narrowest model
-  can hold is refused before it is sent, instead of being truncated by the
-  provider.
-- **Opening a record is a transition.** `start`, `resume` and the provisional
-  `route-failed` are rows in the table, so `runLoop` cannot reset a record with
-  assignments that disagree with the state it writes. `resume` clears the old
-  terminal and `endedAt`; `route-failed` keeps the phase and leaves `terminal`
-  null until `work` writes `route-exhausted`.
-- **`work` holds one lock for the whole request**, across route retries, and
-  releases it on every return path. `runLoop` takes a lock only when it is
-  called directly.
-- **A task is committed before it is marked done.** A refused commit stops the
-  run as `checkpoint-failed` with the task still pending, so the plan never
-  claims work git does not have.
-- **`status` prints the record's own next command.** A budget stop reports the
-  `resume --max-tokens` it actually needs instead of a generic resume; a stale
-  lock still overrides it with the reconciliation command.
-
-### Fixed
-
 - **The state machine is the driver's gate, not documentation.** `runLoop`
   checkpoints phase changes through `src/driver/transitions.mjs` instead of
   assigning `run.phase` directly, so `run.history` is a real audit trail and an
@@ -404,73 +465,6 @@ blind.
 - Worktree cleanup ignores the harness's own `.space/` when deciding whether a
   worktree is dirty.
 
----
-
-## [0.8.0] — 2026-10-26
-
-The loop becomes something you can leave running. `run` now fixes a failed
-verify or review instead of stopping at the first one, `work` is the one
-command that plans, builds, verifies, reviews and finishes, and the run
-records enough for a script - or the person after you - to see what happened.
-
-### Added
-
-- **`oc-harness work "<request>"`.** Plan when there is no executable plan,
-  then build, verify, review, final verify, final review and summary. Flags:
-  `--plan-only`, `--dry-run`, `--branch`, `--commit`, `--worktree`,
-  `--allow-dirty`, `--max-tokens`, `--max-task-minutes`, `--final-verify`,
-  `--final-review`. It never pushes, opens a pull request or publishes.
-- **`oc-harness plan "<request>"`.** The planner's answer is validated before
-  it is written: every task needs `files:`, `change:` and a `verify:` that can
-  fail. A rejected plan never replaces an existing one. `--print` shows it
-  without writing; `--force` replaces an existing plan.
-- **`oc-harness status [--json]`.** The last run from `.space/run.json`:
-  status, reason, per-task attempts, review rounds and checkpoint commits.
-- **Plan preflight.** `run` checks the whole plan before the first agent is
-  called: no tasks, a missing verify, a verify that cannot fail, or two tasks
-  the parser cannot tell apart all stop the run at exit 2.
-- **Fix rounds.** A failed verify is handed back to the build agent with its
-  real output; a failed review is handed back with its blockers. Default 2
-  rounds each (`--max-fix-rounds`, `--review-fix-rounds`).
-- **Final checks.** `--final-verify` runs one command after the last task;
-  `--final-review` reviews the whole diff from the run's base commit.
-  `.space/summary.md` is written only when both pass.
-- **Checkpoints.** `--branch` and `--commit` commit each finished task and
-  only the paths it touched. `--worktree` runs in `.space/worktrees/<id>` so
-  the project itself is untouched while the run happens.
-- **Route failover inside a run.** A spent or unreachable route no longer
-  marks the task blocked; `work` retries once per other route in the lane
-  chain using `OC_HARNESS_MODEL`, and never on the route that failed.
-- **`oc-harness lanes --suggest`.** Names lanes the telemetry says are not
-  earning a slot. It reads; it never edits `lanes.json` or a profile.
-- **A local profile, `ollama-qwen3-coder`.** Qwen3 Coder 30B served by Ollama
-  on localhost: zero egress, zero-retention by construction, no per-token
-  cost. Pull it with `ollama pull qwen3-coder:30b`.
-- **`npm run test:loop`**, and a named CI step for it: end-to-end scenarios
-  through the real CLI with a stand-in `opencode`, covering a fix round, a
-  review fix, an out-of-scope edit, a vacuous verify, a token budget and a
-  failed final verify.
-
-### Changed
-
-- **`run` no longer marks a task blocked when the model route fails.** The
-  task stays pending so a retry can reach another model. Behaviour that was
-  "exit 4 on a 429" is now "exit 3, retry the next route, stop if every route
-  is spent".
-- **A review failure is a fix round, not a terminal verdict.** It exits 5 only
-  after the review fix budget is spent, or when the reviewer's answer is not a
-  schema'd verdict.
-- **`run --json` exists**, and human progress goes to stderr in that mode. The
-  report is one object: `ok`, `code`, `reason`, `rounds`, `tokens`, `run`,
-  `summary`, `log`.
-- **`--print-verify` and `--trust-verify` gate every verify command**, in
-  `run` as well as `work`. This is the breaking change: non-interactive runs
-  that used to execute a task file's shell commands now exit 2 until they pass
-  `--trust-verify`.
-- **`.space/` is never committed by a checkpoint and never makes a tree
-  dirty** for `--branch`; it is the harness's own bookkeeping, not the change
-  under review.
-
 ### Removed
 
 - **The shared token window.** The `OC_HARNESS_BUDGET_WINDOW_*` settings, the
@@ -484,6 +478,20 @@ records enough for a script - or the person after you - to see what happened.
   `OC_HARNESS_TURN_STOP`. The variables, the `step-finish` listener and the
   toasts are gone; `src/budget.js` and its tests were removed. There is no
   replacement flag.
+
+### Release engineering
+
+- **The release gate verifies the tag, not just its spelling.** `npm run
+  release:check -- --tag vX.Y.Z` used to pass when `vX.Y.Z` did not exist;
+  it now refuses a missing tag and a tag that does not point at HEAD.
+- **The publish workflow is back on `main`.** A tag push runs the full matrix
+  (Linux and macOS, OpenCode 1.19.4 and 2.1.4), publishes through trusted
+  publishing, creates the GitHub release from the CHANGELOG section, and
+  attaches the npm tarball and its SHA-256.
+- **Local profiles are not catalogue profiles.** `ollama-qwen3-coder` is
+  marked `"local": true`; `doctor`, `refresh` and `research` name it and skip
+  the models.dev comparison instead of reporting `qwen3-coder:30b` as
+  withdrawn.
 
 ## [0.7.3] — 2026-10-26
 
@@ -2467,10 +2475,11 @@ The publish is now automatic and holds no secret:
 
 ## [0.3.4] — 2026-10-20
 
-> 0.3.2 and 0.3.3 were never published. 0.3.2 carried the fix below but the
-> publish path it needed was not set up yet; 0.3.3 was **staged** by a
-> diagnostic that turned out to have side effects, and a staged version cannot
-> be published over directly. Both are folded into this release.
+> 0.3.2 was never published: it carried the fix below, but the publish path
+> it needed was not set up yet. 0.3.3 was **staged** by a diagnostic that
+> turned out to have side effects; it is on npm but has no git tag or GitHub
+> release, and a staged version cannot be published over directly. Both are
+> folded into this release.
 
 ### Added
 
@@ -2515,6 +2524,9 @@ The publish is now automatic and holds no secret:
 
 ## [0.3.1] — 2026-10-20
 
+**Not published.** No git tag and no npm version were created; the GitHub
+draft was removed during the 0.8.0 release cleanup. The fix shipped in 0.3.4.
+
 ### Fixed
 
 - **`oc-harness verify` failed a good install over somebody else's skill
@@ -2530,6 +2542,10 @@ The publish is now automatic and holds no secret:
   counted and left alone.
 
 ## [0.3.0] — 2026-10-20
+
+**Not published.** No git tag and no npm version were created; the GitHub
+draft was removed during the 0.8.0 release cleanup. The fleet work shipped in
+0.3.4.
 
 ### The fleet
 
