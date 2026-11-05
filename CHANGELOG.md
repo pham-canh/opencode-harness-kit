@@ -14,6 +14,8 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-05
+
 ### Changed
 
 - **No model profiles ship.** The kit is the harness, not a list of models:
@@ -52,6 +54,10 @@ is not happening.
 - **CI and the V2 gate use the test fixtures explicitly** instead of relying on
   profiles that no longer ship, and `selfcheck` copies the fixture profiles
   into a temporary directory before installing, so it never writes test data.
+- **Project metadata:** `SECURITY.md` now lists the supported versions for the
+  0.8.x and 0.7.x lines, the Contributor Covenant 2.1 applies to every
+  community space, and `.mailmap` folds the historical author spellings into
+  one maintainer identity.
 
 ---
 

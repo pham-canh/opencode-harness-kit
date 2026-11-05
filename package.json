@@ -1,6 +1,6 @@
 {
   "name": "opencode-harness-kit",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Harness kit for OpenCode: bring your own model, compile it into lanes with role-based reasoning effort, context pruning, and measured baselines.",
   "license": "MIT",
   "homepage": "https://github.com/pham-canh/opencode-harness-kit#readme",

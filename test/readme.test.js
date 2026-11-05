@@ -299,18 +299,18 @@ test("the README presents OC_HARNESS_MODEL as an escape hatch, not a control", (
   )
 })
 
-test("the CHANGELOG records the resolve work in the latest release", () => {
+test("a release section records the resolve work", () => {
   const changelog = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8")
-  const heading = /^## \[(\d+\.\d+\.\d+[^\]]*)\][^\n]*$/m.exec(changelog)
-  assert.ok(heading, "CHANGELOG.md has no release heading")
-  const next = changelog.indexOf("\n## [", heading.index + 1)
-  const section = changelog.slice(heading.index, next === -1 ? undefined : next)
-  for (const needle of ["resolve", "big-pickle-auto", "laneModelId", "retention ceiling"]) {
-    assert.ok(
-      section.includes(needle),
-      `${heading[1]} does not mention ${needle}`,
-    )
-  }
+  const headings = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+[^\]]*)\][^\n]*$/gm)]
+  assert.ok(headings.length > 0, "CHANGELOG.md has no release heading")
+  const sections = headings.map((heading, index) =>
+    changelog.slice(heading.index, headings[index + 1]?.index),
+  )
+  const needles = ["resolve", "big-pickle-auto", "laneModelId", "retention ceiling"]
+  assert.ok(
+    sections.some((section) => needles.every((needle) => section.includes(needle))),
+    `no release section mentions all of: ${needles.join(", ")}`,
+  )
 })
 
 test("docs/ROUTING.md says its tables are an artifact of the lock", () => {

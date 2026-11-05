@@ -6,8 +6,9 @@ Five upgrades change what a user has to do. The most recent one first.
 > now test fixtures, not choices: create a profile for the model you use with
 > `oc-harness use <provider>/<model> --retention <level>`.
 
-- [0.8.x → 0.9.x](#migrating-from-08x-to-09x) — `work` is strict by default,
-  and a worktree run is resumed and cleaned up explicitly.
+- [0.8.x → 0.9.x](#migrating-from-08x-to-09x) — the shipped model profiles
+  are gone, `work` is strict by default, and a worktree run is resumed and
+  cleaned up explicitly.
 - [0.7.x → 0.8.x](#migrating-from-07x-to-08x) — verify commands are trusted
   explicitly, and a failed review is now a fix round.
 - [0.4.x → 0.7.x](#migrating-from-04x-to-07x) — rerun the install, because
@@ -21,14 +22,18 @@ Five upgrades change what a user has to do. The most recent one first.
 
 # Migrating from 0.8.x to 0.9.x
 
-One default changed, two new commands replace what used to be done by hand, and
-`fleet-safe` now puts a ceiling on a session.
+The package stops shipping model profiles, `work` is strict by default, and two
+commands replace work that used to be done by hand. The loop also learns a
+per-session ceiling you can set on a profile.
 
 ```bash
-# after upgrading, the fleet-safe profile stops a session at 6M tokens
-# (warn at 70%, every tool call refused at 100%). Turn it off with:
-#   "effort": { "sessionTokens": 0 }
-# in the profile file, or set your own number (at least 200,000).
+# after upgrading, the old fleet-safe profile is test data. Create the profile
+# from the model you actually use:
+oc-harness use <provider>/<model> --retention <level>
+
+# A new profile has no session ceiling by default. To add one (0 turns it off;
+# the minimum is 200,000):
+#   "effort": { "sessionTokens": 6000000 }
 ```
 
 ```bash
@@ -46,6 +51,9 @@ oc-harness work "fix the parser" --review --final-verify "npm test" \
 
 | Area | 0.8.x | 0.9.x |
 |---|---|---|
+| profiles | the package shipped `fleet-safe`, `fleet-all`, `big-pickle-auto` and the rest | none ship. `use <provider>/<model> --retention <level>` writes one into your config directory; the old fleet is test data under `test/fixtures/profiles/` |
+| default model | the package index named one | no default. `use` and `init` require a `<provider>/<model>` unless a profile is named |
+| README | named the current models | documents a free route and a paid/upgraded route without naming a model |
 | `work` defaults | plain run, no gate | strict: `--review`, `--final-verify`, `--final-review`, `--worktree`, `--commit` and a git repository are required. `--no-strict` is the old behaviour |
 | an interrupted run | start over | `oc-harness resume` keeps the id, attempts, tokens and budget; it refuses a finished run or an edited plan |
 | a worktree run | the record lived only in the worktree | `resume` finds it, `work --cleanup` removes it after it is finished |
