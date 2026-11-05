@@ -1,5 +1,8 @@
 # Contributing
 
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+By participating, you agree to uphold it.
+
 Run `npm run check` before pushing. Driver changes need `npm test`; loop
 behaviour changes also need `npm run gate:loop`. V2 changes need
 `npm run gate:v2` on a 2.x binary.

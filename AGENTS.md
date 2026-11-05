@@ -18,9 +18,10 @@ Run the narrowest one that covers the change. A driver change needs
 install dependencies: the suite is offline by design and `ajv` is already a
 devDependency.
 
-`npm test` sets `OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json`.
-Any single test file run by hand needs the same variable, or it reaches for the
-network.
+`npm test` sets `OPENCODE_HARNESS_CATALOG_URL=file://test/fixtures/catalogue.json`
+and `OPENCODE_HARNESS_PROFILES=$PWD/test/fixtures/profiles`. Any single test file
+run by hand needs the same variables, or it reaches for the network or for the
+user's profiles.
 
 ## Layout
 

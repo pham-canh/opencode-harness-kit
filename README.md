@@ -1652,7 +1652,8 @@ verifiable. Offline tests stay offline, anything that writes to disk needs a
 `--dryrun` and a backup, and a number that moves updates the README in the same
 commit. Bug reports go to [SECURITY.md](SECURITY.md) if they involve a key or
 someone else's config; otherwise open an issue with the command you ran and what
-it printed.
+it printed. Participation is covered by the
+[Contributor Covenant](CODE_OF_CONDUCT.md).
 
 ## License
 
