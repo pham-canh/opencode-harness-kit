@@ -88,7 +88,7 @@ access, or the generator asserts that no agent permission map contains a bare
 
 `compaction.reserved` is `reservedTokens(p)` (`src/config.js:618`,
 `src/profile.js:956`), which is `reserveShare` of the input cap - 12% of 200,000
-by default (`profiles/fleet-safe.json:13`, `:30`). Compaction therefore first
+by default (the fixture `test/fixtures/profiles/fleet-safe.json`, `:13` and `:30`). Compaction therefore first
 fires at **176,000 tokens**, so the 40 minutes before that are spent re-sending a
 context that is already 100k-176k tokens wide, on every single call.
 

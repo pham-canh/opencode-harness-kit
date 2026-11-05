@@ -135,8 +135,16 @@ export declare const WORKFLOW_LANES: string[];
  */
 export declare function retentionSeverity(level: string): number;
 /**
- * Profiles live in profiles/ (verified). schema.json and index.json are not
- * profiles.
+ * Where profiles are read from.
+ *
+ * No model profiles ship with the kit. A profile describes the model a person
+ * actually has access to, so the writable home is the user's own config
+ * directory; the package's `profiles/` only carries the schema and an empty
+ * index. `OPENCODE_HARNESS_PROFILES` still overrides everything, which is what
+ * a test or a team profile tree uses.
+ *
+ * User profiles come first, so a person can shadow a profile without editing
+ * the package.
  */
 export declare function profileDirs(): string[];
 /** @param {string} id @returns {string | null} */
@@ -162,12 +170,29 @@ export declare function loadLanes(): Record<string, Lane>;
 export declare function laneMeta(name: string): Lane | null;
 /** @returns {string[]} */
 export declare function laneNames(): string[];
+/**
+ * Where a person's own retention declarations live.
+ *
+ * The package deliberately carries no model entries, and asking a user to
+ * edit a file inside `node_modules` is not a durable answer anyway.
+ * `use <provider>/<model> --retention <level>` records the verdict here, next
+ * to the config, in the same shape the package uses.
+ *
+ * A test or a team tree that overrides `OPENCODE_HARNESS_PROFILES` gets its
+ * retention file beside those profiles, so the suite stays isolated from the
+ * real config directory.
+ *
+ * @returns {string}
+ */
+export declare function userRetentionPath(): string;
+/** Forget the cached table, after a user retention file was written. */
+export declare function resetRetentionCache(): void;
 export declare function loadRetention(): {
     models: Record<string, RetentionRecord>;
     defaults: Record<string, string>;
 };
 /**
- * Retention as declared in retention.yml, which wins over the profile copy.
+ * The recorded retention for a model, which wins over the profile copy.
  * Accepts either a bare profile id or an already-qualified provider/model.
  * @param {string} id
  * @returns {RetentionRecord | undefined}
@@ -177,7 +202,7 @@ export declare function retentionFor(id: string): RetentionRecord | undefined;
  * The retention of a model id, out of a retention table.
  *
  * Pure, so a test can hand it a table whose `defaults.unknown` says
- * something else. The shipped table says "unknown", which is what the
+ * something else. The package's table says "unknown", which is what the
  * hardcoded fallback used to be - so a test that only checked the value
  * could not tell the two apart.
  *
@@ -192,10 +217,10 @@ export declare function retentionOf(table: {
 /**
  * The retention of a model id, qualified or not.
  *
- * A model with no entry in retention.yml gets the `defaults.unknown` value
- * from that file, which is `unknown` today. The fallback used to be
- * hardcoded here, so the `defaults:` block in retention.yml looked like
- * configuration and was not.
+ * A model with no recorded entry gets the `defaults.unknown` value from the
+ * package's retention.yml, which is `unknown` today. The fallback used to be
+ * hardcoded here, so the `defaults:` block looked like configuration and was
+ * not.
  *
  * @param {string} model
  * @returns {Retention}
@@ -390,7 +415,8 @@ export declare function roleSplitModels(p: Profile, opts?: {
 }[];
 /**
  * The retention that actually applies once every lane is considered, which is
- * what a config header has to print. `retention.yml` is the source of truth.
+ * what a config header has to print. The recorded retention is the source of
+ * truth.
  *
  * `worst` is the MODEL responsible for that level, not the level itself. The
  * two used to be the same field with two different meanings - a retention
@@ -446,8 +472,8 @@ export declare function parseJsonc(text: string): Record<string, unknown> | null
  * Read the active profile id from the config file on disk.
  *
  * Returns null when the file is absent, unreadable, or not valid JSONC. Callers
- * fall back to the profile named in the `config` hook, so a null here degrades
- * to the default profile rather than failing.
+ * fall back to the profile the `config` hook names, so a null here degrades to
+ * that profile rather than failing.
  *
  * @returns {string | null}
  */

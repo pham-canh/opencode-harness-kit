@@ -116,7 +116,7 @@ test("lanes shows whether a lane costs money and who trains on it", () => {
 test("lanes says the models are written in the file for a hand-written profile", () => {
   const dir = install("fleet-safe")
   const r = lanes(dir)
-  assert.match(r.out, /lane models are written in profiles\/fleet-safe\.json/)
+  assert.match(r.out, /lane models are written in .*fleet-safe\.json/)
 })
 
 test("lanes reads a resolved profile's models from the lock, not the base model", () => {

@@ -2,7 +2,7 @@
 // oc-harness - pick a model profile and compile it into an opencode config.
 //
 //   oc-harness list                 profiles with retention and caveats
-//   oc-harness init [--profile <id>]  pick a free profile, then install + use + verify
+//   oc-harness init [--profile <id> | --model <provider>/<model>]  create a profile, then install + use + verify
 //   oc-harness use <id>            write ~/.config/opencode/opencode.jsonc
 //   oc-harness use <id> --print    print the config instead of writing it
 //   oc-harness show <id>           show the resolved effort plan
@@ -11,7 +11,7 @@
 //   oc-harness spec <command>      templates, track readiness and the plan loop
 //
 // The point of the kit: switching models is a data edit, not a code change.
-// Everything model-specific lives in profiles/<id>.json.
+// Everything model-specific lives in your config directory's profiles/<id>.json.
 
 import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync, lstatSync, appendFileSync, renameSync, unlinkSync } from "node:fs"
 import { homedir } from "node:os"
@@ -24,8 +24,11 @@ import {
   loadProfile,
   loadRetention,
   listProfileIds,
+  profileDirs,
   profileIdFromConfig,
   profilePath,
+  userRetentionPath,
+  resetRetentionCache,
   inputCap,
   pruneThreshold,
   reservedTokens,
@@ -42,6 +45,7 @@ import {
   modelRetention,
   loadLanes,
   laneNames,
+  validate,
   ProfileError,
   parseJsonc,
 } from "../src/profile.js"
@@ -147,14 +151,18 @@ function kitTargetRoot() {
 }
 
 const args = process.argv.slice(2)
-const cmd = args[0] ?? "list"
+let cmd = args[0] ?? "list"
+// `--help` belongs to the command it follows: `init --help` must print the
+// help, not try to start an install and then complain there is no terminal.
+// One help text covers every command, so the answer is the same either way.
+if (args.slice(1).some((a) => a === "--help" || a === "-h")) cmd = "help"
 const has = (f) => args.includes(f)
 /**
  * The value of a flag, in either spelling.
  *
- * `--profile fleet-safe` and `--profile=fleet-safe` are the same flag, and
+ * `--profile <id>` and `--profile=<id>` are the same flag, and
  * the second one is the conventional one. Reading only the first form made
- * `--profile=fleet-safe` look like a flag with a missing value, which is a
+ * `--profile=<id>` look like a flag with a missing value, which is a
  * confusing way to be told you got the syntax wrong.
  *
  * A value that is itself a flag is NOT a value. `oc-harness run --role
@@ -240,17 +248,68 @@ async function confirm(question) {
 }
 
 function index() {
-  const f = join(import.meta.dirname, "..", "profiles", "index.json")
-  return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : { profiles: [], excluded: [] }
+  for (const dir of profileDirs()) {
+    const f = join(dir, "index.json")
+    if (existsSync(f)) {
+      try {
+        return JSON.parse(readFileSync(f, "utf8"))
+      } catch {
+        // A malformed index is not a reason to hide the profiles themselves.
+      }
+    }
+  }
+  return { profiles: [], excluded: [], withdrawn: [], default: null }
+}
+
+/**
+ * The profiles a person can install, from the index when it lists them and
+ * from the profile files otherwise.
+ *
+ * The kit ships no model profiles. A profile created by
+ * `oc-harness use <provider>/<model>` lands in the user's own directory and is
+ * never added to the package index, so `list` and `init` have to read the
+ * directory as well as the index or the only profile on the machine is
+ * invisible.
+ */
+function profileEntries() {
+  const entries = [...(index().profiles ?? [])]
+  const seen = new Set(entries.map((e) => e.id))
+  for (const id of listProfileIds()) {
+    if (seen.has(id)) continue
+    try {
+      const p = loadProfile(id)
+      const eff = effectiveRetention(p)
+      entries.push({
+        id,
+        title: p.title ?? id,
+        retention: eff.retention,
+        free: p.local === true ? false : undefined,
+        topEffort: p.effort?.levels?.length ? p.effort.levels[p.effort.levels.length - 1] : null,
+        context: inputCap(p),
+        default: false,
+        note: p.notes ?? `created for ${p.provider}/${p.model}`,
+      })
+    } catch {
+      // A broken profile is reported by `doctor`; listing it here would put a
+      // row on screen that cannot be installed.
+    }
+  }
+  return entries
 }
 
 async function cmdList() {
   const idx = index()
+  const entries = profileEntries()
   const retention = loadRetention().models
   const only = opt("--retention")
   const freeOnly = flag("--free")
 
   console.log(`\n${bold("opencode-harness-kit")} ${stamp("profiles")}\n`)
+  if (!entries.length) {
+    console.log(`  ${stamp("no profiles yet.")}`)
+    console.log(`  ${stamp("create one for the model you use:")} oc-harness use <provider>/<model> --retention <level>\n`)
+    return
+  }
   const head = [
     "  " + "profile".padEnd(30),
     "input".padStart(9),
@@ -261,13 +320,14 @@ async function cmdList() {
   console.log(head)
   console.log("  " + "-".repeat(79))
 
-  for (const entry of idx.profiles ?? []) {
+  for (const entry of entries) {
     if (only && entry.retention !== only) continue
     if (freeOnly && entry.free === false) continue
     // The retention lookup is keyed on the model, not the profile id: a fleet
     // profile's id is not a model, and looking it up by id silently found
     // nothing, which is why the disagreement below never fired for one.
     let model = entry.id
+    let provider = "opencode"
     let lanes = 0
     let effective = entry.retention
     // The number that matters is the input cap the config can actually use:
@@ -278,16 +338,17 @@ async function cmdList() {
     try {
       const loaded = loadProfile(entry.id)
       model = loaded.model
+      provider = loaded.provider
       lanes = Object.keys(loaded.roles ?? {}).length
       // A fleet's retention is the worst of the models it resolves to, not the
       // base model's. Comparing the base would report every fleet as
-      // disagreeing with retention.yml, which records the base model's terms.
+      // disagreeing with the recorded terms, which describe the base model.
       effective = effectiveRetention(loaded).retention
       cap = inputCap(loaded)
     } catch {
       model = entry.id
     }
-    const r = retention[`opencode/${model}`]
+    const r = retention[`${provider}/${model}`]
     const isDefault = entry.default
     const name = (isDefault ? green("▸ ") : "  ") + entry.id
     const top = entry.topEffort ?? stamp("—")
@@ -297,7 +358,7 @@ async function cmdList() {
         : yellow(effective)
     const mismatch =
       r && r.retention && r.retention !== effective && lanes === 0
-        ? ` ${red(`(retention.yml says ${r.retention})`)}`
+        ? ` ${red(`(recorded terms say ${r.retention})`)}`
         : ""
     console.log(
       [
@@ -919,33 +980,49 @@ async function cmdInstall() {
 }
 
 /**
- * One command from zero to working. Asks which free profile to run on, then
- * chains the three commands the README used to make the newcomer memorise.
- * Anything it would destroy still gets a question unless --yes is passed.
+ * One command from zero to working. Creates a profile for the model you name
+ * (or picks one you already created), then chains the three commands the
+ * README used to make the newcomer memorise. Anything it would destroy still
+ * gets a question unless --yes is passed.
  *
- *   oc-harness init [--profile <id>] [--yes]
+ *   oc-harness init [--profile <id> | --model <provider>/<model>] [--retention <level>] [--yes]
  */
 async function cmdInit() {
-  const entries = index().profiles ?? []
-  const free = entries.filter((e) => e.free !== false)
-  if (!free.length) fail("no free profiles in profiles/index.json")
   let id = opt("--profile")
-  if (!id) {
-    if (!process.stdin.isTTY) {
-      // No question can be asked without a terminal, and picking for the user
-      // is not this command's job: `init` is the front door for a person, and
-      // `auto` is the one that runs without asking. Say what to type.
-      fail("usage: oc-harness init --profile <id> [--yes] (no terminal to ask)")
+  const named = opt("--model") ?? (args[1] && !String(args[1]).startsWith("--") ? args[1] : null)
+  if (!id && named) {
+    if (!String(named).includes("/")) {
+      fail(`"${named}" is not a model. Use provider/model, or --profile <id>.`)
     }
-    const def = Math.max(free.findIndex((e) => e.id === index().default), 0)
-    console.log(`\n  ${bold("run on a free model:")}\n`)
-    free.forEach((e, i) =>
-      console.log(`  ${i + 1}. ${e.id}${i === def ? " (default)" : ""}  ${stamp(e.note ?? "")}`),
-    )
-    const answer = (await askChoice(`  pick [1-${free.length}, default ${def + 1}]: `)).trim()
-    const n = answer === "" ? def + 1 : parseInt(answer, 10)
-    if (!Number.isInteger(n) || n < 1 || n > free.length) fail("not a valid choice")
-    id = free[n - 1].id
+    id = await createProfileFromModel(String(named))
+  }
+  if (!id) {
+    const entries = profileEntries()
+    if (!entries.length) {
+      if (!process.stdin.isTTY) {
+        // No question can be asked without a terminal, and picking a model
+        // for the user is not this command's job: `init` is the front door
+        // for a person, and `auto` is the one that runs without asking.
+        fail("usage: oc-harness init --model <provider>/<model> [--retention <level>] [--yes] (no terminal to ask)", false, 2)
+      }
+      console.log(`\n  ${bold("run on your model:")}\n`)
+      const ref = (await askChoice("  provider/model: ")).trim()
+      if (!ref.includes("/")) fail("a model is provider/model, for example <provider>/<model>")
+      id = await createProfileFromModel(ref)
+    } else {
+      if (!process.stdin.isTTY) {
+        fail("usage: oc-harness init --profile <id> | --model <provider>/<model> [--yes] (no terminal to ask)", false, 2)
+      }
+      const def = Math.max(entries.findIndex((e) => e.id === index().default), 0)
+      console.log(`\n  ${bold("run on a profile:")}\n`)
+      entries.forEach((e, i) =>
+        console.log(`  ${i + 1}. ${e.id}${i === def ? " (default)" : ""}  ${stamp(e.note ?? "")}`),
+      )
+      const answer = (await askChoice(`  pick [1-${entries.length}, default ${def + 1}]: `)).trim()
+      const n = answer === "" ? def + 1 : parseInt(answer, 10)
+      if (!Number.isInteger(n) || n < 1 || n > entries.length) fail("not a valid choice")
+      id = entries[n - 1].id
+    }
   }
   loadProfile(id) // fail here, before anything is written, on a bad --profile
   console.log(`\n  ${stamp(`profile: ${id}`)}`)
@@ -1015,13 +1092,22 @@ async function cmdAuto() {
         loadProfile(active)
         id = active
       } catch (err) {
-        notes.push(
-          `the installed profile ${active} cannot be loaded (${err instanceof Error ? err.message : String(err)}); using ${idx.default}`,
-        )
+        if (idx.default) {
+          notes.push(
+            `the installed profile ${active} cannot be loaded (${err instanceof Error ? err.message : String(err)}); using ${idx.default}`,
+          )
+        }
       }
     }
     if (!id) {
       id = idx.default
+      if (!id) {
+        fail(
+          "no profile is installed, and the kit ships no model profiles.\n" +
+            "  Create one for the model you use: oc-harness use <provider>/<model> --retention <level>",
+          wantJson,
+        )
+      }
       try {
         loadProfile(id)
       } catch (err) {
@@ -1233,6 +1319,12 @@ function cmdVerify() {
   const notes = []
   const ok = []
   const activeId = profileIdFromConfig() ?? index().default
+  if (!activeId) {
+    fail(
+      "no profile is installed, and the kit ships no model profiles.\n" +
+        "  Create one for the model you use: oc-harness use <provider>/<model> --retention <level>",
+    )
+  }
   let p = null
   try {
     p = loadProfile(activeId)
@@ -1677,6 +1769,199 @@ function memorySpec() {
  *   report. Channels an exit here and the report is never printed, which is
  *   exactly the bug the JSON report exists to prevent.
  */
+/** The effort levels the compiler knows how to emit. */
+const CANON_EFFORT = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+/** A file-name-safe id for a model reference. */
+function slugify(text) {
+  return (
+    String(text)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "profile"
+  )
+}
+
+/** Record a person's retention verdict for a model, next to their profiles. */
+function writeUserRetention(model, retention) {
+  const path = userRetentionPath()
+  mkdirSync(dirname(path), { recursive: true })
+  let doc = { models: {} }
+  if (existsSync(path)) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8"))
+      if (parsed && typeof parsed === "object") doc = parsed
+    } catch {
+      // A malformed file is replaced rather than trusted. The entries it held
+      // cannot be read anyway, and leaving it in place would keep `use` from
+      // recording the model the user just named.
+    }
+  }
+  doc.models = doc.models && typeof doc.models === "object" ? doc.models : {}
+  doc.models[model] = {
+    retention,
+    verified: new Date().toISOString().slice(0, 10),
+    source: "oc-harness use",
+  }
+  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`)
+  resetRetentionCache()
+}
+
+/**
+ * Build a profile from the live catalogue for an arbitrary model.
+ *
+ * The kit no longer ships model profiles: the model is a fact about the person
+ * and their account, not about the harness. This is the whole "bring your own
+ * model" path - one live catalogue read, one profile written to the user's
+ * config directory, then the normal `use` compiler takes over.
+ *
+ * @param {string} ref `provider/model`
+ * @returns {Promise<string>} the profile id
+ */
+async function createProfileFromModel(ref) {
+  const slash = ref.indexOf("/")
+  const provider = slash > 0 ? ref.slice(0, slash) : ""
+  const model = slash > 0 ? ref.slice(slash + 1) : ""
+  if (!provider || !model) {
+    fail(`"${ref}" is not a model. Use provider/model, for example <provider>/<model>.`, flag("--json"), 2)
+  }
+
+  const id = opt("--id") ?? slugify(`${provider}-${model}`)
+  if (id.includes("/") || id === "schema" || id === "index") {
+    fail(`--id "${id}" cannot be used as a profile file name`, flag("--json"), 2)
+  }
+
+  const existing = profilePath(id)
+  if (existing && !flag("--force")) {
+    console.log(`  ${green("✓")} using the existing profile ${bold(id)} ${stamp(`(${existing})`)}`)
+    return id
+  }
+
+  if (flag("--offline")) {
+    fail(
+      `creating a profile from ${provider}/${model} needs the live catalogue.\n` +
+        `Run it once with a network, or write the profile file yourself and run \`oc-harness use ${id}\`.`,
+      flag("--json"),
+      2,
+    )
+  }
+
+  const catalogue = await fetchCatalogOrFail()
+  const live = catalogue?.[provider]?.models?.[model]
+  if (!live) {
+    fail(
+      `models.dev has no ${provider}/${model}.\n` +
+        `  Check the provider and model id, or write a profile by hand when the model is local.`,
+      flag("--json"),
+      2,
+    )
+  }
+
+  let retention = retentionFor(`${provider}/${model}`)?.retention
+  if (!retention || retention === "unknown") {
+    const asked = opt("--retention")
+    let chosen = ["zero-retention", "retained", "may-train"].includes(asked) ? asked : null
+    if (!chosen && process.stdin.isTTY) {
+      console.log(
+        `\n  ${bold("retention")}  ${stamp("what the provider does with your prompts")}\n` +
+          `  ${stamp("zero-retention keeps nothing; retained keeps a window; may-train improves the model")}\n`,
+      )
+      const answer = (await askChoice("  [zero-retention/retained/may-train]: ")).trim()
+      chosen = ["zero-retention", "retained", "may-train"].includes(answer) ? answer : null
+    }
+    if (!chosen) {
+      fail(
+        `retention for ${provider}/${model} is not recorded.\n` +
+          `  Re-run with --retention zero-retention | retained | may-train. The kit will not install\n` +
+          `  a model whose terms nobody has stated.`,
+        flag("--json"),
+        2,
+      )
+    }
+    writeUserRetention(`${provider}/${model}`, chosen)
+    retention = /** @type {import("../src/profile.js").Retention} */ (chosen)
+  }
+
+  const rawLevels = live.reasoning_options?.find((r) => r.type === "effort")?.values ?? []
+  const levels = rawLevels.filter((level) => CANON_EFFORT.includes(level))
+  const top = levels.length ? levels[levels.length - 1] : null
+  const low = levels.length ? levels[0] : null
+  const supports = {
+    reasoning: Boolean(live.reasoning),
+    temperature: Boolean(live.temperature),
+    toolCall: Boolean(live.tool_call),
+    structuredOutput: Boolean(live.structured_output),
+    attachment: Boolean(live.attachment),
+  }
+
+  const context = live.limit?.context
+  const output = live.limit?.output ?? (context > 0 ? Math.min(context, 32_000) : 0)
+  if (!(context > 0) || !(output > 0)) {
+    fail(
+      `models.dev publishes no usable context/output ceiling for ${provider}/${model}.\n` +
+        `  Write the profile by hand so the limits are stated rather than guessed.`,
+      flag("--json"),
+      2,
+    )
+  }
+
+  const roles = {
+    plan: top,
+    build: top,
+    reviewer: top,
+    locate: low,
+    verify: low,
+    doc: low,
+    schema: top,
+    sweep: low,
+    longform: low,
+  }
+  if (supports.attachment) roles.vision = low
+
+  const profile = {
+    $comment: `Created from models.dev on ${new Date().toISOString().slice(0, 10)}. Edit this file, then re-run: oc-harness use ${id}`,
+    id,
+    title: `${provider}/${model}`,
+    provider,
+    model,
+    family: live.family ?? null,
+    verified: new Date().toISOString().slice(0, 10),
+    retention,
+    notes: `Created for ${provider}/${model} from the live catalogue. The model is yours; the lanes are the harness.`,
+    limits: {
+      context,
+      output,
+      ...(live.limit?.input ? { input: live.limit.input } : {}),
+    },
+    supports,
+    effort: {
+      levels,
+      default: top,
+      reserveShare: 0.12,
+    },
+    roles,
+    prune: {
+      enabled: true,
+      keepRecentToolCalls: 6,
+      keepRecentTurns: 3,
+      keepUserMessages: true,
+    },
+    fallback: [],
+  }
+
+  const dir = profileDirs()[0]
+  const path = join(dir, `${id}.json`)
+  mkdirSync(dir, { recursive: true })
+  // Validate before writing, so a profile that cannot compile never becomes
+  // the thing the next `use` reads. The retention entry is already on disk,
+  // which is what makes this profile answer the "terms are stated" gate.
+  validate(profile, path)
+  writeFileSync(path, `${JSON.stringify(profile, null, 2)}\n`)
+  console.log(`  ${green("✓")} created ${bold(id)} ${stamp(`(${provider}/${model} -> ${path})`)}`)
+  return id
+}
+
 async function cmdUse(id, catalog = null, sink = {}) {
   const wantJson = sink.wantJson === true
   /** Refuse: issue the message the way the caller's stdout wants it said. */
@@ -1691,6 +1976,20 @@ async function cmdUse(id, catalog = null, sink = {}) {
     fail(msg, wantJson, 2)
   }
   if (!id) fail("usage: oc-harness use <profile> [--print] [--yes] [--no-skills]")
+  // A model reference is the bring-your-own-model path: `use anthropic/claude`
+  // creates the profile from the live catalogue, then compiles it like any
+  // other. A profile id never contains a slash, so the two cannot be confused.
+  if (id.includes("/") && !profilePath(id)) {
+    if (flag("--dryrun")) {
+      fail(
+        `--dryrun writes nothing, and ${id} has no profile yet.\n` +
+          `Run \`oc-harness use ${id} --retention <level>\` once to create it, then --dryrun is a read-only preview.`,
+        wantJson,
+        2,
+      )
+    }
+    id = await createProfileFromModel(id)
+  }
   let p = null
   try {
     p = loadProfile(id)
@@ -1699,10 +1998,10 @@ async function cmdUse(id, catalog = null, sink = {}) {
     // message it produces does not say what to DO about it. The check below
     // says exactly that, so it is worth reaching from here too.
     const message = err instanceof Error ? err.message : String(err)
-    if (/has no retention\.yml entry/.test(message)) {
+    if (/has no recorded retention/.test(message)) {
       fail(
-        `retention for the models in ${id} is not recorded in retention.yml.\n` +
-          `Add an entry with retention: zero-retention | may-train before installing it.`,
+        `retention for the models in ${id} is not recorded.\n` +
+          `Record it with: oc-harness use ${id} --retention zero-retention|retained|may-train`,
         wantJson,
         2,
       )
@@ -1775,8 +2074,8 @@ async function cmdUse(id, catalog = null, sink = {}) {
   // retention terms. Capability metadata cannot answer this question.
   if (unrecorded.length) {
     fail(
-      `retention for ${unrecorded.join(", ")} is not recorded in retention.yml.\n` +
-        `Add an entry with retention: zero-retention | may-train before installing it.`,
+      `retention for ${unrecorded.join(", ")} is not recorded.\n` +
+        `Record it with: oc-harness use ${p.id} --retention zero-retention|retained|may-train`,
       wantJson,
       2,
     )
@@ -2158,7 +2457,7 @@ function diffProfile(p, live) {
  * and it only ever removes; nothing is ever put INTO a lane.
  */
 /**
- * Refresh every shipped profile against the live catalogue.
+ * Refresh every profile against the live catalogue.
  *
  * A free model is withdrawn in days, so a profile file goes stale in days
  * too, and there is no way to notice except by looking. This does the
@@ -2804,6 +3103,12 @@ async function cmdUpgrade() {
 
   // 3. The config.
   const activeId = profileIdFromConfig() ?? index().default
+  if (!activeId) {
+    fail(
+      "no profile is installed, so there is no config to rewrite.\n" +
+        "  Create one for the model you use: oc-harness use <provider>/<model> --retention <level>",
+    )
+  }
   try {
     loadProfile(activeId)
   } catch (err) {
@@ -3033,7 +3338,7 @@ function recordWithdrawal(model, profiles) {
 }
 
 /**
- * Which shipped models are no longer in the live catalogue.
+ * Which models in your profiles are no longer in the live catalogue.
  *
  * This is the question a free-tier user actually has to ask, and the answer
  * is not "has a profile drifted" - it is "is one of my routes gone". A model
@@ -3051,7 +3356,7 @@ function withdrawnModels(catalog) {
   const gone = new Map()
   // The profiles that could not be read. They used to disappear without a
   // word - the check was a `continue` with no output - and the summary then
-  // said every shipped model was still in the catalogue. So a profile that
+  // said every model in use was still in the catalogue. So a profile that
   // was NEVER CHECKED was reported as a profile that was checked and found
   // fine. A skipped profile is a failure, not a footnote.
   /** @type {{id: string, why: string}[]} */
@@ -3175,13 +3480,13 @@ async function cmdDoctorWatch() {
     if (!watch) {
       if (gone.size) {
         console.error(
-          red(`  ${gone.size} shipped model(s) are gone: ${[...gone.keys()].join(", ")}`),
+          red(`  ${gone.size} model(s) in your profiles are gone: ${[...gone.keys()].join(", ")}`),
         )
         console.error(stamp(`  recorded in ${join(CONFIG_DIR, WITHDRAWN_LOG)}`))
         process.exit(1)
       }
       // A profile that could not be read is a profile that was not checked.
-      // The run above says "every shipped model is still in the catalogue",
+      // The run above says "every model in use is still in the catalogue",
       // and that sentence is only true of the profiles it actually looked at.
       if (skipped.length) {
         console.error(
@@ -3199,8 +3504,8 @@ async function cmdDoctorWatch() {
       console.log(
         green(
           local.length
-            ? "  every catalogue-backed shipped model is still live"
-            : "  every shipped model is still live",
+            ? "  every catalogue-backed profile model is still live"
+            : "  every profile model is still live",
         ),
       )
       return
@@ -3315,9 +3620,9 @@ async function cmdResearch() {
 
   // The models the kit uses that the provider has pulled. This is the part
   // that has to be acted on, so it comes first.
-  if (report.shipped.gone.length) {
-    console.log(`  ${red("gone")} ${report.shipped.gone.length} model(s) in use have been withdrawn\n`)
-    for (const g of report.shipped.gone) {
+  if (report.inUse.gone.length) {
+    console.log(`  ${red("gone")} ${report.inUse.gone.length} model(s) in use have been withdrawn\n`)
+    for (const g of report.inUse.gone) {
       console.log(`      ${red("✗")} ${g.id}`)
       console.log(`        ${g.reason}`)
       if (g.asBase.length) {
@@ -3415,7 +3720,7 @@ async function runDoctor(catalog) {
     const issues = diffProfile(p, live)
     const ret = retention[`${p.provider}/${p.model}`]
     if (p.retention === "zero-retention" && ret?.retention === "may-train") {
-      issues.push(red("retention.yml now says may-train"))
+      issues.push(red("the recorded terms now say may-train"))
     }
 
     // A fleet's lanes point at other models, and those are the routes that
@@ -3455,11 +3760,19 @@ async function runDoctor(catalog) {
       for (const i of issues) note("drift", id, i)
     }
   }
-  console.log(
-    drift
-      ? `\n  ${yellow(`${drift} profile(s) drifted`)}\n`
-      : `\n  ${green("all profiles match live metadata")}\n`,
-  )
+  if (ids.length === 0) {
+    console.log(
+      `\n  ${yellow("!")} ${stamp("no profiles yet. Create one for the model you use: oc-harness use <provider>/<model> --retention <level>")}\n`,
+    )
+    note("problem", "-", "no profiles yet")
+    problems++
+  } else {
+    console.log(
+      drift
+        ? `\n  ${yellow(`${drift} profile(s) drifted`)}\n`
+        : `\n  ${green("all profiles match live metadata")}\n`,
+    )
+  }
 
   // Second half: is the *installed* config still what the active profile
   // compiles to? `doctor` used to only compare profiles against models.dev,
@@ -3469,6 +3782,16 @@ async function runDoctor(catalog) {
   // every other field still matched, and doctor reported everything green.
   const activeId = profileIdFromConfig()
   if (!activeId) {
+    // With no profiles at all there is nothing to install yet; the finding
+    // above already says what to do, and a second one would read as two
+    // separate faults.
+    if (ids.length === 0) {
+      doctorReport.problems = problems
+      doctorReport.drift = drift
+      doctorReport.strict = strict
+      doctorReport.ok = false
+      return
+    }
     console.log(`  ${yellow("!")} ${stamp("no profile recorded in the config. Run: oc-harness use <profile>")}\n`)
     note("problem", "-", "no profile recorded in the config")
     problems++
@@ -3497,7 +3820,14 @@ async function runDoctor(catalog) {
   } catch (err) {
     const message = `the active profile "${activeId}" cannot be loaded: ${err instanceof Error ? err.message : String(err)}`
     console.log(`  ${red("✗")} ${stamp(message)}`)
-    console.log(`  ${stamp("fix: oc-harness use " + (index().default ?? "fleet-safe"))}\n`)
+    const available = listProfileIds()
+    console.log(
+      `  ${stamp(
+        available.length
+          ? `available: ${available.join(", ")}`
+          : "no profile is available; create one with oc-harness use <provider>/<model> --retention <level>",
+      )}\n`,
+    )
     note("problem", activeId, message)
     problems++
     active = null
@@ -3566,7 +3896,8 @@ function doctorExit() {
  */
 function laneSource(profile, id, lock) {
   if (!profile.resolve) {
-    const file = (index().profiles ?? []).find((e) => e.id === id)?.file ?? `profiles/${id}.json`
+    const file =
+      profilePath(id) ?? (index().profiles ?? []).find((e) => e.id === id)?.file ?? `profiles/${id}.json`
     return `lane models are written in ${file}`
   }
   if (!lock || lock.profile !== id) {
@@ -3586,6 +3917,12 @@ function laneSource(profile, id, lock) {
 
 function cmdLanes() {
   const activeId = profileIdFromConfig() ?? index().default
+  if (!activeId) {
+    fail(
+      "no profile is installed, and the kit ships no model profiles.\n" +
+        "  Create one for the model you use: oc-harness use <provider>/<model> --retention <level>",
+    )
+  }
   let profile = null
   try {
     profile = loadProfile(activeId)
@@ -4036,10 +4373,14 @@ try {
   oc-harness <command>
 
     list      show profiles with retention and caveats
-    init      pick a free profile, then install + use + verify in one go
+    init      create a profile for your model, then install + use + verify
+              --model <provider>/<model> --retention <level> asks nothing
     auto      refresh + install + use + verify, asking nothing - the
               unattended reconcile, for an agent or a job
     use <id>  compile a profile into ${CONFIG_FILE}
+              use <provider>/<model>  create that model's profile first
+              --retention <level>     state the provider's terms when new
+              --id <slug>             name the new profile file
               --no-skills omits the skill list from the lanes' prompt
     show <id> print the resolved lane plan and derived numbers
     refresh <id>  update capability fields from models.dev
@@ -4079,13 +4420,16 @@ try {
   options
     --print        write the config to stdout instead of disk
     --yes          accept a retention warning, back up the old config
-    --retention    filter list by retention class
+    --retention    list: filter by retention class
+                   use/init: state the provider's terms for a new model
+    --model        init: provider/model to create a profile for
+    --id           use: file name for a profile created from a model
     --free         list free profiles only
     --memory       turn on the memory plugin (--memory=<id> to pick one)
     --target       use: v1, v2 or auto (which config dialect to write)
     --strict       doctor: fail on perishable catalogue drift too
     --watch        doctor: keep watching the catalogue, report what disappeared
-    --check-models doctor: one run, non-zero when a shipped model is gone
+    --check-models doctor: one run, non-zero when a profile model is gone
     --json        doctor, show, lanes, auto, research: print the
                   machine-readable form, and nothing else
     --offline     auto: skip the refresh, for a machine that cannot reach

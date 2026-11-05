@@ -13,7 +13,7 @@
 // writes the real config, never installs into it, and does not read it.
 
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, rmSync } from "node:fs"
+import { cpSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -46,8 +46,10 @@ run("graph", "npm", ["run", "graph"])
 run("premises", "node", ["eval/premises.mjs", "--target", ".", "--suite", "eval/tasks-self.json"])
 
 const configDir = mkdtempSync(join(tmpdir(), "ock-selfcheck-"))
+const profilesDir = join(configDir, "fixture-profiles")
 try {
-  const env = { OPENCODE_CONFIG_DIR: configDir }
+  cpSync(join(ROOT, "test", "fixtures", "profiles"), profilesDir, { recursive: true })
+  const env = { OPENCODE_CONFIG_DIR: configDir, OPENCODE_HARNESS_PROFILES: profilesDir }
   run("use fleet-safe", "node", ["bin/oc-harness.mjs", "use", "fleet-safe", "--yes"], env)
   run("install", "node", ["bin/oc-harness.mjs", "install"], env)
   run("verify --strict", "node", ["bin/oc-harness.mjs", "verify", "--strict"], env)

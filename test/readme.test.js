@@ -16,77 +16,72 @@ import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { listProfileIds, loadProfile, loadLanes } from "../src/profile.js"
+import { listProfileIds, loadLanes } from "../src/profile.js"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const README = readFileSync(join(ROOT, "README.md"), "utf8")
-const INDEX = JSON.parse(readFileSync(join(ROOT, "profiles", "index.json"), "utf8"))
+const INDEX = JSON.parse(
+  readFileSync(join(ROOT, "test", "fixtures", "profiles", "index.json"), "utf8"),
+)
 
-test("the README names every profile the kit ships", () => {
-  // The shipped-profiles table is the one place a reader decides which model
-  // to run on. A profile that is not in it does not exist as far as the
-  // README is concerned, and a profile that is in it but not shipped is a
-  // promise the kit cannot keep.
+test("the package ships no model profiles, and the README says so", () => {
+  // A shipped profile is a model somebody else chose, and the model that
+  // choice names is withdrawn sooner or later. The package index is the
+  // place that would hold one, so an empty list there is the promise the
+  // README makes.
+  const shipped = JSON.parse(
+    readFileSync(join(ROOT, "profiles", "index.json"), "utf8"),
+  )
+  assert.deepEqual(shipped.profiles, [], "the package index lists a model profile")
+  assert.equal(shipped.default, null, "the package index names a default profile")
+  assert.match(README, /No model list ships with the kit/)
+})
+
+test("the README names no shipped model or profile", () => {
+  // The kit ships no model choices, and the README is where a reader would
+  // look for one. A concrete model id in the README turns a measurement into
+  // a recommendation and goes stale the day the route is withdrawn. Pin the
+  // absence instead of checking that a list is complete.
+  const names = new Set()
+  for (const entry of INDEX.profiles ?? []) names.add(entry.id)
+  for (const entry of INDEX.withdrawn ?? []) names.add(entry.id)
+  const dir = join(ROOT, "test", "fixtures", "profiles")
   for (const id of listProfileIds()) {
-    assert.ok(
-      README.includes(`\`${id}\``),
-      `README.md does not mention the shipped profile ${id}`,
-    )
+    const p = JSON.parse(readFileSync(join(dir, `${id}.json`), "utf8"))
+    if (p.id) names.add(p.id)
+    if (p.model) names.add(p.model)
+    for (const rm of Object.values(p.roleModels ?? {})) {
+      if (rm?.model) names.add(rm.model)
+      for (const rung of rm?.chain ?? []) names.add(rung)
+    }
+    if (p.utility?.model) names.add(p.utility.model)
   }
-})
-
-test("the README names every withdrawn model, with the reason", () => {
-  assert.ok(Array.isArray(INDEX.withdrawn), "profiles/index.json has no withdrawn list")
-  for (const entry of INDEX.withdrawn) {
-    assert.ok(
-      README.includes(`\`${entry.id}\``),
-      `README.md does not mention the withdrawn model ${entry.id}`,
-    )
-  }
-})
-
-test("the README's shipped-profiles table names exactly the shipped profiles", () => {
-  // The table is where a reader decides which model to run on. A withdrawn
-  // model in it, or a shipped model missing from it, is a wrong table - and
-  // the previous version of this test only checked `profiles/index.json`
-  // against itself, so it would have stayed green with a table full of
-  // withdrawn models.
-  const table = README.slice(
-    README.indexOf("## Shipped profiles"),
-    README.indexOf("## Free models are perishable"),
+  const hits = [...names].filter((name) =>
+    new RegExp(`(?<![a-z0-9-])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9-])`, "i").test(README),
   )
-  assert.ok(Array.isArray(INDEX.profiles), "profiles/index.json has no profile list")
-  const shipped = new Set(INDEX.profiles.map((p) => p.id))
-  assert.ok(Array.isArray(INDEX.withdrawn), "profiles/index.json has no withdrawn list")
-  const withdrawn = new Set(INDEX.withdrawn.map((p) => p.id))
-
-  for (const id of shipped) {
-    assert.ok(
-      table.includes(`\`${id}\``),
-      `the shipped-profiles table does not mention ${id}`,
-    )
-  }
-  for (const id of withdrawn) {
-    assert.ok(
-      !table.includes(`\`${id}\``),
-      `the shipped-profiles table still lists ${id}, which was withdrawn`,
-    )
-  }
+  assert.deepEqual(hits, [], `README.md still names shipped model(s): ${hits.join(", ")}`)
 })
 
-test("the README's withdrawn table names every withdrawn model", () => {
-  // And the other way round: a model that was withdrawn has to be findable.
-  const table = README.slice(
-    README.indexOf("## Free models are perishable"),
-    README.indexOf("## Requirements"),
+test("the free-route section is a route, not a model list", () => {
+  const section = README.slice(
+    README.indexOf("### Route A"),
+    README.indexOf("### Route B"),
   )
-  assert.ok(Array.isArray(INDEX.withdrawn), "profiles/index.json has no withdrawn list")
-  for (const entry of INDEX.withdrawn) {
-    assert.ok(
-      table.includes(`\`${entry.id}\``),
-      `the withdrawn table does not mention ${entry.id}`,
-    )
-  }
+  assert.ok(section.length > 0, "README has no free route section")
+  assert.match(section, /withdrawn|perishable|limited time/i)
+  assert.match(section, /doctor/)
+  assert.match(section, /research/)
+  assert.match(section, /refresh/)
+})
+
+test("the paid-route section explains the upgrade without naming a model", () => {
+  const section = README.slice(
+    README.indexOf("### Route B"),
+    README.indexOf("## The problem it solves"),
+  )
+  assert.match(section, /paid|plan/i)
+  assert.match(section, /--retention/)
+  assert.match(section, /capability|image|JSON|context/i)
 })
 
 test("the README's command list is the CLI's command list", () => {
@@ -138,10 +133,14 @@ test("the README's perishable section says what the doctor actually does", () =>
   // on a refactor and proves nothing about the behaviour.
   const r = spawnSync("node", [join(ROOT, "bin", "oc-harness.mjs"), "list"], {
     encoding: "utf8",
-    env: { ...process.env, OPENCODE_CONFIG_DIR: tmpdir() },
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG_DIR: tmpdir(),
+      OPENCODE_HARNESS_PROFILES: "",
+    },
   })
   assert.equal(r.status, 0, `list failed:\n${r.stdout ?? ""}${r.stderr ?? ""}`)
-  assert.match(r.stdout ?? "", /fleet-safe/)
+  assert.match(r.stdout ?? "", /no profiles yet/)
 })
 
 test("the perishable section names the commands that exist and the lanes that exist", () => {
@@ -156,21 +155,6 @@ test("the perishable section names the commands that exist and the lanes that ex
   assert.ok(lanes.length > 0)
   for (const lane of lanes) {
     assert.ok(README.includes(`\`${lane}\``), `README.md does not mention the lane ${lane}`)
-  }
-})
-
-test("every profile the README lists is loadable and has a retention class", () => {
-  // A profile in the table that does not load is a row that would send
-  // somebody to a command that fails.
-  assert.ok(Array.isArray(INDEX.profiles), "profiles/index.json has no profile list")
-  for (const entry of INDEX.profiles) {
-    const p = loadProfile(entry.id)
-    assert.ok(p.retention, `${entry.id} has no retention class`)
-    assert.equal(
-      p.retention,
-      entry.retention,
-      `${entry.id} says ${entry.retention} in index.json and ${p.retention} in the profile`,
-    )
   }
 })
 
@@ -242,7 +226,7 @@ test("eval/RESULTS.md still has every A/B section it is supposed to have", () =>
   }
 })
 
-test("profiles/index.json lists every profile once", () => {
+test("the fixture index lists every fixture profile once", () => {
   // `list` and `init` both walk the index array, and nothing deduplicates it:
   // a repeated id is printed twice, offered twice, and the README's count of
   // shipped profiles is one higher than the truth. The duplicate survived
@@ -254,40 +238,18 @@ test("profiles/index.json lists every profile once", () => {
   assert.equal(
     INDEX.profiles.length,
     listProfileIds().length,
-    "the index and the loader disagree about how many profiles ship",
+    "the fixture index and the loader disagree about how many profiles exist",
   )
 })
 
-test("the README's shipped-profiles table has one row per shipped profile", () => {
-  // A repeated row is how an added profile can look shipped when it is not,
-  // and how a count of twelve can survive a table of eleven. Count the rows
-  // against the index instead of trusting either list.
-  const table = README.slice(
-    README.indexOf("## Shipped profiles"),
-    README.indexOf("## Free models are perishable"),
-  )
-  // The id cell may carry a suffix - `fleet-safe` (default) - so the match
-  // stops at the closing backtick and ignores what the cell appends to it.
-  const rows = [...table.matchAll(/^\| `([^`]+)`/gm)].map((m) => m[1])
-  assert.equal(
-    rows.length,
-    INDEX.profiles.length,
-    `the table has ${rows.length} rows against ${INDEX.profiles.length} shipped profiles`,
-  )
-  const dupes = rows.filter((id, i) => rows.indexOf(id) !== i)
-  assert.deepEqual(dupes, [], `the table lists ${dupes.join(", ")} twice`)
-})
-
-test("retention.yml lists every model once", () => {
-  // The hand-rolled parser in src/profile.js overwrites `models[id]` on every
-  // repeated key, so a duplicate silently replaces whatever record came
-  // first - here, a 2026-10-23 notes with the provider's terms quoted lost to
-  // a vaguer 2026-10-22 stub. Nothing else in the pipeline can see the
-  // difference, which is why it gets its own red line here.
+test("the package retention table carries no model presets", () => {
+  // A shipped privacy verdict is still a shipped model: it is a name and a
+  // judgement somebody else made. The package file keeps the `unknown`
+  // default and the format; the verdict a person stated for their own model
+  // lives in ~/.config/opencode/retention.json.
   const raw = readFileSync(join(ROOT, "retention.yml"), "utf8")
-  const keys = [...raw.matchAll(/^  ([a-z0-9.-]+\/[a-z0-9.-]+):$/gm)].map((m) => m[1])
-  const dupes = keys.filter((id, i) => keys.indexOf(id) !== i)
-  assert.deepEqual(dupes, [], `retention.yml repeats ${dupes.join(", ")}; the second record erases the first`)
+  const keys = [...raw.matchAll(/^  ([a-z0-9.-]+\/[a-z0-9.:-]+):$/gm)].map((m) => m[1])
+  assert.deepEqual(keys, [], `retention.yml ships model entries: ${keys.join(", ")}`)
 })
 
 test("every npx reference in the README names this package", () => {

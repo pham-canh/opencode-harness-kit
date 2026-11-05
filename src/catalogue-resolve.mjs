@@ -45,12 +45,12 @@ import { fitsLane, isFree, isWithdrawn } from "./research.js"
  * catalogue states rather than a quality score nobody measured:
  *
  *   - a model that is not yet the first rung of any lane wins over one that
- *     is. This is the "ten jobs, ten models" principle from profiles/index.json
- *     turned into a rule: a free tier rate-limits per model, so ten lanes on
- *     one model is one quota for the whole fleet, and one withdrawal empties
- *     every lane at once. Preferring an unused model costs nothing when the
- *     models are equal, and it is what stops the resolver collapsing a fleet
- *     into a single model the way output-token ranking alone always does.
+ *     is. This is the fleet principle turned into a rule: a free tier
+ *     rate-limits per model, so ten lanes on one model is one quota for the
+ *     whole fleet, and one withdrawal empties every lane at once. Preferring
+ *     an unused model costs nothing when the models are equal, and it is what
+ *     stops the resolver collapsing a fleet into a single model the way
+ *     output-token ranking alone always does.
  *   - output tokens, because a lane that runs out of reply budget truncates
  *     its answer, and a truncated plan is worse than a slow one
  *   - context, because a model that cannot hold the prompt fails outright

@@ -4,6 +4,11 @@ Where the numbers came from, and what was tried and thrown away. The short
 version: most of the first draft of this project was wrong, and the corrections
 are more useful than the conclusions.
 
+> **Historical snapshot.** Model names below are the data this study was
+> measured on, not a shortlist. The package ships no model profiles and no
+> retention verdicts: create a profile for the model you actually use with
+> `oc-harness use <provider>/<model> --retention <level>`.
+
 ## The measurement everything rests on
 
 One real install, 14 days, read out of `~/.local/share/opencode/opencode.db`.
@@ -211,19 +216,21 @@ From the Privacy section of the OpenCode Zen docs, which states a general
 zero-retention policy and then names exceptions. Ten models are named as
 retaining data. Two more, `x-preview-f-free` and `deepseek-v4-flash-free`, are
 not named in the exception list and so fall under the general policy. Those two
-are marked in `retention.yml` as inferred rather than quoted, because the
-distinction matters if you are handling someone else's code.
+were marked as inferred rather than quoted, because the distinction matters if
+you are handling someone else's code.
 
-Both of those models have since been withdrawn, and `retention.yml` was
-rewritten against the page on 2026-10-19 to match the tier that exists now:
-seven new entries, four dead models dropped, and every value quoted rather
-than inferred.
+Both of those models have since been withdrawn, and the table was rewritten
+against the page on 2026-10-19 to match the tier that existed then: seven new
+entries, four dead models dropped, and every value quoted rather than inferred.
+That record now lives beside the test fixtures; the package ships no model
+verdicts. A person states the terms for their own model with
+`oc-harness use <provider>/<model> --retention <level>`.
 
 The tier of 2026-10-19 needed a third value. `beam-free` does not train on
 prompts but "retains them for 30 days for safety reasons", which is neither
 "keeps nothing" nor "may train". Calling that zero-retention would have been
-the same kind of claim the file exists to prevent, so `retained` was added and
-the fleet's ceiling can be set to either side of it.
+the same kind of claim the verdict exists to prevent, so `retained` was added
+and a fleet's ceiling can be set to either side of it.
 
 ## What the ecosystem already covers
 

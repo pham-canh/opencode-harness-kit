@@ -1,10 +1,16 @@
-# Routing: ten jobs, ten free models
+# Routing: ten jobs, your models
 
-The fleet is the point of this kit. One session, ten lanes, ten models, and a
-human who never switches a model by hand.
+The fleet is the point of this kit. One session, ten lanes, and a profile that
+decides which model serves each job. A human never switches a model by hand.
 
-This page records what the lanes are, which model serves each one, and the
-measurements behind those choices.
+This page records what the lanes are and the measurements the fixture fleet
+was tested with. The model names below are historical data, not a shortlist:
+the package ships no model profiles, no default and no recommendation.
+
+> The profiles named here (`fleet-all`, `fleet-safe`) are the fleet this kit
+> was measured on. The package ships no model profiles; they live in
+> `test/fixtures/profiles/` as test data. Create a profile for the model you
+> use with `oc-harness use <provider>/<model> --retention <level>`.
 
 **The model column below is an artifact, not a preference.** A profile that
 declares `resolve` has no chains in its file: the lanes are drawn from the
@@ -157,8 +163,8 @@ so there is nothing to ask for: it runs at its natural rate. The script
 reads the catalogue to know which is which, rather than asking every model
 and reporting an answer it did not use.
 
-The model ids are shown without their provider; the script prints
-`opencode/beam-free`, and either spelling works with `--model`.
+The model ids are shown without their provider; the script prints the
+provider-qualified id, and either spelling works with `--model`.
 
 **The free tier is noisy, and the table says so.** Five requests is five
 requests: `deepseek` had a 25.8 s outlier in a 10.7 s median, and Beam had a
@@ -400,8 +406,8 @@ with no `model:` line makes the agent inherit the caller's model. Both were
 observed on OpenCode 1.19, with the plugin out of the way (`--pure`):
 
 ```
-agent file:  model: opencode/beam-free
-config:      agent.build.model: opencode/flint-40b-free
+agent file:  model: <provider>/<model-a>
+config:      agent.build.model: <provider>/<model-b>
 result:      the agent file's model wins
 ```
 

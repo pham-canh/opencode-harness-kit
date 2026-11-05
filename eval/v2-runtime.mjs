@@ -24,7 +24,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { generateConfig } from "../src/config.js"
-import { loadProfile } from "../src/profile.js"
+import { listProfileIds, loadProfile } from "../src/profile.js"
 
 const SKIP = 0
 const MARKER = "[opencode-harness-kit] blocked"
@@ -196,8 +196,13 @@ async function main() {
 
     model = await startModel()
     const opencodePort = await freePort()
+    const id = process.env.OPENCODE_HARNESS_PROFILE ?? listProfileIds()[0]
+    if (!id) {
+      process.stdout.write("skip v2 runtime: no profile installed (create one with oc-harness use <provider>/<model>)\n")
+      return SKIP
+    }
     const config = JSON.parse(
-      generateConfig(loadProfile(process.env.OPENCODE_HARNESS_PROFILE || "beam-free"), {
+      generateConfig(loadProfile(id), {
         comments: false,
         target: "v2",
         configDir: project,

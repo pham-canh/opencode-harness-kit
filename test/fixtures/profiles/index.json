@@ -1,0 +1,182 @@
+{
+  "$comment": "Test fixtures, not shipped profiles: the package index is empty because a model is a fact about your account. These records exercise fleets, single-model profiles and a local model in the suite. `retention` comes from the fixture retention.json beside this file; a model missing there cannot enter the list. `context` is the input cap the config can actually use: the narrowest lane model's on a fleet, the model's own on a single-model profile. `oc-harness list` recomputes it from the profile rather than trusting this copy.",
+  "default": "fleet-safe",
+  "profiles": [
+    {
+      "id": "beam-free",
+      "file": "test/fixtures/profiles/beam-free.json",
+      "title": "Beam Free",
+      "retention": "retained",
+      "free": true,
+      "topEffort": "max",
+      "context": 1048576,
+      "default": false,
+      "note": "Text only, freshest knowledge on the tier, fastest measured route. Keeps prompts for 30 days, so it is not zero-retention."
+    },
+    {
+      "id": "fleet-safe",
+      "file": "test/fixtures/profiles/fleet-safe.json",
+      "title": "Ten jobs, zero-retention models only",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": true,
+      "note": "The default. Every lane resolves to a provider with a zero-retention policy, at the cost of six jobs not getting the model built for them."
+    },
+    {
+      "id": "fleet-all",
+      "file": "test/fixtures/profiles/fleet-all.json",
+      "title": "Ten jobs, every free model, one of them may train",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": "max",
+      "context": 160000,
+      "default": false,
+      "note": "Every lane gets the model built for it. Five of the ten providers may use the data to improve the model, so the whole profile is may-train."
+    },
+    {
+      "id": "big-pickle-auto",
+      "file": "test/fixtures/profiles/big-pickle-auto.json",
+      "title": "Big Pickle base, lanes resolved from the live catalogue",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "Ten lanes derived from the free catalogue at `use` time, with Big Pickle as base and last rung. Survives a withdrawal without an edit, and may train on your prompts, so it is opt-in."
+    },
+    {
+      "id": "bench",
+      "file": "test/fixtures/profiles/bench.json",
+      "title": "One model, no rotation, no pruning - for measurement",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "For benchmarks, not for working. One rung per lane and pruning off, so a run measures the model and the prompt rather than which route the rotation happened to draw."
+    },
+    {
+      "id": "deepseek-v4.1-flash-free",
+      "file": "test/fixtures/profiles/deepseek-v4.1-flash-free.json",
+      "title": "DeepSeek V4.1 Flash Free",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "Reasoning plus agentic coding plus structured output, on a zero-retention provider."
+    },
+    {
+      "id": "glm-5.3-flash-free",
+      "file": "test/fixtures/profiles/glm-5.3-flash-free.json",
+      "title": "GLM 5.3 Flash Free",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "Structured output on a zero-retention provider. Careful rather than fast: 4.4-5.8s on the work a lane does."
+    },
+    {
+      "id": "nemotron-3.5-super-vl-free",
+      "file": "test/fixtures/profiles/nemotron-3.5-super-vl-free.json",
+      "title": "Nemotron 3.5 Super VL Free",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": "xhigh",
+      "context": 1048576,
+      "default": false,
+      "note": "The only free model publishing a `none` effort level, so it is the reasoning-off sweep lane. It hangs on a file ATTACHMENT - never hand it one - but not on a tool read."
+    },
+    {
+      "id": "nemotron-3.5-lightning-free",
+      "file": "test/fixtures/profiles/nemotron-3.5-lightning-free.json",
+      "title": "Nemotron 3.5 Lightning Free",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": null,
+      "context": 262144,
+      "default": false,
+      "note": "Its output cap equals its whole context, so it emits files larger than 128k tokens. Usually the quickest lane on the tier at 3.7s, but one measured call took 114s."
+    },
+    {
+      "id": "mimo-v2.6-flash-free",
+      "file": "test/fixtures/profiles/mimo-v2.6-flash-free.json",
+      "title": "MiMo V2.6 Flash Free",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": null,
+      "context": 200000,
+      "default": false,
+      "note": "Reads images correctly, at 19.2s - the slowest lane on the tier. Publishes audio input too, but OpenCode will not read a binary file, so that path is unreachable today."
+    },
+    {
+      "id": "flint-40b-free",
+      "file": "test/fixtures/profiles/flint-40b-free.json",
+      "title": "Flint 40B Free",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": "max",
+      "context": 262144,
+      "default": false,
+      "note": "Open-weight MoE, 40B total with about 2.5B active parameters, built for coding agents and small enough to serve locally. Full effort ladder, 262k context, 64k output, no image input. Knowledge cutoff 2026-06. May train on prompts during its free period."
+    },
+    {
+      "id": "big-pickle",
+      "file": "test/fixtures/profiles/big-pickle.json",
+      "title": "Big Pickle",
+      "retention": "may-train",
+      "free": true,
+      "topEffort": null,
+      "context": 160000,
+      "default": false,
+      "note": "Stealth model, no public identity, no effort levels, no image input. The provider may train on it during its free period."
+    },
+    {
+      "id": "ollama-qwen3-coder",
+      "file": "test/fixtures/profiles/ollama-qwen3-coder.json",
+      "title": "Qwen3 Coder 30B on Ollama (local)",
+      "retention": "zero-retention",
+      "free": false,
+      "local": true,
+      "topEffort": null,
+      "context": 262144,
+      "default": false,
+      "note": "Runs on your machine: no provider, no egress, no per-token cost. Pull it with `ollama pull qwen3-coder:30b`."
+    }
+  ],
+  "excluded": [],
+  "withdrawn": [
+    {
+      "id": "space-bunny-free",
+      "reason": "Withdrawn from the provider within a month of shipping. It was the default profile, so a config left pointing at it kept working and kept saying it was zero-retention."
+    },
+    {
+      "id": "x-preview-f-free",
+      "reason": "Withdrawn from the provider within a month of shipping."
+    },
+    {
+      "id": "deepseek-v4-flash-free",
+      "reason": "Withdrawn from the provider within a month of shipping. Its replacement on the tier is deepseek-v4.1-flash-free."
+    },
+    {
+      "id": "muse-spark-1.3-contributor-free",
+      "reason": "Withdrawn from the provider within a month of shipping. A Meta contributor-tier route whose provider was permitted to train on prompts; the paid muse-spark-1.3 route is still in the catalogue."
+    },
+    {
+      "id": "mimo-v2.5-free",
+      "reason": "Withdrawn from the provider. Observed alive for one day. Its replacement on the tier is mimo-v2.6-flash-free."
+    },
+    {
+      "id": "longcat-2.5-preview-free",
+      "reason": "Withdrawn from the provider. A preview endpoint, so it could be pulled without a rename - and it was: models.dev still carries the record and marks it deprecated. It was the longform lane's primary in both fleets, so every lane fell back to its second rung, and the profile named only this model had nothing left to fall back to and was retired."
+    },
+    {
+      "id": "minimax-m3.1-flash-free",
+      "reason": "Deprecated by provider. Replaced on the tier by flint-40b-free for the lanes that ran it."
+    }
+  ],
+  "active": []
+}

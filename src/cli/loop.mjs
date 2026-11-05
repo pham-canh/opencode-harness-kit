@@ -188,7 +188,7 @@ async function showBudget() {
   const { budgetTable } = await import("../driver/lane-budget.mjs")
   const id = profileIdFromConfig()
   if (!id) {
-    console.error("no profile configured; set OPENCODE_HARNESS_PROFILE or run `oc-harness setup`")
+    console.error("no profile configured; set OPENCODE_HARNESS_PROFILE or run `oc-harness use <provider>/<model> --retention <level>`")
     process.exitCode = 2
     return
   }

@@ -27,6 +27,7 @@ import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
+const FIXTURE_PROFILES = join(REPO, "test", "fixtures", "profiles")
 
 function sandbox() {
   const dir = mkdtemp("ock-silent-")
@@ -55,7 +56,7 @@ function run(box, args, opts = {}) {
  */
 function driftingProfiles(box) {
   const profiles = join(box.dir, "profiles")
-  cpSync(join(REPO, "profiles"), profiles, { recursive: true })
+  cpSync(FIXTURE_PROFILES, profiles, { recursive: true })
   const models = {}
   for (const id of listProfileIds()) {
     const p = loadProfile(id)
@@ -303,7 +304,7 @@ test("doctor --check-models says a profile it could not check", () => {
   assert.match(r.out, /broken/, `the profile is named:\n${r.out}`)
   assert.doesNotMatch(
     r.out,
-    /every shipped model is still in the catalogue/,
+    /every model in use is still in the catalogue/,
     `a run that checked nothing must not say everything is fine:\n${r.out}`,
   )
 })

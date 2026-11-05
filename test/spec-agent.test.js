@@ -52,6 +52,14 @@ test("checkPrompt refuses a prompt the configured lane cannot hold", () => {
       limits: { context: 2000, output: 1000 },
     }),
   )
+  writeFileSync(
+    join(dir, "retention.json"),
+    JSON.stringify({
+      models: {
+        "openrouter/deepseek-v4.1-flash-free": { retention: "zero-retention" },
+      },
+    }),
+  )
   const before = { profiles: process.env.OPENCODE_HARNESS_PROFILES, profile: process.env.OPENCODE_HARNESS_PROFILE }
   process.env.OPENCODE_HARNESS_PROFILES = dir
   process.env.OPENCODE_HARNESS_PROFILE = "tiny"

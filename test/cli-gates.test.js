@@ -17,6 +17,9 @@ import { mkdtemp } from "./helpers.mjs"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CLI = join(REPO, "bin", "oc-harness.mjs")
+// The profiles the suite exercises. The kit itself ships none, so the test
+// data is a directory of its own and `OPENCODE_HARNESS_PROFILES` points at it.
+const FIXTURE_PROFILES = join(REPO, "test", "fixtures", "profiles")
 
 function sandbox() {
   const dir = mkdtemp("ock-gate-")
@@ -336,7 +339,7 @@ test("doctor --check-models fails when a shipped model is gone", () => {
       env: { ...box.env, OPENCODE_HARNESS_CATALOG_URL: `file://${full}` },
     })
     assert.equal(ok.code, 0, ok.out)
-    assert.match(ok.out, /every catalogue-backed shipped model is still live/)
+    assert.match(ok.out, /every catalogue-backed profile model is still live/)
   } finally {
     box.cleanup()
   }
@@ -353,7 +356,7 @@ test("refresh --all re-derives every profile against the live catalogue", () => 
   const box = sandbox()
   try {
     const profiles = join(box.dir, "profiles")
-    cpSync(join(REPO, "profiles"), profiles, { recursive: true })
+    cpSync(FIXTURE_PROFILES, profiles, { recursive: true })
 
     // A catalogue with a different context window, so every profile drifts.
     const models = {}
@@ -382,7 +385,7 @@ test("refresh --all re-derives every profile against the live catalogue", () => 
     const drifted = JSON.parse(readFileSync(join(profiles, "deepseek-v4.1-flash-free.json"), "utf8"))
     assert.equal(drifted.limits.context, 123456, "the copy was not refreshed")
     // ...and the kit's own profiles were not.
-    const original = JSON.parse(readFileSync(join(REPO, "profiles", "deepseek-v4.1-flash-free.json"), "utf8"))
+    const original = JSON.parse(readFileSync(join(FIXTURE_PROFILES, "deepseek-v4.1-flash-free.json"), "utf8"))
     assert.notEqual(
       original.limits.context,
       123456,
@@ -397,7 +400,7 @@ test("refresh skips a local profile instead of calling it gone", () => {
   const box = sandbox()
   try {
     const profiles = join(box.dir, "profiles")
-    cpSync(join(REPO, "profiles"), profiles, { recursive: true })
+    cpSync(FIXTURE_PROFILES, profiles, { recursive: true })
 
     const models = {}
     for (const id of listProfileIds()) {

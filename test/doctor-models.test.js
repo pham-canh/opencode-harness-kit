@@ -59,7 +59,7 @@ test("a deprecated fallback rung is reported gone", () => {
 test("every live shipped model exits zero", () => {
   const r = check()
   assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /every catalogue-backed shipped model is still live/)
+  assert.match(r.out, /every catalogue-backed profile model is still live/)
 })
 
 test("a local profile is not reported gone when models.dev does not carry it", () => {

@@ -30,24 +30,24 @@
     {
       "id": "long-fallback-sweep",
       "$comment": "Twelve files to read, eleven to change, one trap, and a question about the code that reads the thing that changed.",
-      "task": "In this repository, every profile in `profiles/` has a `fallback` list: the models to try, in order, when the profile's own model is withdrawn from the tier. `big-pickle` is the cheapest text-only model on the tier, so it is the right last resort. Append `big-pickle` to the end of the `fallback` list of every profile — EXCEPT `profiles/big-pickle.json` itself, because a model cannot fall back to itself. Do not change any other field in those files, and do not change any other file. When you are done, report the file and the line where the code reads that `fallback` list and decides which model to use next, and quote the line.",
+      "task": "In this repository, every profile in `test/fixtures/profiles/` has a `fallback` list: the models to try, in order, when the profile's own model is withdrawn from the tier. `big-pickle` is the cheapest text-only model on the tier, so it is the right last resort. Append `big-pickle` to the end of the `fallback` list of every profile — EXCEPT `test/fixtures/profiles/big-pickle.json` itself, because a model cannot fall back to itself. Do not change any other field in those files, and do not change any other file. When you are done, report the file and the line where the code reads that `fallback` list and decides which model to use next, and quote the line.",
       "want": "const queue = [id, ...(profile.fallback ?? [])]",
       "mutateMany": {
         "field": "fallback",
         "append": "big-pickle",
         "files": [
-          "profiles/beam-free.json",
-          "profiles/deepseek-v4.1-flash-free.json",
-          "profiles/fleet-all.json",
-          "profiles/fleet-safe.json",
-          "profiles/glm-5.3-flash-free.json",
-          "profiles/longcat-2.5-preview-free.json",
-          "profiles/mimo-v2.6-flash-free.json",
-          "profiles/minimax-m3.1-flash-free.json",
-          "profiles/nemotron-3.5-lightning-free.json",
-          "profiles/nemotron-3.5-super-vl-free.json"
+          "test/fixtures/profiles/beam-free.json",
+          "test/fixtures/profiles/deepseek-v4.1-flash-free.json",
+          "test/fixtures/profiles/fleet-all.json",
+          "test/fixtures/profiles/fleet-safe.json",
+          "test/fixtures/profiles/glm-5.3-flash-free.json",
+          "test/fixtures/profiles/longcat-2.5-preview-free.json",
+          "test/fixtures/profiles/mimo-v2.6-flash-free.json",
+          "test/fixtures/profiles/minimax-m3.1-flash-free.json",
+          "test/fixtures/profiles/nemotron-3.5-lightning-free.json",
+          "test/fixtures/profiles/nemotron-3.5-super-vl-free.json"
         ],
-        "except": ["profiles/big-pickle.json"]
+        "except": ["test/fixtures/profiles/big-pickle.json"]
       }
     }
   ]

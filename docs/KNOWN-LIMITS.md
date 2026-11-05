@@ -2,6 +2,11 @@
 
 Written down so nobody spends a day rediscovering them.
 
+> Model and profile names in this file (`fleet-safe`, `fleet-all`, and the
+> models measured under them) are history: the fleet this kit was tested on.
+> They are test fixtures now, not shipped choices; create a profile for your
+> own model with `oc-harness use <provider>/<model> --retention <level>`.
+
 ## OpenCode 2 does not load V1 plugins
 
 The same package has two plugin shapes and two config keys, and picking the

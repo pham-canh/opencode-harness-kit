@@ -17,7 +17,7 @@
   "properties": {
     "$comment": {
       "type": "string",
-      "description": "Free text for a human. Allowed here because every shipped profile carries one, and lanes.schema.json declares it too."
+      "description": "Free text for a human. Allowed here because every profile carries one, and lanes.schema.json declares it too."
     },
     "id": {
       "type": "string",
@@ -32,7 +32,7 @@
     },
     "model": {
       "type": "string",
-      "description": "Model id without the provider prefix, e.g. beam-free."
+      "description": "Model id without the provider prefix, as models.dev publishes it."
     },
     "family": {
       "type": [
@@ -56,7 +56,7 @@
         "may-train",
         "unknown"
       ],
-      "description": "Must match an entry in retention.yml. A profile whose model is unknown there cannot become the default."
+      "description": "The verdict you recorded for this model. A profile whose model has no recorded verdict cannot become the default."
     },
     "maxRetention": {
       "enum": [
@@ -303,7 +303,7 @@
           "enum": [
             "catalogue"
           ],
-          "description": "The only source implemented: models.dev plus retention.yml, filtered by this profile's maxRetention ceiling."
+          "description": "The only source implemented: models.dev plus your recorded retention verdicts, filtered by this profile's maxRetention ceiling."
         },
         "free": {
           "type": "boolean",

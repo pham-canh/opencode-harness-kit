@@ -56,8 +56,7 @@ const SPENT = [
 /**
  * Patterns that mean "this model is gone": the provider pulled it.
  *
- * The words have to sit next to each other - "model minimax-m3.1-flash-free
- * not found", "model_not_found", "ModelNotFound" - because the text this
+ * The words have to sit next to each other - "model <id> not found", "model_not_found", "ModelNotFound" - because the text this
  * runs against is the provider's own error and that can be a whole response
  * body. The old pattern ran over the entire event, where a body that
  * mentioned a model in one place and "not found" in another read as a

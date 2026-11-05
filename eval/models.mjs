@@ -62,7 +62,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 const PROMPT = "Reply with exactly the word OK and nothing else."
 
-// The models the shipped profiles use. The catalogue turns over in days, so
+// The models the profiles in use name. The catalogue turns over in days, so
 // this is read from the profiles rather than written down here: a model that
 // has been withdrawn is reported as gone instead of measured.
 async function modelsInUse() {

@@ -2,6 +2,10 @@
 
 Five upgrades change what a user has to do. The most recent one first.
 
+> The profiles and models named here were shipped by older releases. They are
+> now test fixtures, not choices: create a profile for the model you use with
+> `oc-harness use <provider>/<model> --retention <level>`.
+
 - [0.8.x → 0.9.x](#migrating-from-08x-to-09x) — `work` is strict by default,
   and a worktree run is resumed and cleaned up explicitly.
 - [0.7.x → 0.8.x](#migrating-from-07x-to-08x) — verify commands are trusted
@@ -24,7 +28,7 @@ One default changed, two new commands replace what used to be done by hand, and
 # after upgrading, the fleet-safe profile stops a session at 6M tokens
 # (warn at 70%, every tool call refused at 100%). Turn it off with:
 #   "effort": { "sessionTokens": 0 }
-# in profiles/fleet-safe.json, or set your own number (at least 200,000).
+# in the profile file, or set your own number (at least 200,000).
 ```
 
 ```bash

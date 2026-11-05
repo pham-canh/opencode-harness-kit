@@ -1,5 +1,5 @@
 {
-  "$comment": "Free routes a live probe could not use. `eval/models.mjs --free` skips these. Re-probe a model before removing it from this list.",
+  "$comment": "Historical probe snapshot, not a shipped or recommended model. The kit ships no model profiles; this file only stops `eval/models.mjs --free` from re-spending requests on a route that failed on the date below. Re-probe before removing an entry, and empty the map freely when the snapshot is no longer relevant.",
   "checked": "2026-10-26",
   "probe": "node eval/models.mjs --free --check --reps 2",
   "models": {

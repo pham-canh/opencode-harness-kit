@@ -1,0 +1,74 @@
+{
+  "$comment": "Test data only: the verdicts the suite exercises. The package ships no model verdicts; a person records theirs in ~/.config/opencode/retention.json with `oc-harness use <provider>/<model> --retention <level>`.",
+  "models": {
+    "opencode/glm-5.3-flash-free": {
+      "retention": "zero-retention",
+      "note": "\"Its provider follows a zero-retention policy and does not use your data for model training.\" Free for a limited time.",
+      "verified": "2026-10-19",
+      "source": "https://opencode.ai/docs/zen"
+    },
+    "opencode/deepseek-v4.1-flash-free": {
+      "retention": "zero-retention",
+      "note": "\"Its provider follows a zero-retention policy and does not use your data for model training.\" Free for a limited time.",
+      "verified": "2026-10-19",
+      "source": "https://opencode.ai/docs/zen"
+    },
+    "opencode/beam-free": {
+      "retention": "retained",
+      "note": "\"Prompts and other inputs are not used for training. Data is retained for 30 days for safety reasons.\" Also unavailable in a list of sanctioned regions. Free for a limited time.",
+      "verified": "2026-10-19",
+      "source": "https://opencode.ai/docs/zen"
+    },
+    "opencode/big-pickle": {
+      "retention": "may-train",
+      "note": "\"During its free period, collected data may be used to improve the model.\" A stealth model with no public identity.",
+      "verified": "2026-10-19",
+      "source": "https://opencode.ai/docs/zen"
+    },
+    "opencode/flint-40b-free": {
+      "retention": "may-train",
+      "note": "\"During its free period, collected data may be used to improve the model. Data is retained for 30 days.\" The weights are open, so the same model can be served locally instead of through the free tier.",
+      "verified": "2026-10-23",
+      "source": "https://opencode.ai/docs/zen"
+    },
+    "opencode/mimo-v2.6-flash-free": {
+      "retention": "may-train",
+      "note": "\"During its free period, collected data may be used to improve the model.\"",
+      "verified": "2026-10-19",
+      "source": "https://opencode.ai/docs/zen"
+    },
+    "opencode/nemotron-3.5-lightning-free": {
+      "retention": "may-train",
+      "note": "NVIDIA free trial endpoints. \"Trial use only - do not submit personal or confidential data. Your use is logged for security purposes and to improve NVIDIA products and services.\"",
+      "verified": "2026-10-19",
+      "source": "https://opencode.ai/docs/zen"
+    },
+    "opencode/nemotron-3.5-super-vl-free": {
+      "retention": "may-train",
+      "note": "NVIDIA free trial endpoints. \"Trial use only - do not submit personal or confidential data. Your use is logged for security purposes and to improve NVIDIA products and services.\"",
+      "verified": "2026-10-19",
+      "source": "https://opencode.ai/docs/zen"
+    },
+    "ollama/qwen3-coder:30b": {
+      "retention": "zero-retention",
+      "note": "Ollama serves this on localhost. There is no provider to retain the prompt, and no network call to make one; the only copy is on your disk.",
+      "verified": "2026-10-26",
+      "source": "https://ollama.com/library/qwen3-coder"
+    },
+    "opencode/qwen3-coder:30b": {
+      "retention": "zero-retention",
+      "note": "Ollama serves this on localhost. There is no provider to retain the prompt, and no network call to make one; the only copy is on your disk.",
+      "verified": "2026-10-26",
+      "source": "https://ollama.com/library/qwen3-coder"
+    },
+    "opencode/muse-spark-1.3": {
+      "retention": "may-train",
+      "note": "Same Meta contributor terms as the free variant.",
+      "verified": "2026-10-19",
+      "source": "https://opencode.ai/docs/zen"
+    }
+  },
+  "defaults": {
+    "unknown": "unknown"
+  }
+}

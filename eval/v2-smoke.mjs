@@ -17,7 +17,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { generateConfig } from "../src/config.js"
-import { loadProfile } from "../src/profile.js"
+import { listProfileIds, loadProfile } from "../src/profile.js"
 
 const SKIP = 0
 
@@ -55,7 +55,12 @@ function main() {
 
   const dir = mkdtempSync(join(tmpdir(), "oc-v2-smoke-"))
   try {
-    const profile = loadProfile(process.env.OPENCODE_HARNESS_PROFILE || "beam-free")
+    const id = process.env.OPENCODE_HARNESS_PROFILE ?? listProfileIds()[0]
+    if (!id) {
+      process.stdout.write("skip v2 smoke: no profile installed (create one with oc-harness use <provider>/<model>)\n")
+      return SKIP
+    }
+    const profile = loadProfile(id)
     writeFileSync(
       join(dir, "opencode.json"),
       generateConfig(profile, { comments: false, target: "v2", configDir: dir }),

@@ -23,10 +23,10 @@
  * a withdrawn model as a healthy fallback.
  *
  * **Free is a price, not a name.** The tier is the set of models the provider
- * charges nothing for. `big-pickle` is on it and does not end in `-free`, so
- * the suffix is a naming convention and not the test.
+ * charges nothing for. A model can be free without ending in `-free`, so the
+ * suffix is a naming convention and not the test.
  *
- * This module writes nothing, on purpose. `retention.yml` is a human
+ * This module writes nothing, on purpose. A retention verdict is a human
  * judgement about a provider's terms, and `refresh` already draws the line: a
  * script rewrites what a machine can derive and never touches what a person
  * decided. What comes out of here is a shortlist, not a decision.
@@ -44,7 +44,7 @@ export const TIER_PROVIDER = "opencode"
 /**
  * @typedef {object} ResearchReport
  * @property {{ provider: string, total: number, live: number, withdrawn: number }} tier
- * @property {{ count: number, gone: { id: string, provider: string, asBase: string[], inChains: Record<string, string[]>, present: boolean, reason: string }[] }} shipped
+ * @property {{ count: number, gone: { id: string, provider: string, asBase: string[], inChains: Record<string, string[]>, present: boolean, reason: string }[] }} inUse
  * @property {{ lane: string, dead: string[], live: string[] }[]} lanes
  * @property {{ id: string, model: string, provider: string, context: number | null, output: number | null, effort: string[], capabilities: { toolCall: boolean, attachment: boolean, temperature: boolean }, retention: string, fits: string[], blockers: string[] }[]} candidates
  * @property {string[]} unusable routes a live probe rejected, kept out of the shortlist
@@ -162,7 +162,7 @@ export function fitsLane(model, lane, role) {
  * @param {any} p a normalised profile
  * @returns {Set<string>}
  */
-export function shippedModels(p) {
+export function modelsInUse(p) {
   const out = new Set()
   if (p?.model) out.add(p.model)
   if (p?.utility?.model) out.add(p.utility.model)
@@ -180,7 +180,7 @@ export function shippedModels(p) {
  * @param {any[]} profiles normalised profiles
  * @returns {Map<string, { asBase: string[], inChains: Record<string, string[]> }>}
  */
-export function shippedAcross(profiles) {
+export function modelsInUseAcross(profiles) {
   /** @type {Map<string, { asBase: string[], inChains: Record<string, string[]> }>} */
   const out = new Map()
   /**
@@ -209,7 +209,7 @@ export function shippedAcross(profiles) {
 }
 
 /**
- * Research the tier against what the kit ships.
+ * Research the tier against the profiles in use.
  *
  * @param {object} input
  * @param {any} input.catalog the models.dev catalogue
@@ -230,12 +230,11 @@ export function researchModels({
 }) {
   const tier = tierModels(catalog, provider)
   const live = tier.filter((t) => !t.withdrawn)
-  const shipped = shippedAcross(profiles)
+  const inUse = modelsInUseAcross(profiles)
 
-  // The lane view is about the profile the kit ships as the default, not
-  // about whichever profile happens to come first in the directory. The
-  // default is the one every install lands on, so it is the one whose chains
-  // a withdrawal actually empties.
+  // The lane view is about the active profile, not whichever profile happens
+  // to come first in the directory. The active profile is the one this
+  // install runs on, so it is the one whose chains a withdrawal empties.
   const fleet =
     (defaultProfileId ? profiles.find((p) => p?.id === defaultProfileId) : null) ??
     profiles.find((p) => p?.roleModels && Object.keys(p.roleModels).length)
@@ -261,7 +260,7 @@ export function researchModels({
   // shortlist, so it carries what a person needs to decide: what the model
   // can do, which lanes it could serve, and what is still undecided.
   const candidates = live
-    .filter((t) => !shipped.has(t.id))
+    .filter((t) => !inUse.has(t.id))
     // A live catalogue entry can still be a route that answers nothing. The
     // probe result is a measurement, and a shortlist that recommends a dead
     // route is worse than a shorter shortlist.
@@ -275,7 +274,7 @@ export function researchModels({
       const blockers = []
       if (retention === "unknown") {
         blockers.push(
-          "no retention verdict in retention.yml - a person has to read the provider's terms",
+          "no retention verdict recorded - a person has to read the provider's terms",
         )
       }
       return {
@@ -301,7 +300,7 @@ export function researchModels({
   // that has to be actioned: a withdrawn model in a chain is a fallback that
   // fails on the day it is needed.
   const gone = []
-  for (const [model, use] of shipped) {
+  for (const [model, use] of inUse) {
     const record = catalog?.[provider]?.models?.[model]
     if (!record || isWithdrawn(record)) {
       gone.push({
@@ -324,7 +323,7 @@ export function researchModels({
       live: live.length,
       withdrawn: tier.length - live.length,
     },
-    shipped: { count: shipped.size, gone },
+    inUse: { count: inUse.size, gone },
     lanes,
     candidates,
     unusable: [...unusable].sort(),

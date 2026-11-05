@@ -115,7 +115,7 @@ install.** A provider changed a context window; the install is fine and the
 metadata is stale. That exits 0, and the drift is reported. `--strict` is
 the flag that makes it fail, for a CI job that wants to know.
 
-`--check-models` exits 1 when a shipped model has **left** the catalogue -
+`--check-models` exits 1 when a model in one of your profiles has **left** the catalogue -
 not when it has drifted. A profile marked `"local": true` is not in
 models.dev by design; it is named in the report and does not count as gone.
 `--watch` never exits: it polls, and reports only what CHANGED.

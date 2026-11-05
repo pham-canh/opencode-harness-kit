@@ -464,7 +464,7 @@ test("validate refuses an unknown retention", () => {
   )
 })
 
-test("validate refuses a base model retention.yml has never heard of", () => {
+test("validate refuses a base model with no recorded retention", () => {
   // The base model is the model the config names as the session model and
   // the one every lane falls back to. A profile that named one nobody had
   // stated the terms of produced a header about a retention level that
@@ -472,11 +472,11 @@ test("validate refuses a base model retention.yml has never heard of", () => {
   const broken = { ...loadProfile("beam-free"), model: "no-such-model-free" }
   assert.throws(
     () => validate(broken, "test"),
-    (e) => e instanceof ProfileError && /retention\.yml/.test(e.message),
+    (e) => e instanceof ProfileError && /recorded retention|retention is not recorded/.test(e.message),
   )
 })
 
-test("validate refuses a retention claim that contradicts retention.yml", () => {
+test("validate refuses a retention claim that contradicts the recorded terms", () => {
   // big-pickle's provider may train on prompts. A profile that claims
   // zero-retention for it is a false claim, and the config header printed
   // it as fact.

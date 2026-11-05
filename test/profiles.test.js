@@ -644,12 +644,12 @@ test("effort resolves against the lane's own model, not the profile's", () => {
   assert.equal(safe.agent.plan.variant, "max")
 })
 
-test("validate refuses a role model with no retention.yml entry", () => {
+test("validate refuses a role model with no recorded retention", () => {
   const p = loadProfile("fleet-all")
   const broken = { ...p, roleModels: { plan: { model: "no-such-model-free" } } }
   assert.throws(
     () => validate(broken, "test"),
-    (e) => e instanceof ProfileError && /no retention\.yml entry/.test(e.message),
+    (e) => e instanceof ProfileError && /no recorded retention|retention is not recorded/.test(e.message),
   )
   const nameless = { ...p, roleModels: { plan: {} } }
   assert.throws(() => validate(nameless, "test"), ProfileError)
@@ -1385,7 +1385,7 @@ test("bench pins one model per lane, with no rotation and no pruning", () => {
 })
 
 test("bench is listed but never the default", () => {
-  const index = JSON.parse(readFileSync(join(ROOT, "profiles", "index.json"), "utf8"))
+  const index = JSON.parse(readFileSync(join(ROOT, "test", "fixtures", "profiles", "index.json"), "utf8"))
   const entry = index.profiles.find((e) => e.id === "bench")
   assert.ok(entry, "bench is missing from profiles/index.json")
   assert.equal(entry.default, false)

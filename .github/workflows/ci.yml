@@ -24,6 +24,11 @@ jobs:
       group: check-${{ matrix.os }}-${{ matrix.opencode }}-${{ github.ref }}
       cancel-in-progress: true
     timeout-minutes: 30
+    # The package ships no model profiles, so the CLI smoke tests and the
+    # install/verify steps use the checkout's test fixtures. They are test
+    # data, not a shipped choice.
+    env:
+      OPENCODE_HARNESS_PROFILES: ${{ github.workspace }}/test/fixtures/profiles
     strategy:
       fail-fast: false
       matrix:

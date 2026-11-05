@@ -4,19 +4,22 @@
 [![npm](https://img.shields.io/npm/v/opencode-harness-kit.svg)](https://www.npmjs.com/package/opencode-harness-kit)
 
 A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
-construction**. Switching models is a data edit, not a code change.
+construction**. No model list ships with the kit: you name the model you
+already have access to, and the kit writes the profile for it from the live
+catalogue. Switching models is a data edit, not a code change.
 
 ```bash
-npx -y opencode-harness-kit init    # pick a free model, then install + verify
+npx -y opencode-harness-kit init --model <provider>/<model> --retention <level>
 ```
 
-then restart opencode. That is the whole quickstart. No npm account needed on
-your side — `npx` only downloads the published kit. Prefer git? The same three
-steps from a checkout (see [Install](#install)):
+`init` creates the profile, installs the plugin, the lanes, the prompts and the
+global rules, then verifies the install. Restart opencode when it finishes. No
+npm account is needed on your side — `npx` only downloads the published kit.
+Prefer git? The same steps from a checkout (see [Install](#install)):
 
 ```bash
 git clone https://github.com/pham-canh/opencode-harness-kit.git
-./bin/oc-harness.mjs init
+./bin/oc-harness.mjs init --model <provider>/<model> --retention <level>
 ```
 
 The three steps `init` runs, spelled out for when you want to know what
@@ -24,14 +27,139 @@ happened (prefix each with `npx -y opencode-harness-kit@latest` or
 `./bin/oc-harness.mjs` to taste):
 
 ```bash
-oc-harness use fleet-safe    # compile the profile
+oc-harness use <provider>/<model> --retention <level>  # create the profile and compile it
 oc-harness install                # link the plugin, prompts, skills and GLOBAL.md
 oc-harness verify                 # prove the install is whole
 ```
 
-`use` writes the config. `install` writes everything the config *points at*.
-Skipping it is the failure mode this kit is built to prevent: see
-[Install](#install).
+`use` writes the profile and the config. `install` writes everything the
+config *points at*. Skipping it is the failure mode this kit is built to
+prevent: see [Install](#install). After the first `use`, the profile is a file
+in your own config directory; edit that file and re-run
+`oc-harness use <profile>` whenever the model's limits or your lane choices
+change.
+
+## Choose your route
+
+The kit works with any model OpenCode can reach. There are two practical
+routes, and both use the same commands, the same lanes and the same compiler.
+
+| | **Free route** | **Paid route or upgraded plan** |
+|---|---|---|
+| What you need | an account that exposes free models | an API key or a paid plan |
+| What you name | `<provider>/<model>` | `<provider>/<model>` |
+| What to expect | routes appear and disappear, quotas reset, terms vary | a stable route, billed per token |
+| Best for | trying the harness, local work, low volume | daily work, predictable limits, privacy terms you chose |
+| What you should run | `doctor`, `research`, `refresh` on a schedule | `doctor`, `refresh` after a metadata change |
+| Privacy | state each provider's terms yourself | state each provider's terms yourself |
+
+Neither route is baked in. The kit ships **no profiles, no default model and
+no recommendation**, because the model you can reach is a fact about your
+account, not about the harness.
+
+### Route A — free models
+
+Free models are a real way to run the kit, not a demo mode. They are also
+perishable: a free route can be withdrawn or rate-limited without notice. The
+kit is built around that fact rather than pretending otherwise.
+
+```bash
+# 1. Name any free model your provider exposes.
+oc-harness use <provider>/<model> --retention <level>
+
+# 2. Install the files the config points at.
+oc-harness install
+
+# 3. Prove the install is whole.
+oc-harness verify
+```
+
+If the model is new to the kit, `--retention` is required. The value is your
+statement about the provider's terms:
+
+- `zero-retention` — the provider keeps nothing and does not train on prompts.
+- `retained` — no training, but the provider keeps the data for a stated window.
+- `may-train` — prompts or completions may be used to improve the model.
+
+The verdict is recorded in `~/.config/opencode/retention.json`, next to your
+profiles, and is printed in the config header from then on. The kit refuses to
+install a model whose terms nobody has stated. A `may-train` profile also needs
+`--yes` on a terminal, because consent is not a default.
+
+Free routes move. When one does:
+
+```bash
+oc-harness doctor             # is every model in my profiles still live?
+oc-harness doctor --watch     # keep watching, report only what changed
+oc-harness research           # what live free models could replace it?
+oc-harness refresh <profile>  # remove dead rungs from the chains
+```
+
+Put the first and third on a schedule if the install matters:
+
+```cron
+0 9 * * * cd ~/.config/opencode && oc-harness doctor --check-models
+30 9 * * * cd ~/.config/opencode && oc-harness research
+```
+
+A **local** model is the one route no provider can withdraw: it runs on your
+machine. Point the kit at the id your local server publishes and mark it
+`local` in the profile when `models.dev` does not carry it; `doctor` and
+`refresh` then skip the catalogue comparison instead of calling it withdrawn.
+
+The rest of this README is the shared machinery. Read
+[Free models are perishable](#free-models-are-perishable-so-check-them) before
+you depend on a free fleet.
+
+### Route B — paid models or an upgraded plan
+
+A paid route is the same workflow with a different economics: the model is
+less likely to disappear, the limits are published, and the provider's terms
+are usually stated in a contract you can point at. The kit does not treat that
+as more trustworthy by default — you still record the retention verdict.
+
+```bash
+# One paid model can serve every lane.
+oc-harness use <provider>/<model> --retention <level>
+
+# Or start from a profile and split specific lanes across models.
+oc-harness show <profile>
+oc-harness use <profile>
+```
+
+The generated profile puts all ten lanes on the one model. That is the right
+shape when you want a single route and want to know exactly which one. Edit
+`~/.config/opencode/profiles/<id>.json` to:
+
+- give a lane a different model, or a fallback chain;
+- turn a lane off when the model cannot serve it;
+- lower `maxRetention` so no lane can resolve to a provider above the ceiling;
+- keep every lane on one model, or split them across several.
+
+Then re-run `oc-harness use <profile>`. The compiler derives the rest: context
+reserve, prune threshold, per-lane output caps, effort levels and the utility
+route. Nothing in `src/` needs to change when a model does.
+
+A paid plan is also the honest answer when a free route cannot meet the job:
+
+| symptom | what it usually means |
+|---|---|
+| lanes fail with a 429 or a daily-window message | the free quota is spent for the whole account, not per model |
+| a model disappears from the catalogue | the free slot was withdrawn; run `doctor`, then `research` |
+| context is cut below what a lane needs | the route's input cap is too narrow for that lane |
+| a task needs an image, JSON or a very long document | the route lacks a capability the lane requires |
+| privacy terms are unacceptable | the free provider trains on prompts; a paid or local route may not |
+
+Upgrading does not require reinstalling the kit. Create the profile for the new
+model, point the lanes at it, and keep the old profile as a fallback until you
+are satisfied:
+
+```bash
+oc-harness use <paid-provider>/<model> --retention <level>
+oc-harness show <new-profile>
+oc-harness use <new-profile>
+oc-harness verify
+```
 
 ## The problem it solves
 
@@ -44,13 +172,15 @@ you get two projects that share a name and nothing else.
 This kit puts the answers in a profile:
 
 ```
-profiles/fleet-safe.json     ← the models
-lanes.json                   ← the jobs
-src/                         ← no model name anywhere in here
+~/.config/opencode/profiles/<id>.json     ← the model you use
+lanes.json                                ← the jobs
+src/                                      ← no model name anywhere in here
 ```
 
-Same plugin source, eleven shipped profiles, eleven different behaviours. The
-test suite asserts that rather than taking it on faith.
+Same plugin source, any model you can reach, and the test suite asserts the
+separation rather than taking it on faith. The profiles under
+`test/fixtures/profiles/` are test data, kept so the suite can exercise
+fleets, fallback chains and drift; they are not shipped as choices.
 
 ### How a request travels
 
@@ -81,63 +211,35 @@ edit is reviewable.
 
 ## A fleet, not a model
 
-The default profile is a **fleet**: ten jobs, ten free models, one session.
+The kit's unit is a **lane**, not a model. There are ten jobs, and a profile
+decides which model serves each one. A profile for one model puts all ten
+lanes on it; a profile can also split them across several models and give
+each lane a fallback chain.
 
-The table below is the **unrestricted** fleet (`fleet-all`), where every lane
-gets the model built for it. The default is the **safe** fleet
-(`fleet-safe`), where every lane resolves to a provider with a zero-retention
-policy and seven of the ten run on a second-choice model to stay there. Both
-cover the same ten jobs; they differ in what they are willing to promise
-about your prompts.
+| lane | job | what the lane needs |
+|---|---|---|
+| `build` | write and verify the change | tool calls |
+| `plan` | turn a request into a plan | tool calls |
+| `reviewer` | read a change in two passes | tool calls |
+| `locate` | find where something lives | tool calls |
+| `verify` | run the project's checks | tool calls |
+| `vision` | read an image or a screenshot | image input |
+| `doc` | read a long document or a spec | a wide input cap |
+| `schema` | produce JSON a program can parse | structured output |
+| `sweep` | sweep a lot of code mechanically | no reasoning, or the lowest level |
+| `longform` | read a megabyte, or write alternatives | a wide input cap and output cap |
 
-| lane | job | model | measured |
-|---|---|---|---|
-| `build` | write and verify the change | Flint 40B Free | 6.9 s |
-| `plan` | turn a request into a plan | Beam | **6.1 s** |
-| `reviewer` | read a change in two passes | GLM 5.3 Flash | 7.4 s |
-| `locate` | find where something lives | Nemotron 3.5 Lightning | 6.9 s |
-| `verify` | run the project's checks | Big Pickle | 10.4 s |
-| `vision` | read an image or a screenshot | MiMo-V2.6 Flash | 9.3 s (19 s with an image) |
-| `doc` | read a long document or a spec | GLM 5.3 Flash | 7.4 s |
-| `schema` | produce JSON or a JSON schema | DeepSeek V4.1 Flash | 10.7 s |
-| `sweep` | sweep a lot of code mechanically | Nemotron 3.5 Super VL | 8.4 s |
-| `longform` | read a megabyte, or write alternatives | Flint 40B Free | 6.9 s |
+A model is not "better" or "worse" in the abstract. It is better or worse for
+a lane. The kit resolves each lane against the model's own capability record,
+so a model that cannot take an image never lands in `vision`, and a model that
+publishes no effort levels gets no variant rather than a level it does not
+have.
 
-`longform` used to run on `longcat-2.5-preview-free`, and the provider
-withdrew it. A withdrawn model is not a lane, it is a hole in a lane: the
-route falls to the next rung of the same chain, where MiniMax then flint
-carried the lane - flint is the model that replaced MiniMax on the tier, and
-the only one left with the context the lane exists for. The `measured`
-column for that lane is therefore flint's, not either withdrawn model's.
-
-The `measured` column is the median of five one-line requests to that model
-on 2026-10-21 - the same prompt for every model, from the process start, so
-it is the wait a lane would cost.
-[`docs/ROUTING.md`](docs/ROUTING.md) has the method, the install telemetry
-beside it, and the command that produced it.
-
-Each lane is an OpenCode agent with its own model, its own context window and
-its own effort level. You do not switch models: you hand the job to the lane
-that has it. A delegation inside one session runs two different models — that
-was measured, not assumed:
-
-```
-agent=build    modelID=flint-40b-free
-agent=reviewer modelID=glm-5.3-flash-free
-agent=build    modelID=flint-40b-free
-```
-
-Why ten lanes and not one model: the free tier is genuinely uneven, and the
-difference is measurable. Beam answers in 6.1 seconds with a 1M window, and
-the four fastest models are inside a second of each other; MiMo reads an
-image in 19 and MiniMax reads the same image in 8; Nemotron Super VL is the
-only model on the tier that publishes a `none` effort level, which makes
-"reasoning off" a job of its own. Putting each on the job it is good at is
-worth more than any single "best" model.
-
-The full table, with the measurements behind every choice and the three
-capabilities the tier turns out not to have, is in
-[`docs/ROUTING.md`](docs/ROUTING.md).
+Why ten lanes and not one model: a single model is a reasonable place to
+start, and a fleet is what you grow into when different jobs need different
+windows, different privacy terms or different costs. The telemetry says which
+lanes are earning their place; a lane that is never used is cut with a data
+edit, not a code change.
 
 ## What the compiler derives
 
@@ -145,37 +247,36 @@ Given a profile, `oc-harness use` writes an `opencode.jsonc` with every
 model-dependent number already worked out and commented:
 
 ```text
-$ oc-harness use fleet-safe --print
+$ oc-harness use <provider>/<model> --retention retained --print
 
-// profile      fleet-safe
-// model        opencode/deepseek-v4.1-flash-free
-// utility      opencode/deepseek-v4.1-flash-free  (opencode's short calls: titles, summaries)
+// profile      <profile-id>
+// model        <provider>/<model>
+// utility      <provider>/<model>  (opencode's short calls: titles, summaries)
 // lanes        10 enabled, each on the first model its chain allows
 // context      200,000 tokens  (base model)
 // input cap    200,000 tokens
-// output cap   32,000 tokens
+// output cap   64,000 tokens
 // reasoning    low < high < max
-// retention    zero-retention
+// retention    retained
 //
 // Derived numbers, do not hand-edit:
 //   session ceiling      6,000,000 tokens  (effort.sessionTokens, 0 = off)
 //   compaction.reserved  24,000  (12% of the narrowest input cap in play)
 //   prune threshold      176,000  (narrowest input cap minus reserve)
 //   role effort          plan=max  build=max  reviewer=max  locate=low  ...
-//   lane models          build=deepseek-v4.1-flash-free (out 32,000)  plan=...
+//   lane models          build=<model> (out 64,000)  plan=...
 ```
 
 Two numbers in there are worth explaining, because both were the wrong way
 round at some point:
 
 - **The reserve is sized by the *narrowest* lane, not the widest.** A fleet
-  mixes a 1M model with 200k models and `compaction.reserved` is one number
-  for the whole config. Sizing it by the widest model reserves 125,829 tokens
-  and leaves every 200k lane with 74k usable — which is where the lane stops
-  working.
-- **A lane's model is a chain, not a pin.** Free routes get withdrawn in days.
-  Every lane lists the models that could serve it, best first, and the first
-  rung the profile's privacy ceiling allows is the one that runs it.
+  mixes wide and narrow context windows and `compaction.reserved` is one number
+  for the whole config. Sizing it by the widest model leaves every narrow lane
+  with too little usable context — which is where the lane stops working.
+- **A lane's model is a chain, not a pin.** Routes get withdrawn. Every lane
+  lists the models that could serve it, best first, and the first rung the
+  profile's privacy ceiling allows is the one that runs it.
 
 `effort.sessionTokens` is the third number that was the wrong way round: the
 kit bounded one request (compaction) and one task (calls per lane) and left the
@@ -191,13 +292,13 @@ A role asking for `max` on a model whose top level is `xhigh` gets `xhigh`, and
 the substitution is reported:
 
 ```
-$ oc-harness show fleet-safe
+$ oc-harness show <profile>
   lanes
-  build                deepseek-v4.1-flash-free  out 32,000
-  plan                 deepseek-v4.1-flash-free  out 32,000
-  reviewer             glm-5.3-flash-free        out 32,000
-  locate               deepseek-v4.1-flash-free  out 32,000
-  vision               deepseek-v4.1-flash-free  out 32,000
+  build                <model>                   out 64,000
+  plan                 <model>                   out 64,000
+  reviewer             <model>                   out 32,000
+  locate               <model>                   out 64,000
+  vision               <model>                   out 64,000
   ...
   lane effort
     plan       max
@@ -214,71 +315,91 @@ a profile and a nonsense request.
 ## Privacy is a first-class field
 
 `models.dev` describes capability and price. It does not describe what a
-provider does with your prompts. `retention.yml` is hand-curated for that
-reason, and a profile cannot be installed until a human has stated its terms.
+provider does with your prompts. A profile cannot be installed until a human
+has stated its terms, and the package ships no verdicts on your behalf.
 
 Three levels, not two. `zero-retention` keeps nothing. `retained` does not
-train but keeps the data for a stated window — Beam keeps prompts for 30 days
-for safety reasons, which is not the same promise, so it gets its own value.
-`may-train` may use them to improve the model.
+train but keeps the data for a stated window. `may-train` may use the prompts
+to improve the model.
 
 ```
 $ oc-harness list
-  ▸ fleet-safe               200,000      max      10  zero-retention
-    fleet-all                160,000      max      10  may-train
-    beam-free             1,048,576      max       5  retained
+  ▸ <your-profile>              200,000      max      10  zero-retention
+    <another-profile>           200,000      max      10  retained
+    <local-profile>             262,144        —       5  zero-retention
 ```
 
-The fleet's privacy is a *ceiling*, not a label. `fleet-safe` declares
-`maxRetention: zero-retention` and every lane resolves to a model at or below
-it; `fleet-all` declares `may-train` and every lane gets the model built for
-it. One file covers ten jobs either way.
+A profile's privacy is a *ceiling*, not a label. One that declares
+`maxRetention: zero-retention` only lets its lanes resolve to models at or
+below it; one that declares `may-train` gets the model built for the job. One
+file covers ten jobs either way.
 
-## Shipped profiles
+The verdict is yours. `retention.yml` in the package carries only the
+`unknown` default and no model entries; `oc-harness use --retention` writes
+your statement to `~/.config/opencode/retention.json`. If a provider changes
+its terms, a human has to say so. `doctor` catches the one case it can check
+mechanically — a profile that claims `zero-retention` while the recorded terms
+now say `may-train` — and nothing else.
 
-| profile | lanes | input cap | top effort | retention |
-|---|---|---|---|---|
-| `fleet-safe` (default) | 10 | 200,000 | `max` | zero-retention |
-| `fleet-all` | 10 | 160,000 | `max` | **may train** |
-| `big-pickle-auto` | 10 | 160,000 | — | **may train** |
-| `bench` | 10 | 200,000 | `max` | zero-retention |
-| `flint-40b-free` | 5 | 262,144 | `max` | **may train** |
-| `beam-free` | 5 | 1,048,576 | `max` | retained |
-| `deepseek-v4.1-flash-free` | 5 | 200,000 | `max` | zero-retention |
-| `glm-5.3-flash-free` | 5 | 200,000 | `max` | zero-retention |
-| `nemotron-3.5-super-vl-free` | 5 | 1,048,576 | `xhigh` | **may train** |
-| `nemotron-3.5-lightning-free` | 5 | 262,144 | — | **may train** |
-| `mimo-v2.6-flash-free` | 5 | 200,000 | — | **may train** |
-| `big-pickle` | 5 | 160,000 | — | **may train** |
-| `ollama-qwen3-coder` | 5 | 262,144 | — | zero-retention (local) |
+## Bring your own model
 
-The five-lane profiles run everything on one model, which is the right shape
-when you want one route and want to know exactly which one.
+No model list ships with the kit. Which model you have is a fact about your
+account, so the kit asks for it once and writes a profile for it:
+
+```bash
+oc-harness use <provider>/<model> --retention <level>
+```
+
+The model id is the one OpenCode and models.dev use, and the retention level is
+your statement about the provider's terms: `zero-retention`, `retained`, or
+`may-train`. The kit will not install a model whose terms nobody has stated.
+The profile lands in `~/.config/opencode/profiles/<id>.json`, and the kit
+writes that verdict to `~/.config/opencode/retention.json` so later commands
+can report the same answer. `--print` still writes the profile on the first
+run: creating it is what makes a preview of the compiled config possible.
+`--dryrun` refuses to create one, because it promises to write nothing.
+
+What the generated profile contains:
+
+| field | where it comes from |
+|---|---|
+| `limits` | the live catalogue's context and output ceilings |
+| `effort` | the model's own reasoning levels, resolved per lane |
+| `supports` | the model's capability flags |
+| `retention` | the level you passed to `--retention` |
+| `roles` | the lanes this model can serve, all on the one model |
+
+A single-model profile runs every lane on that model, which is the right shape
+when you want one route and want to know exactly which one. Hand-edit the
+profile to split lanes across models, add fallback chains, or turn lanes off;
+`oc-harness use <profile>` recompiles it.
 
 ## The model changes, the profile does not
 
-Free models come and go weekly. A profile with ten hand-written chains is a
-snapshot of one afternoon, and the afternoon it goes stale is the afternoon
-every lane falls back to the same dead rung.
+Models come and go. A profile with ten hand-written chains is a snapshot of one
+afternoon, and the afternoon it goes stale is the afternoon every lane falls
+back to the same dead rung.
 
-`big-pickle-auto` declares where its lanes come from instead of listing them:
+A fleet profile can declare where its lanes come from instead of listing them:
 
 ```json
 "resolve": { "from": "catalogue", "free": true, "chainDepth": 3 }
 ```
 
 At `oc-harness use` time the kit reads the live catalogue, keeps the models that
-are free, at or below the profile's retention ceiling, and able to serve the
-lane they are being considered for — `vision` needs a model that takes images,
-`schema` needs structured output — and writes the result to
-`~/.config/opencode/lane-resolve.json`. A lane's chain is only recorded once it
-is known to exist; a profile that lists a chain by hand and declares `resolve`
-is refused, because a lane with two sources of models has none you can trust.
+fit the profile's retention ceiling and can serve the lane they are being
+considered for — `vision` needs a model that takes images, `schema` needs
+structured output — and writes the result to
+`~/.config/opencode/lane-resolve.json`. It only considers models you already
+have a profile for, because a lane model needs known limits and a known
+retention verdict. A lane's chain is only recorded once it is known to exist; a
+profile that lists a chain by hand and declares `resolve` is refused, because a
+lane with two sources of models has none you can trust.
 
 ```bash
-oc-harness use big-pickle-auto --yes      # resolve now, install, record the lock
-oc-harness use big-pickle-auto --print    # show what it would install, write nothing
-oc-harness use big-pickle-auto --offline  # replay the lock, no network at all
+oc-harness use <fleet-profile> --yes      # resolve now, install, record the lock
+oc-harness use <fleet-profile> --print    # show what it would install, write nothing
+oc-harness use <fleet-profile> --offline  # replay the lock, no network at all
 ```
 
 `--offline` never resolves anything. It replays the last recorded resolution for
@@ -294,45 +415,23 @@ doing their job.
 
 ## Free models are perishable, so check them
 
-Every model in the table above except `ollama-qwen3-coder` is a **free tier
-slot**, and free tier slots turn over in days. The Ollama profile is the one
-row that cannot be withdrawn by a provider: it runs on your machine, and its
-only cost is the memory to hold it. Zen states free models are available "for a limited time"
-with no date attached, so a profile is a snapshot of a moment rather than a
-stable thing.
+A free-tier model is a **slot**, and slots turn over in days. A local model is
+the one route that cannot be withdrawn by a provider: it runs on your machine,
+and its only cost is the memory to hold it. Providers commonly state that free
+models are available "for a limited time" with no date attached, so a profile
+is a snapshot of a moment rather than a stable thing.
 
-Observed lifetimes, from one install's 20-day history:
-
-| model | observed lifetime |
-|---|---|
-| `mimo-v2.5-free` | 1 day |
-| `big-pickle` | 1 day |
-| `nemotron-3-ultra-free` | 3 days |
-| `muse-spark-1.3-contributor-free` | still running at 20 days |
-
-The tier turned over again since. Five of this kit's own profiles are already
-withdrawn, and one of them was the **default** at the time:
-
-| withdrawn | why it matters |
-|---|---|
-| `space-bunny-free` | It was the default profile. A config left pointing at it kept working and kept saying it was zero-retention. |
-| `x-preview-f-free` | Withdrawn within a month of shipping. |
-| `deepseek-v4-flash-free` | Withdrawn within a month. Replaced by `deepseek-v4.1-flash-free`. |
-| `muse-spark-1.3-contributor-free` | A Meta contributor route whose provider was permitted to train on prompts. The paid route is still in the catalogue. |
-| `mimo-v2.5-free` | Observed alive for one day. Replaced by `mimo-v2.6-flash-free`. |
-| `longcat-2.5-preview-free` | Was the `longform` lane's primary in both fleets, so when it was pulled every lane fell back a rung, and the one profile built only for that model was retired. |
-| `minimax-m3.1-flash-free` | Deprecated by the provider and replaced on the tier by `flint-40b-free`, which is the build and `longform` lane today. |
-
-The full list, with a reason for each, is in
-[`profiles/index.json`](profiles/index.json).
+The kit does not list the free models it knows about, because that list would
+be wrong within the week and would turn a measurement into a recommendation.
+What it does instead is ask the live catalogue and tell you what changed.
 
 ### The commands, and when each one runs
 
 | command | what it checks | when |
 |---|---|---|
-| `oc-harness list` | the profiles this kit ships, with retention and caveats | offline, any time |
+| `oc-harness list` | the profiles in your config, with retention and caveats | offline, any time |
 | `oc-harness doctor` | every profile against the live model catalogue, and the installed config against the active profile | **before a release**, and whenever a lane starts failing with a 429 or a "model not found"; this is the online check, not the release gate |
-| `oc-harness doctor --check-models` | one run, non-zero when a shipped model is no longer in the catalogue | from cron: the shape a scheduler wants |
+| `oc-harness doctor --check-models` | one run, non-zero when a model in one of your profiles is no longer in the catalogue | from cron: the shape a scheduler wants |
 | `oc-harness doctor --watch` | keeps watching, and reports only what **changed** | leave it in a terminal for a week |
 | `oc-harness research` | what could **replace** a withdrawn model, and which lanes each candidate could serve | when `doctor` reports a withdrawal, and from cron before it happens |
 | `oc-harness refresh <id>` | re-derives a profile's machine-derived fields from live metadata | when `doctor` reports drift |
@@ -353,7 +452,7 @@ moment a lane starts failing:
 0 9 * * * cd ~/.config/opencode && oc-harness doctor --check-models
 ```
 
-A **local** profile (`ollama-qwen3-coder`) is served on localhost and is not
+A **local** profile (an Ollama model, say) is served on localhost and is not
 in models.dev, so `doctor` and `refresh` name it and skip the catalogue
 comparison instead of reporting its model as withdrawn. It is the one
 exemption, and it is printed, not silent.
@@ -371,8 +470,8 @@ A CI job that failed on the second kind would go red on a Tuesday because
 somebody else changed a provider's limits, and a job that goes red for a
 reason you cannot act on is a job people stop reading.
 
-It is not a hypothetical. The day this was written, four of the shipped
-shipped profiles had already drifted from the live catalogue — the
+It is not a hypothetical. The day this was written, several models in the
+fleet the kit was tested on had already drifted from the live catalogue — the
 `temperature` flag had flipped on every one of them.
 
 ### What `refresh` will and will not touch
@@ -383,10 +482,10 @@ It never touches `retention`, `note`, `roles` or the fallback queue, because
 those are human judgements and a script overwriting a privacy verdict is worse
 than drift.
 
-**If a provider changes its terms, a human has to say so.** `retention.yml` is
-hand-curated and dated (`verified:` on every entry). `doctor` will catch the
+**If a provider changes its terms, a human has to say so.** The recorded
+retention is dated (`verified:` on every entry). `doctor` will catch the
 one case it can check mechanically — a profile that says `zero-retention`
-while `retention.yml` now says `may-train` — and nothing else.
+while the recorded terms now say `may-train` — and nothing else.
 
 ### What happens when a model is withdrawn
 
@@ -407,8 +506,8 @@ falls back to the profile's base model. If even that is spent, the lane still
 gets a model and the config header says what the effective retention turned
 out to be. A lane is never left without one.
 
-See [docs/KNOWN-LIMITS.md](docs/KNOWN-LIMITS.md) for the rest of what this
-tier cannot do.
+See [docs/KNOWN-LIMITS.md](docs/KNOWN-LIMITS.md) for the rest of what a
+perishable tier cannot do.
 
 ### Research: what can replace the model that just died
 
@@ -423,7 +522,7 @@ only a person could fill, by hand, out of a catalogue dump.
 ```
 $ oc-harness research
 
-research  tier opencode, 9 live of 46 free
+research  tier <provider>, 9 live of 46 free
 
   ✓ every model in use is still live
 
@@ -435,24 +534,23 @@ research  tier opencode, 9 live of 46 free
 
   candidates  live, free, and not in use yet
 
-  no live free model outside the ones the kit already uses
+  no live free model outside the ones the profiles already use
 ```
 
-That is the healthy state. When something has been withdrawn, the same command
-says which, and says where it was used:
+When something has been withdrawn, the same command says which, and where it
+was used:
 
 ```
   gone  1 model(s) in use have been withdrawn
 
-      ✗ longcat-2.5-preview-free
+      ✗ <withdrawn-model>
         withdrawn from the provider - the catalogue keeps the record and marks it deprecated
-        base model of longcat-2.5-preview-free
-        fallback rung in fleet-all: build, plan, locate, vision, doc, sweep, longform
-        fallback rung in fleet-safe: build, plan, reviewer, locate, verify, vision, doc, schema, sweep, longform
+        base model of <profile>
+        fallback rung in <profile>: build, plan, locate, vision, doc, sweep, longform
 
   lanes
-      build         2 live 1 dead (longcat-2.5-preview-free)
-      plan          2 live 1 dead (longcat-2.5-preview-free)
+      build         2 live 1 dead (<withdrawn-model>)
+      plan          2 live 1 dead (<withdrawn-model>)
       ...
 ```
 
@@ -462,7 +560,7 @@ It reports four things:
    a profile's own base model and the ones that are a rung in a lane chain. A
    dead base model means that profile does nothing; a dead chain rung is a
    fallback that fails on the day it is needed.
-2. **The lanes of the default profile**, each with how many rungs of its chain
+2. **The lanes of the active profile**, each with how many rungs of its chain
    are still alive. A lane with zero live rungs is a lane with no model.
 3. **The candidates** — live, free models the kit does not use yet, each with
    its context window, its output cap, the effort levels it publishes, and
@@ -486,21 +584,19 @@ A model is not "better" or "worse" in the abstract. It is better or worse
 
 So `research` matches each candidate against each lane, and a model that
 publishes **no** effort levels counts as a match rather than a failure: there
-is nothing to mismatch, and the kit already puts such models in the chains of
-lanes that ask for one.
+is nothing to mismatch.
 
 #### The line the script does not cross
 
-`research` **writes nothing**. Not `retention.yml`, not a profile, not the
-config.
+`research` **writes nothing**. Not a profile, not the config, not a retention
+verdict.
 
 That is the same line `refresh` draws, and it is drawn for the same reason:
-`retention.yml` is a human judgement about a provider's terms — whether your
-prompts are kept, and whether they train on them. A machine cannot read a
-provider's terms of service and come back with a privacy verdict. So a
-candidate with no verdict is reported as `retention: unknown` and carries an
-explicit blocker, rather than being quietly filed under the tier it happens to
-be cheapest on.
+whether your prompts are kept, and whether they train on them, is a human
+judgement about a provider's terms. A machine cannot read a provider's terms of
+service and come back with a privacy verdict. So a candidate with no verdict is
+reported as `retention: unknown` and carries an explicit blocker, rather than
+being quietly filed under the tier it happens to be cheapest on.
 
 `refresh` draws the line in the other direction, and it is the one that
 matters: it **only ever removes**. A model that has been withdrawn is removed
@@ -509,8 +605,8 @@ putting a model into a lane changes what that lane does, and that is a
 person's decision.
 
 The output of `research` is a shortlist to argue with, not a decision to
-accept. When you have read the terms and made the call, `retention.yml` is
-where the call lives, and `doctor` checks the rest.
+accept. When you have read the terms and made the call, record the verdict and
+`doctor` checks the rest.
 
 #### Run it on a schedule
 
@@ -520,8 +616,7 @@ where the call lives, and `doctor` checks the rest.
 ```
 
 The first line says a route died. The second says what to do about it, and it
-runs half an hour later because by then you have had a cup of coffee and the
-answer is a decision, not an alarm.
+runs half an hour later because by then the answer is a decision, not an alarm.
 
 `research --json` prints one parseable object and nothing else, so a script
 can read it:
@@ -529,10 +624,10 @@ can read it:
 ```json
 {
   "ok": true,
-  "tier": { "provider": "opencode", "total": 46, "live": 10, "withdrawn": 36 },
-  "shipped": { "count": 9, "gone": [] },
-  "lanes": [ { "lane": "build", "dead": [], "live": ["minimax-m3.1-flash-free", "deepseek-v4.1-flash-free"] } ],
-  "candidates": [ { "id": "flint-40b-free", "fits": ["build"], "retention": "unknown", "blockers": ["..."] } ]
+  "tier": { "provider": "<provider>", "total": 46, "live": 10, "withdrawn": 36 },
+  "inUse": { "count": 3, "gone": [] },
+  "lanes": [ { "lane": "build", "dead": [], "live": ["<model>", "<model>"] } ],
+  "candidates": [ { "id": "<model>", "fits": ["build"], "retention": "unknown", "blockers": ["..."] } ]
 }
 ```
 
@@ -544,20 +639,19 @@ model the provider pulls — it keeps the record and marks it
 run" are two different questions, and a check that asks the first one reports
 a dead model as a healthy fallback.
 
-That is not hypothetical. This kit's own default fleet carried a dead fallback
-rung in **all ten lanes**, and `doctor` called it healthy, because the chain
-check asked whether the model was still present. It now asks whether it is
-still alive, and it says so:
+That is not hypothetical. A fleet the kit was tested on carried a dead
+fallback rung in **all ten lanes**, and `doctor` called it healthy, because the
+chain check asked whether the model was still present. It now asks whether it
+is still alive, and it says so:
 
 ```
-! fleet-safe                       drift
-    lane build: longcat-2.5-preview-free withdrawn, falls back to minimax-m3.1-flash-free
+! <profile>                        drift
+    lane build: <withdrawn-model> withdrawn, falls back to <live-model>
 ```
 
 **Free is a price, not a name.** The tier is the set of models the provider
-charges nothing for. `big-pickle` is on it and does not end in `-free`, so
-the suffix is a naming convention and not the test — `research` reads the
-price.
+charges nothing for, and the `-free` suffix is a naming convention rather than
+the test — `research` reads the price.
 
 ### Refresh: taking the dead rung out
 
@@ -566,10 +660,10 @@ price.
 ```
 $ oc-harness refresh --all
 
-refreshed 11 of 11 profile(s) against the live catalogue
-  ~ fleet-safe: withdrawn rungs removed: longcat-2.5-preview-free
-      lane build: minimax, deepseek, longcat -> minimax, deepseek
-      lane longform: longcat, minimax, deepseek -> minimax, deepseek
+refreshed 3 of 3 profile(s) against the live catalogue
+  ~ <profile>: withdrawn rungs removed: <withdrawn-model>
+      lane build: <chain> -> <chain>
+      lane longform: <chain> -> <chain>
       ...
 ```
 
@@ -591,8 +685,7 @@ Two cases a script cannot repair, and says so instead of pretending:
 - **A profile whose own model was withdrawn.** There is no chain behind it to
   fall back to, so there is nothing to repair. `refresh` reports it and leaves
   the file alone; the honest fix is to retire the profile, and retiring one is
-  a decision a person makes. (That is exactly what happened to
-  `longcat-2.5-preview-free`.)
+  a decision a person makes.
 - **A lane left with no model at all.** Every rung of its chain was dead. It
   is reported, not filled.
 
@@ -604,10 +697,8 @@ Two cases a script cannot repair, and says so instead of pretending:
 | npm | 10 or newer, for `npm ci` when installing from a checkout |
 | OS | macOS, Linux and Windows. The tests run on `ubuntu-latest`. |
 | Shell | none needed to *use* the kit — no `bash`, `zsh` or `fish` setup. `doctor`, `refresh` and `research` call `curl` to read models.dev. `baseline` and the measurement scripts read the install database with `sqlite3`, and fall back to python3's own `sqlite3` module when that binary is not installed — so python3 is the one thing to have. Everything else, including `install`, `use` and `verify`, works offline. |
-| Network | only `doctor`, `refresh` and `research` need it, and only to read the live model catalogue. `list` is offline: it reads the shipped profiles. Everything else works offline. |
-| Disk | `use` and `install` write into `~/.config/opencode/` and nothing else. `doctor` writes nothing. `research` writes nothing — it is a report, not a migration. `refresh` rewrites a profile in the kit's own
-directory - `node_modules` for an npm install - and keeps a backup of the
-one it replaced. |
+| Network | only `use` (when creating a profile from a model), `doctor`, `refresh` and `research` need it, and only to read the live model catalogue. `list` is offline: it reads the profiles in your config directory. Everything else works offline. |
+| Disk | `use` and `install` write into `~/.config/opencode/` and nothing else. `doctor` writes nothing. `research` writes nothing — it is a report, not a migration. `refresh` rewrites a profile there and keeps a backup of the one it replaced. |
 
 `~/.config/opencode/` is your live agent config. `use` and `install` write there,
 `verify` only reads, and `use --dryrun` writes nothing at all. Every write
@@ -619,9 +710,10 @@ keeps a dated copy in `~/.config/opencode/backups/`, including under
 ```
 oc-harness list       profiles with retention and caveats
 oc-harness show <id>  resolved lanes, derived numbers, fallback chains, guard rules
-oc-harness init       pick a free profile, then install + use + verify
+oc-harness init --model <provider>/<model>   create a profile, then install + use + verify
 oc-harness auto       refresh + install + use + verify, asking nothing
 oc-harness auto --json   the same reconcile, as a report a script can read
+oc-harness use <provider>/<model> --retention <level>   create a profile from a model and compile it
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness use <id> --dryrun   print a summary of what would be written, write nothing
 oc-harness use <id> --no-skills   leave the skill list out of the lanes' prompt
@@ -638,7 +730,7 @@ oc-harness lanes --json   the same report, for a script
 oc-harness trust      set up npm trusted publishing for this package
 oc-harness doctor     re-check profiles against models.dev and the live config
 oc-harness doctor --watch  poll the catalogue, and report only what changed
-oc-harness refresh --all   re-derive every shipped profile against the live catalogue
+oc-harness refresh --all   re-derive every profile against the live catalogue
 oc-harness upgrade    check for a newer kit, refresh the profiles, rewrite the config
 oc-harness backups   the configs that were replaced, newest first
 oc-harness uninstall remove the plugin, prompts, skills and GLOBAL.md again
@@ -701,8 +793,8 @@ node eval/ab.mjs                the A/B: the same task with and without the kit
 node eval/compare.mjs           the same suite against any agent CLI, same grader
 ```
 
-Every flag accepts both spellings: `--profile fleet-safe` and
-`--profile=fleet-safe` are the same flag.
+Every flag accepts both spellings: `--profile my-fleet` and
+`--profile=my-fleet` are the same flag.
 
 Every command that can fail says so in its exit code, so a script can tell
 "the kit says no" from "the kit broke".
@@ -736,9 +828,9 @@ active one, or when a stripped schema key is present:
 ```
 $ oc-harness verify
 
-verify  profile fleet-safe -> ~/.config/opencode/opencode.jsonc
+verify  profile <profile> -> ~/.config/opencode/opencode.jsonc
 
-  ✓ config matches profile fleet-safe
+  ✓ config matches profile <profile>
   ✓ instruction ~/.config/opencode/GLOBAL.md resolves
   ✓ prompt build.md installed
   ...
@@ -753,12 +845,12 @@ verify  profile fleet-safe -> ~/.config/opencode/opencode.jsonc
 because "the profile is fine" and "the installed config matches the profile"
 are different questions and only one of them was being asked.
 
-`doctor` exists because free models get withdrawn within days. It diffs each
-profile against live metadata and reports drift:
+`doctor` exists because routes are withdrawn. It diffs each profile against
+live metadata and reports drift:
 
 ```
-✓ fleet-safe    matches catalog
-! beam-free     drift
+✓ <profile>    matches catalog
+! <profile>    drift
     output 131072 -> 262144
 ```
 
@@ -775,23 +867,24 @@ $ oc-harness lanes
 
   lane             reqs     avg ms     avg ctx  model
   ----------------------------------------------------------------------
-  plan                0          -           -  deepseek-v4.1-flash-free        never used
-  build              87       9935           -  minimax-m3.1-flash-free, deepseek-v4.1-flash-free
-  reviewer            0          -           -  glm-5.3-flash-free              never used
+  plan                0          -           -  <model>                    never used
+  build              87       9935           -  <model>, <model>
+  reviewer            0          -           -  <model>                    never used
   ...
   9 lane(s) were never used cut candidates, not defects
   one request is one assistant message; avg ms covers the requests that finished
 ```
 
 A lane that is never used is a description the model reads on every turn and
-a free model doing nothing. Cut it from the profile's `roles` and the lane
-leaves the config with it.
+a route doing nothing. Cut it from the profile's `roles` and the lane leaves
+the config with it.
 
-The `build` row is not comparable with the others: it includes the turns
-that did the delegating, so it counts the work of the other nine lanes. A
-one-line `build` reply on its own is about a third of that number, and
-rather more on a cold start. [`docs/ROUTING.md`](docs/ROUTING.md) has the
-per-profile tables and what each row measures.
+The `build` row is not comparable with the others: it includes the turns that
+did the delegating, so it counts the work of the other nine lanes. A one-line
+`build` reply on its own is about a third of that number, and rather more on a
+cold start. [`docs/ROUTING.md`](docs/ROUTING.md) has the per-profile tables
+from the fixture fleet and what each row measures; they are historical
+measurements, not model recommendations.
 
 One request is one assistant message, which is one round trip to the provider:
 a lane that makes three tool calls makes three requests. The counters come
@@ -825,8 +918,8 @@ PERMISSION PRESSURE
 compaction events  0  (never fired)
 ```
 
-Four numbers in that report changed how this kit is configured, and two of them
-reversed an earlier decision:
+Four numbers in that report changed how this kit is configured, and two of
+them reversed an earlier decision:
 
 **Tool output is 78% of stored context**, and sessions re-read ~100k tokens per
 request to add ~534 new ones. That is why pruning here is deterministic and
@@ -892,8 +985,8 @@ What the kit does is make it one flag away and keep the config honest about
 it:
 
 ```bash
-oc-harness use fleet-safe --memory        # adds opencode-mem to the plugin list
-oc-harness use fleet-safe --memory=opencode-mem@2.32.0   # a pinned version
+oc-harness use <profile> --memory        # adds opencode-mem to the plugin list
+oc-harness use <profile> --memory=opencode-mem@2.32.0   # a pinned version
 ```
 
 Your own plugins are never touched — the entry is **added**, so a config that
@@ -953,10 +1046,8 @@ land in the process's working directory, which is often your home directory.
 **The utility route.** `small_model` is what opencode uses for its short
 auxiliary calls — a title, a one-line summary, a question rewritten. It used
 to be the session model, so every one of those calls paid the session model's
-*reasoning*, and reasoning, not output, is what a short call costs. Measured
-on this tier, a title costs **49 reasoning tokens on DeepSeek and 332 on
-Nemotron 3.5 Super VL**, and DeepSeek answers in 7.2 s against 22.7 s for
-GLM. A fleet now names a cheaper route; a single-model profile keeps its one
+*reasoning*, and reasoning, not output, is what a short call costs. A fleet
+now names a cheaper route when it has one; a single-model profile keeps its one
 route, because "one route, and it is the one you asked for" is a promise those
 profiles make. The generated file says which route it chose.
 
@@ -991,11 +1082,11 @@ model it had.
 
 ## Install
 
-One command if you are new here (`init` asks which free profile to run on,
-then runs the two commands below plus `verify`):
+One command if you are new here (`init` asks for a provider/model when one was
+not passed, then runs the two commands below plus `verify`):
 
 ```bash
-npx -y opencode-harness-kit@latest init
+npx -y opencode-harness-kit@latest init --model <provider>/<model>
 ```
 
 Two commands, in this order, if you already know which profile you want.
@@ -1006,7 +1097,7 @@ elsewhere in this README is shorthand for whichever form installed it —
 `oc-harness` is one of the two above in disguise:
 
 ```bash
-oc-harness use fleet-safe   # writes opencode.jsonc
+oc-harness use <provider>/<model> --retention <level>   # writes opencode.jsonc
 oc-harness install                # writes everything that file points at
 ```
 
@@ -1025,9 +1116,9 @@ both modes by the same ownership rules.
 
 ### The one command that asks nothing
 
-`init` is the front door for a person: it asks which free profile to run on.
-`auto` is the one for a job, an agent, or a script — it reconciles the whole
-install and never waits for an answer:
+`init` is the front door for a person: it asks for a provider/model when one
+was not passed. `auto` is the one for a job, an agent, or a script — it
+reconciles the whole install and never waits for an answer:
 
 ```bash
 oc-harness auto              # refresh + install + use + verify
@@ -1035,9 +1126,11 @@ oc-harness auto --json       # the same, as a report a script can read
 oc-harness auto --offline    # skip the refresh, for a machine that cannot reach models.dev
 ```
 
-The profile is the one the installed config names, or the default. A file of
-yours that the installer would overwrite is **left alone and reported**, not
-overwritten and not asked about — the answer a person would give.
+The profile is the one the installed config names, or the default you set in
+your own `index.json`. With neither, `auto` refuses and prints the `use` command
+that creates one. A file of yours that the installer would overwrite is **left
+alone and reported**, not overwritten and not asked about — the answer a
+person would give.
 
 `--yes` still means consent. A profile whose models may train on your prompts
 is refused without it, exactly as `use` refuses it: the automation is about
@@ -1057,7 +1150,7 @@ the plugin records it in the project's `.space/active` at startup so pruning
 picks up the right thresholds. To pin a profile explicitly instead:
 
 ```bash
-export OPENCODE_HARNESS_PROFILE=fleet-safe
+export OPENCODE_HARNESS_PROFILE=<profile>
 ```
 
 ### Why the model is in the config and not in a file
@@ -1078,7 +1171,7 @@ earlier version of this kit left behind, for exactly that reason.
 
 ```bash
 pkg install nodejs git
-npx -y opencode-harness-kit init
+npx -y opencode-harness-kit init --model <provider>/<model>
 ```
 
 Without registry access, the checkout path works identically:
@@ -1086,7 +1179,7 @@ Without registry access, the checkout path works identically:
 ```bash
 pkg install nodejs git
 git clone https://github.com/pham-canh/opencode-harness-kit.git
-./opencode-harness-kit/bin/oc-harness.mjs init
+./opencode-harness-kit/bin/oc-harness.mjs init --model <provider>/<model>
 ```
 
 The kit writes to `$HOME/.config/opencode` like everywhere else, so there is
@@ -1097,7 +1190,7 @@ pre-commit hook; without a checkout that step is skipped.
 engine. Run opencode on your Mac or a server (inside `tmux` so it survives a
 dropped connection), then SSH in from the phone — Blink Shell is the usual
 client, Tailscale removes the network setup. The kit, the skills and the
-free-model profiles all live server-side; the phone only needs a keyboard.
+profiles all live server-side; the phone only needs a keyboard.
 
 ### Permissions: why `edit` is `allow`
 
@@ -1143,18 +1236,11 @@ publishes it and the nearest level that does exist where it does not, and
 `oc-harness show <profile>` for the resolved values and the note explaining
 any difference.
 
-The tier is worth protecting: measured on one install, DeepSeek spends **320
-reasoning tokens a message at `max` and 19 at `low`**, so the lever is a
-factor of 17. A lane that asks for a tier and lands on a model that publishes
-none runs at that model's natural rate instead, and the generated config says
-so in the form `locate=unset(asked low)`.
-
-Three lanes in the unrestricted fleet cannot get their tier, and the
-measurement says they are the three cheapest reasoners on the tier — 116, 59
-and 18 reasoning tokens a message, against 289 for `build` and 198 for
-`plan`, which keep their tier on purpose. The one lane that was genuinely
-expensive was `sweep`, running on a model that reasons 420 tokens a message
-for what is supposed to be a mechanical grep. It does not any more.
+Effort is a real lever, not a label: on one measured route, `max` spent 320
+reasoning tokens a message and `low` spent 19, so the lever was a factor of
+17. A lane that asks for a tier and lands on a model that publishes none runs
+at that model's natural rate instead, and the generated config says so in the
+form `locate=unset(asked low)`.
 
 `locate` is deliberately *not* called `scout`: OpenCode ships a built-in `scout`
 subagent for dependency and external-docs research, and shipping our own file
@@ -1373,7 +1459,7 @@ collection pays tens of thousands of tokens on every request, before the
 conversation starts. The lanes carry their instructions in `prompts/`, so:
 
 ```bash
-oc-harness use fleet-safe --no-skills
+oc-harness use <profile> --no-skills
 ```
 
 omits the skill list from the lanes' prompt and says so in the config header.
@@ -1417,8 +1503,8 @@ exists, it runs, and it is skipped until the key is set — the variable
 (`typesense-js`, pinned by commit) rather than a private tree, which is what
 made it checkable. Two languages are not a survey.
 
-**The lanes are ten because ten models were available.** That is a
-hypothesis about the tier, not a number. `oc-harness lanes` counts the
+**The lanes are ten because ten jobs were available to measure.** That is a
+hypothesis about the loop, not a number. `oc-harness lanes` counts the
 requests and says which lanes were never used; cutting them is a data edit.
 
 ## Development
@@ -1541,19 +1627,20 @@ Measured results, and the limits they do not cross, are in
 [eval/RESULTS.md](eval/RESULTS.md).
 
 `docs/RESEARCH.md` records where the numbers came from and what was tried and
-rejected. `docs/ROUTING.md` records the fleet: which model serves which job,
-and the measurements behind each choice.
+rejected. `docs/ROUTING.md` records the fixture fleet the routing work was
+measured on: which model served which job, and the measurements behind each
+choice. It is an artifact, not a preference, and the package ships no such
+profiles.
 
 [`CHANGELOG.md`](CHANGELOG.md) records what each release changed and, for the
 releases before this one, what was broken in it — the silent failures that a
 config could look correct through. [`docs/RELEASE-HISTORY.md`](docs/RELEASE-HISTORY.md)
 explains the historical gaps between tags, npm and GitHub releases.
-[`MIGRATION.md`](MIGRATION.md) covers the two upgrades that ask something of
-you: 0.2.x → 0.3.0 (the profile ids
-changed, the config layout changed, the telemetry file now means something
-different) and 0.3.x → 0.4.x (the guard started refusing in code what it used
-to only suggest, and the pre-commit hook started running your project's
-tests instead of the kit's).
+[`MIGRATION.md`](MIGRATION.md) covers the upgrades that ask something of
+you: 0.2.x → 0.3.0 (the profile ids changed, the config layout changed, the
+telemetry file now means something different) and 0.3.x → 0.4.x (the guard
+started refusing in code what it used to only suggest, and the pre-commit hook
+started running your project's tests instead of the kit's).
 
 [`docs/EXIT-CODES.md`](docs/EXIT-CODES.md) lists what every command returns
 when it fails, so a script can tell "the kit says no" from "the kit broke".

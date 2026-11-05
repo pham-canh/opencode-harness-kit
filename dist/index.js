@@ -988,7 +988,11 @@ function retentionSeverity(level) {
   );
 }
 function profileDirs() {
-  return [process.env.OPENCODE_HARNESS_PROFILES ?? join4(ROOT, "profiles")];
+  const override = process.env.OPENCODE_HARNESS_PROFILES;
+  if (override) return [override];
+  const user = join4(configDir(), "profiles");
+  const kit = join4(ROOT, "profiles");
+  return user === kit ? [kit] : [user, kit];
 }
 function profilePath(id) {
   for (const dir of profileDirs()) {
@@ -1077,22 +1081,8 @@ function laneMeta(name) {
   return loadLanes()[name] ?? null;
 }
 var retentionCache = null;
-function loadRetention() {
-  if (retentionCache) return retentionCache;
-  const file = join4(ROOT, "retention.yml");
-  if (!existsSync3(file)) {
-    retentionCache = { models: {}, defaults: {} };
-    return retentionCache;
-  }
-  const models = (
-    /** @type {Record<string, any>} */
-    {}
-  );
-  const defaults = (
-    /** @type {Record<string, string>} */
-    {}
-  );
-  const lines = readFileSync(file, "utf8").split("\n");
+function parseRetentionYaml(text, models, defaults) {
+  const lines = text.split("\n");
   let current = null;
   let inDefaults = false;
   let i = 0;
@@ -1125,7 +1115,10 @@ function loadRetention() {
     if (indent === 2 && line.endsWith(":")) {
       const key = line.slice(0, -1).trim();
       current = key.includes("/") ? key : `opencode/${key}`;
-      models[current] = { retention: "unknown" };
+      models[current] = {
+        ...models[current] ?? {},
+        retention: models[current]?.retention ?? "unknown"
+      };
       i++;
       continue;
     }
@@ -1159,17 +1152,54 @@ function loadRetention() {
     }
     i++;
   }
+}
+function userRetentionPath() {
+  const override = process.env.OPENCODE_HARNESS_PROFILES;
+  return override ? join4(override, "retention.json") : join4(configDir(), "retention.json");
+}
+function loadRetention() {
+  if (retentionCache) return retentionCache;
+  const models = (
+    /** @type {Record<string, any>} */
+    {}
+  );
+  const defaults = (
+    /** @type {Record<string, string>} */
+    {}
+  );
+  const file = join4(ROOT, "retention.yml");
+  if (existsSync3(file)) parseRetentionYaml(readFileSync(file, "utf8"), models, defaults);
+  const user = userRetentionPath();
+  if (existsSync3(user)) {
+    try {
+      const parsed = JSON.parse(readFileSync(user, "utf8"));
+      for (const [key, record] of Object.entries(parsed?.models ?? {})) {
+        const id = key.includes("/") ? key : `opencode/${key}`;
+        models[id] = { ...models[id] ?? {}, ...record && typeof record === "object" ? record : {} };
+      }
+      Object.assign(defaults, parsed?.defaults ?? {});
+    } catch {
+    }
+  }
   retentionCache = { models, defaults };
   return retentionCache;
 }
+function findRetention(models, id) {
+  const direct = models[id] ?? models[id.includes("/") ? id : `opencode/${id}`];
+  if (direct) return direct;
+  if (!id.includes("/")) {
+    const matches2 = Object.keys(models).filter((key) => key.endsWith(`/${id}`));
+    if (matches2.length === 1) return models[matches2[0]];
+  }
+  return void 0;
+}
 function retentionFor(id) {
-  const table = loadRetention().models;
-  return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`];
+  return findRetention(loadRetention().models, id);
 }
 function retentionOf(table, model) {
   const fallback = table?.defaults?.unknown ?? "unknown";
   const models = table?.models ?? {};
-  const record = models[model] ?? models[model.includes("/") ? model : `opencode/${model}`];
+  const record = findRetention(models, model);
   const declared = record?.retention ?? fallback;
   return (
     /** @type {Retention} */
@@ -1268,6 +1298,11 @@ function resolveEffort(levels, requested) {
 var DECLARABLE_RETENTION = ["zero-retention", "retained", "may-train"];
 function validate(p, path = "<memory>") {
   const where = p?.id ?? path;
+  const retentionKey = (id) => {
+    if (id.includes("/")) return id;
+    const qualified = `${p.provider}/${id}`;
+    return retentionFor(qualified) ? qualified : id;
+  };
   if (!p?.id) throw new ProfileError(`${path}: missing "id"`);
   if (!p.provider) throw new ProfileError(`${where}: missing "provider"`);
   if (!p.model) throw new ProfileError(`${where}: missing "model"`);
@@ -1420,9 +1455,9 @@ function validate(p, path = "<memory>") {
         );
       }
       for (const rung of rm.chain) {
-        if (!retentionFor(rung)) {
+        if (!retentionFor(retentionKey(rung))) {
           throw new ProfileError(
-            `${where}: roleModels.${role}.chain names ${rung}, which has no retention.yml entry`
+            `${where}: roleModels.${role}.chain names ${rung}, whose retention is not recorded`
           );
         }
         if (!profileExists(rung)) {
@@ -1432,9 +1467,9 @@ function validate(p, path = "<memory>") {
         }
       }
     }
-    if (!retentionFor(rm.model)) {
+    if (!retentionFor(retentionKey(rm.model))) {
       throw new ProfileError(
-        `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`
+        `${where}: roleModels.${role} names ${rm.model}, whose retention is not recorded`
       );
     }
     if (!profileExists(rm.model)) {
@@ -1443,9 +1478,9 @@ function validate(p, path = "<memory>") {
       );
     }
   }
-  if (!retentionFor(p.model)) {
+  if (!retentionFor(retentionKey(p.model))) {
     throw new ProfileError(
-      `${where}: model ${p.model} has no retention.yml entry`
+      `${where}: model ${p.model} has no recorded retention`
     );
   }
   if (p.utility) {
@@ -1462,9 +1497,9 @@ function validate(p, path = "<memory>") {
         `${where}: utility.model is ${p.utility.model}, which this profile does not resolve to (it has ${[...reachable].join(", ")})`
       );
     }
-    if (!retentionFor(p.utility.model)) {
+    if (!retentionFor(retentionKey(p.utility.model))) {
       throw new ProfileError(
-        `${where}: utility.model ${p.utility.model} has no retention.yml entry`
+        `${where}: utility.model ${p.utility.model} has no recorded retention`
       );
     }
   }

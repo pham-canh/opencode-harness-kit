@@ -187,8 +187,8 @@ test("research reports the models in use that have been withdrawn", () => {
   })
 
   // `gone-free` is the second rung of two lane chains.
-  assert.equal(report.shipped.gone.length, 1)
-  const gone = report.shipped.gone[0]
+  assert.equal(report.inUse.gone.length, 1)
+  const gone = report.inUse.gone[0]
   assert.equal(gone.id, "gone-free")
   assert.equal(gone.present, true, "the catalogue keeps the record of a withdrawn model")
   assert.match(gone.reason, /withdrawn/)
@@ -201,7 +201,7 @@ test("research separates a profile's own model from a rung in its chain", () => 
   const p = profileFixture("fleet")
   p.model = "gone-free"
   const report = researchModels({ catalog: catalogFixture(), profiles: [p] })
-  const gone = report.shipped.gone.find((g) => g.id === "gone-free")
+  const gone = report.inUse.gone.find((g) => g.id === "gone-free")
   assert.deepEqual(gone.asBase, ["fleet"])
 })
 
@@ -345,7 +345,7 @@ test("research --json prints one parseable object and nothing else", () => {
   assert.equal(parsed.ok, true)
   assert.equal(parsed.tier.provider, "opencode")
   assert.ok(Array.isArray(parsed.candidates))
-  const gone = parsed.shipped.gone.find((g) => g.id === "flint-40b-free")
+  const gone = parsed.inUse.gone.find((g) => g.id === "flint-40b-free")
   assert.ok(gone, "the withdrawn model the kit ships is missing from the report")
   assert.equal(gone.present, true, "the catalogue keeps the record of a withdrawn model")
   assert.ok(gone.asBase.length > 0, "it is the base model of a shipped profile")

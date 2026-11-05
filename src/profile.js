@@ -139,15 +139,23 @@ export function retentionSeverity(level) {
 }
 
 /**
- * Profiles live in profiles/ (verified). schema.json and index.json are not
- * profiles.
+ * Where profiles are read from.
+ *
+ * No model profiles ship with the kit. A profile describes the model a person
+ * actually has access to, so the writable home is the user's own config
+ * directory; the package's `profiles/` only carries the schema and an empty
+ * index. `OPENCODE_HARNESS_PROFILES` still overrides everything, which is what
+ * a test or a team profile tree uses.
+ *
+ * User profiles come first, so a person can shadow a profile without editing
+ * the package.
  */
 export function profileDirs() {
-  // The profiles can live somewhere else. A test that refreshes a profile
-  // would otherwise rewrite the kit's own data - which is what happened the
-  // first time this was tried - and a user who keeps profiles in their own
-  // tree cannot use the kit at all.
-  return [process.env.OPENCODE_HARNESS_PROFILES ?? join(ROOT, "profiles")]
+  const override = process.env.OPENCODE_HARNESS_PROFILES
+  if (override) return [override]
+  const user = join(configDir(), "profiles")
+  const kit = join(ROOT, "profiles")
+  return user === kit ? [kit] : [user, kit]
 }
 
 /** @param {string} id @returns {string | null} */
@@ -161,16 +169,16 @@ export function profilePath(id) {
 
 /** @returns {string[]} */
 export function listProfileIds() {
-  const out = []
+  const out = new Set()
   for (const dir of profileDirs()) {
     if (!existsSync(dir)) continue
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".json")) continue
-      if (f === "schema.json" || f === "index.json") continue
-      out.push(f.replace(/\.json$/, ""))
+      if (f === "schema.json" || f === "index.json" || f === "retention.json") continue
+      out.add(f.replace(/\.json$/, ""))
     }
   }
-  return out.sort()
+  return [...out].sort()
 }
 
 /** @param {string} id @returns {Profile} */
@@ -305,16 +313,20 @@ export function laneNames() {
  */
 /** @type {{ models: Record<string, RetentionRecord>, defaults: Record<string, string> } | null} */
 let retentionCache = null
-export function loadRetention() {
-  if (retentionCache) return retentionCache
-  const file = join(ROOT, "retention.yml")
-  if (!existsSync(file)) {
-    retentionCache = { models: {}, defaults: {} }
-    return retentionCache
-  }
-  const models = /** @type {Record<string, any>} */ ({})
-  const defaults = /** @type {Record<string, string>} */ ({})
-  const lines = readFileSync(file, "utf8").split("\n")
+
+/**
+ * Parse a retention YAML document into the two maps.
+ *
+ * Kept separate from `loadRetention` so the package's table and a user's own
+ * declarations are read by the same code. The user file is parsed second, so
+ * a model the user has stated the terms of overrides a package-level default.
+ *
+ * @param {string} text
+ * @param {Record<string, any>} models
+ * @param {Record<string, string>} defaults
+ */
+function parseRetentionYaml(text, models, defaults) {
+  const lines = text.split("\n")
 
   let current = null
   let inDefaults = false
@@ -353,7 +365,10 @@ export function loadRetention() {
     if (indent === 2 && line.endsWith(":")) {
       const key = line.slice(0, -1).trim()
       current = key.includes("/") ? key : `opencode/${key}`
-      models[current] = { retention: "unknown" }
+      models[current] = {
+        ...(models[current] ?? {}),
+        retention: models[current]?.retention ?? "unknown",
+      }
       i++
       continue
     }
@@ -390,26 +405,103 @@ export function loadRetention() {
     }
     i++
   }
+}
+
+/**
+ * Where a person's own retention declarations live.
+ *
+ * The package deliberately carries no model entries, and asking a user to
+ * edit a file inside `node_modules` is not a durable answer anyway.
+ * `use <provider>/<model> --retention <level>` records the verdict here, next
+ * to the config, in the same shape the package uses.
+ *
+ * A test or a team tree that overrides `OPENCODE_HARNESS_PROFILES` gets its
+ * retention file beside those profiles, so the suite stays isolated from the
+ * real config directory.
+ *
+ * @returns {string}
+ */
+export function userRetentionPath() {
+  const override = process.env.OPENCODE_HARNESS_PROFILES
+  return override
+    ? join(override, "retention.json")
+    : join(configDir(), "retention.json")
+}
+
+/** Forget the cached table, after a user retention file was written. */
+export function resetRetentionCache() {
+  retentionCache = null
+}
+
+export function loadRetention() {
+  if (retentionCache) return retentionCache
+  const models = /** @type {Record<string, any>} */ ({})
+  const defaults = /** @type {Record<string, string>} */ ({})
+  const file = join(ROOT, "retention.yml")
+  if (existsSync(file)) parseRetentionYaml(readFileSync(file, "utf8"), models, defaults)
+  // A person's own verdicts. JSON because this file is written by the CLI and
+  // read by the same code; there is no reason to make a generated file
+  // hand-parseable YAML when the package's table already is.
+  const user = userRetentionPath()
+  if (existsSync(user)) {
+    try {
+      const parsed = JSON.parse(readFileSync(user, "utf8"))
+      for (const [key, record] of Object.entries(parsed?.models ?? {})) {
+        const id = key.includes("/") ? key : `opencode/${key}`
+        models[id] = { ...(models[id] ?? {}), ...(record && typeof record === "object" ? record : {}) }
+      }
+      Object.assign(defaults, parsed?.defaults ?? {})
+    } catch {
+      // A malformed user file is not a reason to refuse every profile: the
+      // package's own table still answers for the models it knows. The model
+      // the broken entry was meant to cover stays `unknown`, which is the
+      // safe direction.
+    }
+  }
   retentionCache = { models, defaults }
   return retentionCache
 }
 
 /**
- * Retention as declared in retention.yml, which wins over the profile copy.
+ * Find the record for a model id.
+ *
+ * A bare id is normally an `opencode` model. A profile for another provider
+ * carries a bare model id (`custom-1`) and a qualified retention entry
+ * (`acme/custom-1`), so when the exact key and the opencode-prefixed key both
+ * miss, a unique provider-qualified match is accepted. That keeps a
+ * single-provider profile working without forcing every caller to know which
+ * provider it came from. An ambiguous id stays unknown, which is the safe
+ * answer.
+ *
+ * @param {Record<string, RetentionRecord>} models
+ * @param {string} id
+ * @returns {RetentionRecord | undefined}
+ */
+function findRetention(models, id) {
+  const direct = models[id] ?? models[id.includes("/") ? id : `opencode/${id}`]
+  if (direct) return direct
+  if (!id.includes("/")) {
+    const matches = Object.keys(models).filter((key) => key.endsWith(`/${id}`))
+    if (matches.length === 1) return models[matches[0]]
+  }
+  return undefined
+}
+
+/**
+ * The recorded retention for a model, which wins over the profile copy.
  * Accepts either a bare profile id or an already-qualified provider/model.
  * @param {string} id
  * @returns {RetentionRecord | undefined}
  */
 export function retentionFor(id) {
-  const table = loadRetention().models
-  return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`]
+  return findRetention(loadRetention().models, id)
 }
 
 /**
  * The retention of a model id, out of a retention table.
  *
  * Pure, so a test can hand it a table whose `defaults.unknown` says
- * something else. The shipped table says "unknown", which is what the
+ * something else. The package's table says "unknown", which is what the
  * hardcoded fallback used to be - so a test that only checked the value
  * could not tell the two apart.
  *
@@ -420,7 +512,7 @@ export function retentionFor(id) {
 export function retentionOf(table, model) {
   const fallback = table?.defaults?.unknown ?? "unknown"
   const models = table?.models ?? {}
-  const record = models[model] ?? models[model.includes("/") ? model : `opencode/${model}`]
+  const record = findRetention(models, model)
   const declared = record?.retention ?? fallback
   return /** @type {Retention} */ (
     ["zero-retention", "retained", "may-train", "unknown"].includes(declared)
@@ -432,10 +524,10 @@ export function retentionOf(table, model) {
 /**
  * The retention of a model id, qualified or not.
  *
- * A model with no entry in retention.yml gets the `defaults.unknown` value
- * from that file, which is `unknown` today. The fallback used to be
- * hardcoded here, so the `defaults:` block in retention.yml looked like
- * configuration and was not.
+ * A model with no recorded entry gets the `defaults.unknown` value from the
+ * package's retention.yml, which is `unknown` today. The fallback used to be
+ * hardcoded here, so the `defaults:` block looked like configuration and was
+ * not.
  *
  * @param {string} model
  * @returns {Retention}
@@ -681,6 +773,17 @@ const DECLARABLE_RETENTION = ["zero-retention", "retained", "may-train"]
 /** @param {Profile} p @param {string} [path] */
 export function validate(p, path = "<memory>") {
   const where = p?.id ?? path
+  // A profile names models for one provider, and the model field is bare.
+  // Retention is keyed provider/model, so qualify it when the provider has an
+  // entry. Fall back to the bare id so a profile can also name a route another
+  // provider owns, which is how the fixture fleet expresses cross-provider
+  // fallback chains.
+  /** @param {string} id @returns {string} */
+  const retentionKey = (id) => {
+    if (id.includes("/")) return id
+    const qualified = `${p.provider}/${id}`
+    return retentionFor(qualified) ? qualified : id
+  }
   if (!p?.id) throw new ProfileError(`${path}: missing "id"`)
   if (!p.provider) throw new ProfileError(`${where}: missing "provider"`)
   if (!p.model) throw new ProfileError(`${where}: missing "model"`)
@@ -865,15 +968,15 @@ export function validate(p, path = "<memory>") {
         )
       }
       for (const rung of rm.chain) {
-        if (!retentionFor(rung)) {
+        if (!retentionFor(retentionKey(rung))) {
           throw new ProfileError(
-            `${where}: roleModels.${role}.chain names ${rung}, which has no retention.yml entry`,
+            `${where}: roleModels.${role}.chain names ${rung}, whose retention is not recorded`,
           )
         }
         // A rung with no profile cannot be resolved: its levels are unknown
         // and its limits are unknown, so the lane quietly runs on a model it
-        // did not ask for. The retention check above passed it, because
-        // retention.yml lists a few paid routes the kit has no profile for.
+        // did not ask for. The retention check above passed it, because a
+        // person may have recorded terms for a route with no profile here.
         if (!profileExists(rung)) {
           throw new ProfileError(
             `${where}: roleModels.${role}.chain names ${rung}, which has no profile in this directory`,
@@ -881,11 +984,11 @@ export function validate(p, path = "<memory>") {
         }
       }
     }
-    // retention.yml is the only place retention is decided, so a role model
-    // missing from it is a profile we cannot honestly write a header for.
-    if (!retentionFor(rm.model)) {
+    // A model with no recorded terms is a profile we cannot honestly write a
+    // header for.
+    if (!retentionFor(retentionKey(rm.model))) {
       throw new ProfileError(
-        `${where}: roleModels.${role} names ${rm.model}, which has no retention.yml entry`,
+        `${where}: roleModels.${role} names ${rm.model}, whose retention is not recorded`,
       )
     }
     if (!profileExists(rm.model)) {
@@ -895,13 +998,13 @@ export function validate(p, path = "<memory>") {
     }
   }
   // The base model is the model the config names as the session model, and
-  // the one every lane falls back to. It was never checked against
-  // retention.yml, so a profile could name a model nobody had stated the
+  // the one every lane falls back to. It was never checked against the
+  // retention table, so a profile could name a model nobody had stated the
   // terms of and the header would print a level for a model that does not
   // have one.
-  if (!retentionFor(p.model)) {
+  if (!retentionFor(retentionKey(p.model))) {
     throw new ProfileError(
-      `${where}: model ${p.model} has no retention.yml entry`,
+      `${where}: model ${p.model} has no recorded retention`,
     )
   }
   // The utility route has to be a model this profile can actually run, or a
@@ -928,12 +1031,12 @@ export function validate(p, path = "<memory>") {
       )
     }
     // The route is written into the config and serves real requests, so its
-    // terms have to be on record. A utility route with no retention.yml
-    // entry is an `unknown` in the header and a refusal at install time;
-    // saying so here names the field instead of leaving a surprise.
-    if (!retentionFor(p.utility.model)) {
+    // terms have to be on record. A utility route with no recorded terms is
+    // an `unknown` in the header and a refusal at install time; saying so
+    // here names the field instead of leaving a surprise.
+    if (!retentionFor(retentionKey(p.utility.model))) {
       throw new ProfileError(
-        `${where}: utility.model ${p.utility.model} has no retention.yml entry`,
+        `${where}: utility.model ${p.utility.model} has no recorded retention`,
       )
     }
   }
@@ -953,7 +1056,7 @@ export function validate(p, path = "<memory>") {
   // among the models its own base and lanes resolve to, or WORSE than that
   // level. It may not be BETTER.
   //
-  // The claim was never checked against retention.yml, so a profile could
+  // The claim was never checked against the retention table, so a profile could
   // say "zero-retention" while a lane ran on a provider that may train -
   // and the config header printed the claim as fact.
   //
@@ -1121,7 +1224,8 @@ export function roleSplitModels(p, opts = {}) {
 
 /**
  * The retention that actually applies once every lane is considered, which is
- * what a config header has to print. `retention.yml` is the source of truth.
+ * what a config header has to print. The recorded retention is the source of
+ * truth.
  *
  * `worst` is the MODEL responsible for that level, not the level itself. The
  * two used to be the same field with two different meanings - a retention
@@ -1312,8 +1416,8 @@ export function parseJsonc(text) {
  * Read the active profile id from the config file on disk.
  *
  * Returns null when the file is absent, unreadable, or not valid JSONC. Callers
- * fall back to the profile named in the `config` hook, so a null here degrades
- * to the default profile rather than failing.
+ * fall back to the profile the `config` hook names, so a null here degrades to
+ * that profile rather than failing.
  *
  * @returns {string | null}
  */

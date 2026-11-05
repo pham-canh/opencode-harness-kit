@@ -19,7 +19,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const PROFILES = join(HERE, "..", "..", "profiles")
+const PROFILES = join(HERE, "profiles")
 
 /** @type {Map<string, any>} */
 const profiles = new Map()

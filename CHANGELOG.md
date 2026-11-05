@@ -14,7 +14,44 @@ is not happening.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **No model profiles ship.** The kit is the harness, not a list of models:
+  `profiles/index.json` is empty and `default` is `null`. The old profiles
+  moved to `test/fixtures/profiles/` and are test data, not choices.
+- **No model retention entries ship either.** `retention.yml` now carries only
+  the `unknown` default and documentation; a person's verdicts live in
+  `~/.config/opencode/retention.json` and are written by
+  `use <provider>/<model> --retention <level>`. Fixture verdicts moved to
+  `test/fixtures/profiles/retention.json` so the suite still exercises them.
+- **The README documents two routes, free and paid/upgraded**, and names no
+  concrete model. A model id in the README would be a recommendation that goes
+  stale the day the route is withdrawn; the test suite now fails if one is
+  added.
+- **`oc-harness use <provider>/<model> --retention <level>` creates a
+  profile.** It reads the model from the live catalogue, writes
+  `~/.config/opencode/profiles/<id>.json`, and records the retention verdict
+  in `~/.config/opencode/retention.json`. `--id` overrides the generated name.
+- **`oc-harness init --model <provider>/<model>`** creates the profile and then
+  installs and verifies it. Without a terminal or `--model`, `init` prints the
+  command instead of guessing a model.
+- **Profiles are discovered in the config directory first**, then in the
+  package directory, so a user profile and a fixture profile cannot shadow
+  each other silently.
+- `list`, `auto`, `upgrade`, `verify` and `lanes` say when there is no profile
+  yet and print the `use` command that creates one, instead of failing on an
+  empty selection.
+- **No runtime path names a model.** The invariant is enforced against the
+  fixture ids and models, so a future edit that puts a concrete choice in
+  `bin/`, `src/`, the prompts, templates, skills, schema or README fails the
+  suite. Historical measurement docs may keep their names; nothing executable
+  may recommend one.
+- **`doctor` with no profiles asks for a model** instead of printing "all
+  profiles match" over an empty list, and `<command> --help` prints the help
+  rather than starting the command and failing for want of a terminal.
+- **CI and the V2 gate use the test fixtures explicitly** instead of relying on
+  profiles that no longer ship, and `selfcheck` copies the fixture profiles
+  into a temporary directory before installing, so it never writes test data.
 
 ---
 
