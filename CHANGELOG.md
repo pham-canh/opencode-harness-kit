@@ -14,6 +14,22 @@ is not happening.
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-11-08
+
+### Changed
+
+- **The README is a landing page again.** The long design document moved to
+  `docs/DESIGN.md`; the README now leads with the one-command install, the
+  measured A/B, the two routes and the full command list. It still names no
+  concrete model: the model is a fact about your account, not a recommendation
+  that can be shipped.
+- **The README carries the A/B numbers directly**, including the result where
+  the kit loses: on a task that fits in one read it uses more tokens and takes
+  longer for the same answers.
+- **A recorded demo and a social preview ship under `docs/assets/`.** The demo
+  shows a real `init` against a free model, the ten lanes, and the install
+  verifier agreeing with the profile.
+
 ## [0.9.0] — 2026-11-05
 
 ### Changed
