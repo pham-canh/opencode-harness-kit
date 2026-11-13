@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/pham-canh/opencode-harness-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/pham-canh/opencode-harness-kit/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/opencode-harness-kit.svg)](https://www.npmjs.com/package/opencode-harness-kit)
+[![npm downloads](https://img.shields.io/npm/dw/opencode-harness-kit.svg)](https://www.npmjs.com/package/opencode-harness-kit)
 [![license](https://img.shields.io/npm/l/opencode-harness-kit.svg)](LICENSE)
 [![OpenCode](https://img.shields.io/badge/opencode-v1%20%2B%20v2-7c3aed)](https://opencode.ai)
 
@@ -10,6 +11,16 @@ model**, compile it into ten job lanes, prune old tool output, fail over when a
 route disappears, and verify the install.
 
 ![opencode-harness-kit demo](docs/assets/demo.gif)
+
+**Contents:** [The problem](#the-problem-it-solves) ·
+[How a request travels](#how-a-request-travels) ·
+[Fleets](#a-fleet-not-a-model) · [Profiles](#shipped-profiles) ·
+[Commands](#commands) · [Install](#install) · [Lanes](#lanes) ·
+[Costs](#what-it-costs-measured) · [Known limits](#known-limits) ·
+[Development](#development)
+
+The claim this kit makes is checkable: `oc-harness verify` exits non-zero when
+the installed config and the profile disagree.
 
 ## Install
 
